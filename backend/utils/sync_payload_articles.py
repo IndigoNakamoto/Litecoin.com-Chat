@@ -175,7 +175,7 @@ def main():
     
     # Add all chunks to the vector store in batches
     logger.info(f"\nAdding {len(all_chunks)} total chunks to vector store...")
-    vector_store_manager.add_documents(all_chunks, batch_size=10)
+    vector_store_manager.add_documents(all_chunks, batch_size=5)
     
     logger.info(f"✅ Successfully synced {len(payload_docs)} articles, creating {len(all_chunks)} chunks!")
 

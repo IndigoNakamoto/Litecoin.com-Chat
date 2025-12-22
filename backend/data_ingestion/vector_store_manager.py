@@ -597,7 +597,7 @@ class VectorStoreManager:
             logger.error(f"Error reloading FAISS index from disk: {e}")
             return False
 
-    def add_documents(self, documents: List[Document], batch_size: int = 10):
+    def add_documents(self, documents: List[Document], batch_size: int = 5):
         """
         Adds documents to FAISS vector store and MongoDB storage in batches.
 
@@ -667,7 +667,7 @@ class VectorStoreManager:
         else:
             logger.info(f"Finished adding {success_count} of {total_docs} documents to FAISS (MongoDB not available).")
     
-    def _add_documents_with_infinity_sync(self, documents: List[Document], batch_size: int = 10):
+    def _add_documents_with_infinity_sync(self, documents: List[Document], batch_size: int = 5):
         """
         Synchronous wrapper for adding documents with Infinity embeddings.
         

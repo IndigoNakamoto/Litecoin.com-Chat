@@ -103,7 +103,7 @@ def main():
     print(f"Generated {len(processed_chunks)} chunks from {len(documents)} documents.")
     
     print("\nAdding chunks to vector store...")
-    vector_store_manager.add_documents(processed_chunks, batch_size=10)
+    vector_store_manager.add_documents(processed_chunks, batch_size=5)
     
     print(f"\n✅ Successfully rebuilt vector store with {len(processed_chunks)} chunks!")
 
