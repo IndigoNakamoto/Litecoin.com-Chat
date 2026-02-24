@@ -22,6 +22,11 @@ from contextlib import asynccontextmanager
 # Load environment variables from .env file
 load_dotenv()
 
+# Suppress FutureWarning from langchain_google_genai (uses deprecated google.generativeai).
+# Migrate to langchain-google-genai 4.x + google-genai SDK when upgrading to LangChain 1.x.
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="langchain_google_genai.*")
+
 # Import the RAG chain constructor and data models
 from backend.rag_pipeline import RAGPipeline, LLM_MODEL_NAME, GENERIC_USER_ERROR_MESSAGE
 from backend.data_models import ChatRequest, ChatMessage, UserQuestion, LLMRequestLog

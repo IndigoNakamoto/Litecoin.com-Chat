@@ -252,21 +252,12 @@ class VectorStoreManager:
         self.use_infinity = os.getenv("USE_INFINITY_EMBEDDINGS", "false").lower() == "true"
         
         if self.use_infinity:
-            # Use 1024-dim index with placeholder embeddings
-            # Actual embedding is done by InfinityEmbeddings, FAISS just needs a compatible function
+            # Use 1024-dim index path. Query embedding is done by InfinityEmbeddings in the RAG graph.
+            # We still need a real embedding model here so that hybrid_retriever fallback works when
+            # Infinity vector search fails (e.g. index is 768-dim from MongoDB, query is 1024-dim).
             self.faiss_index_path = os.getenv("FAISS_INDEX_PATH_1024", "./backend/faiss_index_1024")
             logger.info(f"Using Infinity embeddings mode with 1024-dim index: {self.faiss_index_path}")
-            
-            # Placeholder embeddings for LangChain FAISS compatibility
-            # The actual embedding is done externally via InfinityEmbeddings
-            class PlaceholderEmbeddings:
-                """Placeholder for LangChain FAISS compatibility when using external embeddings."""
-                def embed_documents(self, texts): 
-                    raise NotImplementedError("Use InfinityEmbeddings.embed_documents() instead")
-                def embed_query(self, text):
-                    raise NotImplementedError("Use InfinityEmbeddings.embed_query() instead")
-            
-            self.embeddings = PlaceholderEmbeddings()
+            self.embeddings = get_embedding_model()
         else:
             # Initialize embeddings (local or Google) - legacy mode
             self.embeddings = get_embedding_model()

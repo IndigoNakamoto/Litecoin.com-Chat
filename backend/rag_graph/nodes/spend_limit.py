@@ -41,7 +41,7 @@ def make_spend_limit_node(pipeline: Any):
             context_text = "\n\n".join(d.page_content for d in context_docs)
             prompt_text = pipeline._build_prompt_text_with_history(query_text, context_text, chat_history)  # type: ignore[attr-defined]
             input_tokens_est, _ = pipeline._estimate_token_usage(prompt_text, "")  # type: ignore[attr-defined]
-            max_output_tokens = 2048
+            max_output_tokens = 4096
             estimated_cost = pipeline.estimate_gemini_cost(input_tokens_est, max_output_tokens, pipeline.model_name)
 
             allowed, error_msg, _ = await pipeline.check_spend_limit(estimated_cost, pipeline.model_name)

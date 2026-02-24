@@ -12,6 +12,7 @@ import { Media } from './collections/Media'
 import { Article } from './collections/Article'
 import { Category } from './collections/Category'
 import { SuggestedQuestions } from './collections/SuggestedQuestions'
+import { KnowledgeBase } from './collections/KnowledgeBase'
 import Logo from './components/admin/Logo'
 import Icon from './components/admin/Icon'
 
@@ -57,7 +58,7 @@ export default buildConfig({
       },
     },
   },
-  collections: [Users, Media, Article, Category, SuggestedQuestions],
+  collections: [Users, Media, Article, Category, SuggestedQuestions, KnowledgeBase],
   cors: corsOrigins,
   csrf: csrfOrigins,
   editor: lexicalEditor({

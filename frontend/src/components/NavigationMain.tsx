@@ -404,6 +404,7 @@ const Navigation = () => {
               color: dropdownTextColor,
               fontSize: `${scaledFontSize}px`,
               visibility: dropdownOpen[key] ? 'visible' : 'hidden',
+              width: dropdownWidths[key],
               '--dropdown-width': dropdownWidths[key],
             } as CSSProperties & { [customProperty: string]: string }
           }
@@ -431,6 +432,9 @@ const Navigation = () => {
               </li>
               <li className="mb-2 ml-2 p-2 pl-4 text-left">
                 <a href="https://litecoin.com/resources">Resources</a>
+              </li>
+              <li className="mb-2 ml-2 p-2 pl-4 text-left">
+                <a href="https://litecoin.com/chat">Chat</a>
               </li>
             </>
           )}

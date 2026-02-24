@@ -157,6 +157,11 @@ def make_retrieve_node(pipeline: Any):
                 context_docs = []
 
         published_sources = [d for d in context_docs if d.metadata.get("status") == "published"]
+        if context_docs and not published_sources:
+            logger.warning(
+                "Retrieve: context_docs=%s but published_sources=0 (no doc has metadata.status==\"published\")",
+                len(context_docs),
+            )
         state.update(
             {
                 "context_docs": context_docs,

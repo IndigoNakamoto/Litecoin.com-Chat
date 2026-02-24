@@ -126,6 +126,9 @@ backend/faiss_index/
 faiss_index/
 backend/monitoring/data/llm_cost_totals.json
 
+# Backend uptime check (local state; log is *.log)
+monitoring/.backend_uptime_state
+
 # Local RAG
 .infinity.pid
 logs/

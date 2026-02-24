@@ -1012,6 +1012,12 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     }
                 )
                 response_message = self.generic_user_error_message if retrieval_failed else self.no_kb_match_response
+                logger.info(
+                    "RAG returning early (no published_sources): retrieval_failed=%s, context_docs_count=%s, reason=%s",
+                    retrieval_failed,
+                    len(context_docs),
+                    "generic_error" if retrieval_failed else "no_kb_match",
+                )
                 return response_message, [], metadata
 
             converted_history: List[BaseMessage] = state.get("converted_history_messages") or []
