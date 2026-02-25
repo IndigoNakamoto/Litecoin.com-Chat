@@ -45,6 +45,7 @@ class RAGState(TypedDict, total=False):
 
     # Retrieval
     retrieval_query: str
+    retrieval_queries: List[str]
     context_docs: List[Document]
     published_sources: List[Document]
     retrieval_failed: bool

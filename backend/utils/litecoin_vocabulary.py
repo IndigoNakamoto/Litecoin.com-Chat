@@ -57,15 +57,42 @@ LTC_SYNONYM_MAP: Dict[str, str] = {
     "zero-knowledge omnichain": "litvm",
     "tokens": "ordinals",
     "inscriptions": "ordinals",
-    "brc-20": "ltc-20", # Mapping the BTC equivalent to the LTC version
+    "brc-20": "ltc-20",
     "taproot": "upgrades",
     "segwit": "upgrades",
     "bech32": "address format",
 
-    
+    # --- Transaction Policy & Fee Management ---
+    "replace-by-fee": "rbf",
+    "replace by fee": "rbf",
+    "fee bumping": "rbf",
+    "child-pays-for-parent": "cpfp",
+    "child pays for parent": "cpfp",
+    "0-conf": "zero-confirmation",
+    "zero-conf": "zero-confirmation",
+    "zero confirmation": "zero-confirmation",
+    "first-seen": "first-seen policy",
+    "first seen rule": "first-seen policy",
+
+    # --- HD Wallets & Key Derivation ---
+    "hd wallet": "child keys",
+    "hd wallets": "child keys",
+    "hierarchical deterministic": "child keys",
+    "derivation path": "child keys",
+    "derivation paths": "child keys",
+    "seed phrase": "child keys",
+    "recovery phrase": "child keys",
+    "mnemonic": "child keys",
+    "bip32": "hd standards",
+    "bip44": "hd standards",
+    "bip84": "hd standards",
+    "bip86": "hd standards",
+    "xpub": "extended keys",
+    "extended public key": "extended keys",
+
     # --- Wallet & Integration ---
     "litewallet": "wallet",
-    "loafwallet": "wallet", # Former name of Litewallet
+    "loafwallet": "wallet",
     "electrum-ltc": "wallet",
     "cold storage": "custody",
     "hardware wallet": "custody",
@@ -122,7 +149,17 @@ LTC_ENTITY_EXPANSIONS: Dict[str, str] = {
     "ltc-20": "brc-20 standard fungible tokens json experimental overlay protocol",
     "omnilite": "omni layer tokens stablecoin usdt assets",
 
-    # --- NEW: Network & Infrastructure ---
+    # --- Transaction Policy & Fee Management ---
+    "rbf": "replace-by-fee fee bumping opt-in first-seen zero-confirmation 0-conf bip125 stuck transaction",
+    "cpfp": "child-pays-for-parent fee stuck transaction change output mempool",
+    "zero-confirmation": "0-conf unconfirmed instant payment merchant first-seen",
+
+    # --- HD Wallets & Key Derivation ---
+    "child keys": "hd wallet hierarchical deterministic bip32 bip44 bip84 bip86 derivation path seed phrase xpub extended keys master key",
+    "hd standards": "bip32 bip44 bip84 bip86 hierarchical deterministic child keys derivation path",
+    "extended keys": "xpub extended public key child keys hd wallet derivation",
+
+    # --- Network & Infrastructure ---
     "mempool": "memory pool unconfirmed transactions fee estimation congestion",
     "difficulty": "mining difficulty retarget adjustment hashrate security",
     "litecoin core": "reference client full node daemon wallet software",

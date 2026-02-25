@@ -21,6 +21,7 @@ def build_rag_graph(nodes: Dict[str, Callable[..., Any]]):
     graph.add_node("route", nodes["route"])
     graph.add_node("prechecks", nodes["prechecks"])  # intent + exact cache + embedding kickoff
     graph.add_node("semantic_cache", nodes["semantic_cache"])
+    graph.add_node("decompose", nodes["decompose"])
     graph.add_node("retrieve", nodes["retrieve"])
     graph.add_node("resolve_parents", nodes["resolve_parents"])
     graph.add_node("spend_limit", nodes["spend_limit"])
@@ -37,15 +38,17 @@ def build_rag_graph(nodes: Dict[str, Callable[..., Any]]):
 
     graph.add_conditional_edges("prechecks", _after_prechecks, {END: END, "semantic_cache": "semantic_cache"})
 
-    # If semantic cache hit, end immediately.
+    # If semantic cache hit, end immediately. Otherwise decompose the query.
     def _after_semantic_cache(state: RAGState) -> str:
         if state.get("early_answer") is not None or state.get("error_message") is not None:
             return END
-        return "retrieve"
+        return "decompose"
 
     graph.add_conditional_edges(
-        "semantic_cache", _after_semantic_cache, {END: END, "retrieve": "retrieve"}
+        "semantic_cache", _after_semantic_cache, {END: END, "decompose": "decompose"}
     )
+
+    graph.add_edge("decompose", "retrieve")
 
     # If retrieval yields no published sources, end (caller will surface NO_KB_MATCH or error).
     def _after_retrieve(state: RAGState) -> str:
