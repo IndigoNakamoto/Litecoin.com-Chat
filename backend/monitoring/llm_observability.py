@@ -177,6 +177,7 @@ def estimate_gemini_cost(
     Estimate cost for Gemini API calls.
     
     Pricing as of 2024-2025:
+    - gemini-3.1-flash-lite-preview: $0.10 per 1M input tokens, $0.40 per 1M output tokens (assumed same as 2.5 lite)
     - gemini-2.5-flash-lite-preview-09-2025: $0.10 per 1M input tokens, $0.40 per 1M output tokens
     - gemini-2.0-flash-lite: $0.075 per 1M input tokens, $0.30 per 1M output tokens
     - gemini-pro: $0.50 per 1M input tokens, $1.50 per 1M output tokens
@@ -192,6 +193,7 @@ def estimate_gemini_cost(
     """
     # Pricing per 1M tokens
     pricing = {
+        "gemini-3.1-flash-lite-preview": {"input": 0.10, "output": 0.40},
         "gemini-2.5-flash-lite-preview-09-2025": {"input": 0.10, "output": 0.40},
         "gemini-2.0-flash-lite": {"input": 0.075, "output": 0.30},
         "gemini-pro": {"input": 0.50, "output": 1.50},
@@ -205,10 +207,10 @@ def estimate_gemini_cost(
             model_pricing = prices
             break
     
-    # Default to gemini-2.5-flash-lite-preview pricing if not found (since that's what's being used)
+    # Default to gemini-3.1-flash-lite-preview pricing if not found (since that's what's being used)
     if model_pricing is None:
-        logger.warning(f"Unknown model '{model}', using gemini-2.5-flash-lite-preview pricing")
-        model_pricing = pricing["gemini-2.5-flash-lite-preview-09-2025"]
+        logger.warning(f"Unknown model '{model}', using gemini-3.1-flash-lite-preview pricing")
+        model_pricing = pricing["gemini-3.1-flash-lite-preview"]
     
     input_cost = (input_tokens / 1_000_000) * model_pricing["input"]
     output_cost = (output_tokens / 1_000_000) * model_pricing["output"]
