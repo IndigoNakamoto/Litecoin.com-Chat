@@ -42,8 +42,8 @@ USE_FAQ_INDEXING = os.getenv("USE_FAQ_INDEXING", "true").lower() == "true"
 # --- Short-query semantic sparsity mitigations ---
 # When enabled, very short queries (e.g. "MWEB", "supply") are expanded via the LLM
 # before retrieval to increase semantic "surface area" for embeddings + retrieval.
-USE_SHORT_QUERY_EXPANSION = os.getenv("USE_SHORT_QUERY_EXPANSION", "false").lower() == "true"
-SHORT_QUERY_WORD_THRESHOLD = int(os.getenv("SHORT_QUERY_WORD_THRESHOLD", "3"))
+USE_SHORT_QUERY_EXPANSION = os.getenv("USE_SHORT_QUERY_EXPANSION", "true").lower() == "true"
+SHORT_QUERY_WORD_THRESHOLD = int(os.getenv("SHORT_QUERY_WORD_THRESHOLD", "4"))
 SHORT_QUERY_EXPANSION_MAX_WORDS = int(os.getenv("SHORT_QUERY_EXPANSION_MAX_WORDS", "12"))
 SHORT_QUERY_EXPANSION_CACHE_MAX = int(os.getenv("SHORT_QUERY_EXPANSION_CACHE_MAX", "512"))
 
@@ -213,13 +213,15 @@ DB_NAME = os.getenv("MONGO_DB_NAME", "litecoin_rag_db")
 COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "litecoin_docs")
 LLM_MODEL_NAME = "gemini-3.1-flash-lite-preview"  # 
 # Maximum number of chat history pairs (human-AI exchanges) to include in context
-# This prevents token overflow and keeps context manageable. Default: 10 pairs (20 messages)
-MAX_CHAT_HISTORY_PAIRS = int(os.getenv("MAX_CHAT_HISTORY_PAIRS", "2"))
+# This prevents token overflow and keeps context manageable. Default: 4 pairs (8 messages)
+MAX_CHAT_HISTORY_PAIRS = int(os.getenv("MAX_CHAT_HISTORY_PAIRS", "4"))
 # Retriever k value (number of documents to retrieve)
-# Increased from 8 to 12 for better context coverage (recommended in feature doc)
-RETRIEVER_K = int(os.getenv("RETRIEVER_K", "12"))
+# Increased from 8 to 14 for better context coverage (recommended in feature doc)
+RETRIEVER_K = int(os.getenv("RETRIEVER_K", "14"))
 # Limit for sparse re-ranking (only re-rank top N candidates to save time)
-SPARSE_RERANK_LIMIT = int(os.getenv("SPARSE_RERANK_LIMIT", "10"))
+SPARSE_RERANK_LIMIT = int(os.getenv("SPARSE_RERANK_LIMIT", "14"))
+COMPLEX_QUERY_RETRIEVER_BOOST = int(os.getenv("COMPLEX_QUERY_RETRIEVER_BOOST", "2"))
+COMPLEX_QUERY_SPARSE_RERANK_BOOST = int(os.getenv("COMPLEX_QUERY_SPARSE_RERANK_BOOST", "2"))
 NO_KB_MATCH_RESPONSE = (
     "I couldn't find any relevant content in our knowledge base yet. "
 )
@@ -242,87 +244,28 @@ QA_WITH_HISTORY_PROMPT = ChatPromptTemplate.from_messages(
 )
 
 # 2. System instruction for RAG prompt (defined separately for robustness)
-SYSTEM_INSTRUCTION = """You are a neutral, factual expert on Litecoin. Your goal is to provide comprehensive, well-structured, and educational answers based EXCLUSIVELY on the provided context.
+SYSTEM_INSTRUCTION = """You are a neutral, factual Litecoin expert.
 
----
+Rules:
+- Answer only from the provided source text. If information is missing, say so clearly.
+- Never mention internal retrieval mechanics (e.g., "context", "documents", "retrieved information").
+- Use canonical terms: MWEB, LitVM, Charlie Lee (or Creator), Halving, Scrypt, Lightning.
+- For multi-part/list/history questions, include all relevant items present in the source text.
+- If asked for real-time prices/market data, state your knowledge is static and suggest a live source.
 
-**TERMINOLOGY STANDARDS (Canonical Voice):**
+Response style:
+- Start with a direct 1-2 sentence answer.
+- Then use a `##` heading and concise bullet points for key details.
+- Bold important Litecoin terms when natural.
+"""
 
-To ensure technical accuracy, always prioritize these terms:
+SYSTEM_INSTRUCTION_COMPLEX = SYSTEM_INSTRUCTION + """
 
-- Use **MWEB** (referring to MimbleWimble Extension Blocks).
-
-- Use **LitVM** (referring to Litecoin Virtual Machine, the zero-knowledge omnichain).
-
-- Use **Creator** or **Charlie Lee** (referring to the founder).
-
-- Use **Halving** (referring to the block reward reduction).
-
-- Use **Scrypt** (referring to the hashing algorithm).
-
-- Use **Lightning** (referring to the Lightning Network).
-
-!!! NEVER mention "context", "documents", or "retrieved information". Answer as the expert. !!!
-
----
-
-**COMPLETENESS REQUIREMENT (CRITICAL):**
-
-When answering questions that ask about multiple items, lists, or historical/biographical information, you MUST include ALL relevant information from the context. This includes:
-
-- **Work History/Career:** Include ALL positions, companies, and roles mentioned in the context, presented in chronological order when possible.
-- **Features/Capabilities:** Include ALL features, capabilities, or characteristics mentioned in the context.
-- **Historical Events:** Include ALL relevant events, dates, and details from the context.
-- **Lists/Enumerations:** If the context contains multiple items (companies, technologies, events, etc.), include ALL of them, not just a subset.
-
-Do not omit information because you think it's less important. If it's in the context and relevant to the question, it must be included.
-
----
-
-**EXPERT RESPONSE STRUCTURE:**
-
-1. **Direct Answer:** Start with a high-impact, 1-2 sentence definition using canonical terms.
-
-   
-
-2. **Detailed Breakdown (## Heading):**
-
-   * Use `##` for the main topic (e.g., `## Understanding MWEB`).
-
-   * Use bullet points (*) for key features.
-
-   * **Bold Key Terms:** Always bold terms like **MWEB**, **Scrypt**, or **Litecoin**.
-
-   * **The "Grok" Depth:** Write 2 sentences per bullet point explaining the "how" and "why" based on context.
-
-3. **Technical Context:**
-
-   If the query involves security or economics, explain the relationship to **Proof of Work** or the **84 million LTC** max supply.
-
----
-**ADDITIONAL GUIDELINES:**
-
-* **Formatting:** Use `##` headings, bullet points, and **bold key terms** (like **MWEB**, **LitVM**, or **Scrypt**).
-* **Exclusivity:** Stick *only* to the provided context.
-* **Real-time Data:** If asked for prices, state that your knowledge is static and recommend live sources.
-* **Completeness:** For biographical, historical, or list-type questions, ensure you include ALL relevant information from the context, not just a summary or subset.
-
----
-**EXAMPLE (This follows all rules):**
-
-User: "How does the privacy upgrade work?"
-
-Response:
-
-"**Litecoin's** **MWEB** (MimbleWimble Extension Blocks) is the primary privacy upgrade that allows users to send confidential transactions.
-
-## Key Features of MWEB
-
-* **Confidentiality:** It hides transaction amounts on the blockchain, ensuring that only the sender and receiver know the value of the **LTC** transferred.
-
-* **Scalability:** By using MimbleWimble technology, it compacts the blockchain data, making it more efficient for nodes to process than standard transactions."
-
----"""
+For complex questions:
+- Explain the reasoning chain explicitly and keep sections logically ordered.
+- When comparing multiple concepts, use clear trade-offs and constraints.
+- Prioritize completeness over brevity, but avoid repetition.
+"""
 
 # 3. RAG prompt for final answer generation with chat history support
 RAG_PROMPT = ChatPromptTemplate.from_messages([
@@ -377,7 +320,7 @@ class RAGPipeline:
             logger.info(f"RAGPipeline initialized with VectorStoreManager for collection: {self.collection_name} (MongoDB: {'available' if self.vector_store_manager.mongodb_available else 'unavailable'})")
             logger.info(f"Chat history context limit: {MAX_CHAT_HISTORY_PAIRS} pairs (configure via MAX_CHAT_HISTORY_PAIRS env var)")
 
-        # Initialize LLM with Google Flash 2.5
+        # Initialize LLM with Gemini Flash-Lite
         self.llm = ChatGoogleGenerativeAI(
             model=LLM_MODEL_NAME, 
             temperature=0.2, 
@@ -402,13 +345,22 @@ class RAGPipeline:
         # Setup hybrid retrievers (BM25 + semantic + history-aware)
         self._setup_retrievers()
         
-        # Create document combining chain for final answer generation
-        self.document_chain = create_stuff_documents_chain(self.llm, RAG_PROMPT)
+        # Create document combining chains for simple/complex response profiles
+        self.document_chain_simple = create_stuff_documents_chain(self.llm, RAG_PROMPT)
+        complex_prompt = ChatPromptTemplate.from_messages([
+            ("system", SYSTEM_INSTRUCTION_COMPLEX),
+            ("system", "Context:\n{context}"),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ])
+        self.document_chain_complex = create_stuff_documents_chain(self.llm, complex_prompt)
+        # Backward-compatible alias
+        self.document_chain = self.document_chain_simple
         
         # Create full retrieval chain that passes chat_history to final generation
         self.rag_chain = create_retrieval_chain(
             self.history_aware_retriever,
-            self.document_chain
+            self.document_chain_simple
         )
         
         # Initialize semantic cache with the embedding model from VectorStoreManager
@@ -442,6 +394,8 @@ class RAGPipeline:
         self.short_query_expansion_cache_max = SHORT_QUERY_EXPANSION_CACHE_MAX
         self.retriever_k = RETRIEVER_K
         self.sparse_rerank_limit = SPARSE_RERANK_LIMIT
+        self.complex_query_retriever_boost = COMPLEX_QUERY_RETRIEVER_BOOST
+        self.complex_query_sparse_rerank_boost = COMPLEX_QUERY_SPARSE_RERANK_BOOST
         self.model_name = LLM_MODEL_NAME
         self.generic_user_error_message = GENERIC_USER_ERROR_MESSAGE
         self.no_kb_match_response = NO_KB_MATCH_RESPONSE
@@ -681,13 +635,22 @@ class RAGPipeline:
 
         return rewritten
 
-    def _build_prompt_text(self, query_text: str, context_text: str) -> str:
+    def _build_prompt_text(
+        self,
+        query_text: str,
+        context_text: str,
+        system_instruction: str = SYSTEM_INSTRUCTION,
+    ) -> str:
         """Reconstruct the prompt text fed to the LLM for token accounting."""
         # Build prompt text from the new RAG_PROMPT template structure
-        return f"{SYSTEM_INSTRUCTION}\n\nContext:\n{context_text}\n\nUser: {query_text}"
+        return f"{system_instruction}\n\nContext:\n{context_text}\n\nUser: {query_text}"
     
     def _build_prompt_text_with_history(
-        self, query_text: str, context_text: str, chat_history: List[BaseMessage]
+        self,
+        query_text: str,
+        context_text: str,
+        chat_history: List[BaseMessage],
+        system_instruction: str = SYSTEM_INSTRUCTION,
     ) -> str:
         """Reconstruct the prompt text with chat history for token accounting."""
         # Format history as string for token counting
@@ -699,7 +662,14 @@ class RAGPipeline:
                 history_text += f"Assistant: {msg.content}\n"
         
         # Build prompt text from the new RAG_PROMPT template structure
-        return f"{SYSTEM_INSTRUCTION}\n\nContext:\n{context_text}\n\n{history_text}User: {query_text}"
+        return f"{system_instruction}\n\nContext:\n{context_text}\n\n{history_text}User: {query_text}"
+
+    def _select_document_chain(self, state: Dict[str, Any]):
+        """Choose generation chain/profile based on routed complexity."""
+        complexity_route = str(state.get("complexity_route") or "simple").lower()
+        if complexity_route == "complex":
+            return self.document_chain_complex, "complex", SYSTEM_INSTRUCTION_COMPLEX
+        return self.document_chain_simple, "simple", SYSTEM_INSTRUCTION
 
     def _estimate_token_usage(self, prompt_text: str, answer_text: str) -> Tuple[int, int]:
         """
@@ -864,9 +834,18 @@ class RAGPipeline:
             
             # Rebuild the document chain and retrieval chain (in case LLM changed, though unlikely)
             document_chain = create_stuff_documents_chain(self.llm, RAG_PROMPT)
+            complex_prompt = ChatPromptTemplate.from_messages([
+                ("system", SYSTEM_INSTRUCTION_COMPLEX),
+                ("system", "Context:\n{context}"),
+                MessagesPlaceholder("chat_history"),
+                ("human", "{input}"),
+            ])
+            self.document_chain_simple = document_chain
+            self.document_chain_complex = create_stuff_documents_chain(self.llm, complex_prompt)
+            self.document_chain = self.document_chain_simple
             self.rag_chain = create_retrieval_chain(
                 self.history_aware_retriever,
-                document_chain
+                self.document_chain_simple
             )
             
             logger.info("Vector store and hybrid retrievers refreshed")
@@ -1022,9 +1001,11 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
 
             converted_history: List[BaseMessage] = state.get("converted_history_messages") or []
             sanitized_query = state.get("sanitized_query") or query_text
+            active_chain, response_profile, active_instruction = self._select_document_chain(state)
+            metadata["response_profile"] = response_profile
 
             llm_start = time.time()
-            answer_result = await self.document_chain.ainvoke(
+            answer_result = await active_chain.ainvoke(
                 {"input": sanitized_query, "context": context_docs, "chat_history": converted_history}
             )
             answer = answer_result.content if hasattr(answer_result, "content") else str(answer_result)
@@ -1037,7 +1018,12 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                 input_tokens, output_tokens = self._extract_token_usage_from_llm_response(answer_result)
                 if input_tokens == 0 and output_tokens == 0:
                     context_text = "\n\n".join(d.page_content for d in context_docs)
-                    prompt_text = self._build_prompt_text_with_history(sanitized_query, context_text, converted_history)
+                    prompt_text = self._build_prompt_text_with_history(
+                        sanitized_query,
+                        context_text,
+                        converted_history,
+                        system_instruction=active_instruction,
+                    )
                     input_tokens, output_tokens = self._estimate_token_usage(prompt_text, answer)
                 cost_usd = self.estimate_gemini_cost(input_tokens, output_tokens, self.model_name)
                 self.track_llm_metrics(
@@ -1080,6 +1066,8 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     "cache_hit": False,
                     "cache_type": None,
                     "rewritten_query": rewritten_query if rewritten_query and rewritten_query != query_text else None,
+                    "response_profile": response_profile,
+                    "complexity_route": state.get("complexity_route"),
                 }
             )
             return answer, published_sources, metadata
@@ -1155,11 +1143,13 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
 
             converted_history: List[BaseMessage] = state.get("converted_history_messages") or []
             sanitized_query = state.get("sanitized_query") or query_text
+            active_chain, response_profile, active_instruction = self._select_document_chain(state)
+            metadata["response_profile"] = response_profile
 
             llm_start = time.time()
             full_answer = ""
             answer_obj = None
-            async for chunk in self.document_chain.astream(
+            async for chunk in active_chain.astream(
                 {"input": sanitized_query, "context": context_docs, "chat_history": converted_history}
             ):
                 content = ""
@@ -1182,7 +1172,12 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     input_tokens, output_tokens = self._extract_token_usage_from_llm_response(answer_obj)
                 if input_tokens == 0 and output_tokens == 0:
                     context_text = "\n\n".join(d.page_content for d in context_docs)
-                    prompt_text = self._build_prompt_text_with_history(sanitized_query, context_text, converted_history)
+                    prompt_text = self._build_prompt_text_with_history(
+                        sanitized_query,
+                        context_text,
+                        converted_history,
+                        system_instruction=active_instruction,
+                    )
                     input_tokens, output_tokens = self._estimate_token_usage(prompt_text, full_answer)
                 cost_usd = self.estimate_gemini_cost(input_tokens, output_tokens, self.model_name)
                 self.track_llm_metrics(
@@ -1224,6 +1219,8 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     "duration_seconds": total_duration,
                     "cache_hit": False,
                     "cache_type": None,
+                    "response_profile": response_profile,
+                    "complexity_route": state.get("complexity_route"),
                 }
             )
             yield {"type": "metadata", "metadata": metadata}

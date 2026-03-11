@@ -159,10 +159,20 @@ These variables are usually the same across environments but can be overridden.
 | `ENABLE_GLOBAL_RATE_LIMIT` | `true` | Enable global rate limiting |
 | `TURNSTILE_SECRET_KEY` | (none) | Cloudflare Turnstile secret key (required if `ENABLE_TURNSTILE=true`) |
 | `ENABLE_TURNSTILE` | `false` | Enable Cloudflare Turnstile verification |
-| `USE_SHORT_QUERY_EXPANSION` | `false` | Mitigate semantic sparsity for 1–N word queries by expanding them via the LLM before retrieval. Recommended for short queries like `MWEB`, `supply`, `halving`. |
-| `SHORT_QUERY_WORD_THRESHOLD` | `3` | A query is considered “short” when it has ≤ this many tokens (used for short-query expansion + retrieval heuristics). |
+| `MAX_CHAT_HISTORY_PAIRS` | `4` | Number of recent human/AI exchange pairs preserved for conversational context. |
+| `RETRIEVER_K` | `14` | Number of documents kept after retrieval merge/rerank. |
+| `SPARSE_RERANK_LIMIT` | `14` | Number of initial hybrid candidates considered by sparse reranking. |
+| `USE_CROSS_ENCODER_RERANK` | `true` | Enable cross-encoder reranking for final relevance ordering. |
+| `CROSS_ENCODER_TOP_K` | `10` | Number of documents retained after cross-encoder rerank. |
+| `USE_QUERY_DECOMPOSITION` | `true` | Split compound user questions into multiple retrieval sub-queries. |
+| `USE_SHORT_QUERY_EXPANSION` | `true` | Mitigate semantic sparsity for 1–N word queries by expanding them via the LLM before retrieval. Recommended for short queries like `MWEB`, `supply`, `halving`. |
+| `SHORT_QUERY_WORD_THRESHOLD` | `4` | A query is considered “short” when it has ≤ this many tokens (used for short-query expansion + retrieval heuristics). |
 | `SHORT_QUERY_EXPANSION_MAX_WORDS` | `12` | Max words allowed in the expanded query (prevents prompt/retrieval bloat). |
 | `SHORT_QUERY_EXPANSION_CACHE_MAX` | `512` | In-memory LRU size for cached expansions (controls cost/latency by reusing expansions for repeated short queries). |
+| `COMPLEX_QUERY_TOKEN_THRESHOLD` | `18` | Token threshold used by complexity router to classify a query as complex. |
+| `COMPLEX_QUERY_MULTI_CLAUSE_THRESHOLD` | `2` | Clause marker threshold used by complexity router for complex classification. |
+| `COMPLEX_QUERY_RETRIEVER_BOOST` | `2` | Additional retrieval depth (`k`) applied only for complex-routed queries. |
+| `COMPLEX_QUERY_SPARSE_RERANK_BOOST` | `2` | Additional sparse rerank candidate budget applied only for complex-routed queries. |
 | `HIGH_COST_THRESHOLD_USD` | `10.0` | Cost threshold in USD that triggers throttling (per fingerprint in 10-minute window) |
 | `HIGH_COST_WINDOW_SECONDS` | `600` | Cost tracking window in seconds (10 minutes) |
 | `ENABLE_COST_THROTTLING` | `true` | Enable cost-based throttling |

@@ -36,6 +36,7 @@ def make_decompose_node(pipeline: Any):
         """
         metadata: Dict[str, Any] = state.get("metadata") or {}
         logger = logging.getLogger(__name__)
+        complexity_route = str(state.get("complexity_route") or "simple").lower()
 
         retrieval_query = (
             state.get("retrieval_query")
@@ -84,7 +85,8 @@ def make_decompose_node(pipeline: Any):
             ]
 
             if len(sub_queries) > 1:
-                sub_queries = sub_queries[:5]
+                max_sub_queries = 6 if complexity_route == "complex" else 5
+                sub_queries = sub_queries[:max_sub_queries]
                 logger.info(
                     "Decompose: split '%s' into %d sub-queries: %s",
                     retrieval_query,
@@ -93,6 +95,7 @@ def make_decompose_node(pipeline: Any):
                 )
                 metadata["query_decomposed"] = True
                 metadata["sub_queries"] = sub_queries
+                metadata["complexity_route"] = complexity_route
                 state["retrieval_queries"] = sub_queries
             else:
                 logger.debug("Decompose: LLM returned single query, no split needed")

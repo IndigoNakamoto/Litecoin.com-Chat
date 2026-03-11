@@ -25,6 +25,7 @@ class RAGState(TypedDict, total=False):
 
     # Routing / rewriting
     effective_query: str
+    complexity_route: str
     is_dependent: bool
     effective_history_pairs: List[Tuple[str, str]]
     converted_history_messages: List[BaseMessage]

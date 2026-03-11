@@ -158,6 +158,13 @@ def make_retrieve_node(pipeline: Any):
 
         retriever_k = int(getattr(pipeline, "retriever_k", 12))
         sparse_rerank_limit = int(getattr(pipeline, "sparse_rerank_limit", 10))
+        complexity_route = str(state.get("complexity_route") or "simple").lower()
+        if complexity_route == "complex":
+            retriever_k += int(getattr(pipeline, "complex_query_retriever_boost", 2) or 0)
+            sparse_rerank_limit += int(getattr(pipeline, "complex_query_sparse_rerank_boost", 2) or 0)
+        metadata["complexity_route"] = complexity_route
+        metadata["retriever_k_effective"] = retriever_k
+        metadata["sparse_rerank_limit_effective"] = sparse_rerank_limit
 
         use_infinity = bool(getattr(pipeline, "use_infinity_embeddings", False))
         pre_computed_vector = state.get("query_vector")

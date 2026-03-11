@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, List, Tuple
 
@@ -9,16 +10,51 @@ from backend.utils.litecoin_vocabulary import expand_ltc_entities
 
 from ..state import RAGState
 
+COMPLEX_QUERY_TOKEN_THRESHOLD = int(os.getenv("COMPLEX_QUERY_TOKEN_THRESHOLD", "18"))
+COMPLEX_QUERY_MULTI_CLAUSE_THRESHOLD = int(os.getenv("COMPLEX_QUERY_MULTI_CLAUSE_THRESHOLD", "2"))
+_COMPLEX_SIGNAL_TERMS = (
+    "compare",
+    "tradeoff",
+    "pros and cons",
+    "in depth",
+    "step by step",
+    "analyze",
+    "evaluate",
+    "explain why",
+    "architecture",
+    "security implications",
+    "economics",
+)
+
+
+def _classify_query_complexity(query_text: str) -> str:
+    """Fast deterministic complexity routing for response profile selection."""
+    normalized = (query_text or "").strip().lower()
+    if not normalized:
+        return "simple"
+    tokens = re.findall(r"[a-z0-9']+", normalized)
+    clause_markers = len(re.findall(r"\b(and|or|vs|versus|while|whereas)\b|[,:;]", normalized))
+    has_complex_term = any(term in normalized for term in _COMPLEX_SIGNAL_TERMS)
+    if (
+        len(tokens) >= COMPLEX_QUERY_TOKEN_THRESHOLD
+        or clause_markers >= COMPLEX_QUERY_MULTI_CLAUSE_THRESHOLD
+        or has_complex_term
+    ):
+        return "complex"
+    return "simple"
+
 
 def make_route_node(pipeline: Any):
     async def route(state: RAGState) -> RAGState:
         normalized_query = state.get("normalized_query") or state.get("sanitized_query") or state.get("raw_query") or ""
         truncated_history: List[Tuple[str, str]] = state.get("truncated_history_pairs") or []
+        metadata = state.get("metadata") or {}
 
         # Default: no history dependency
         effective_query = normalized_query
         effective_history_pairs: List[Tuple[str, str]] = []
         is_dependent = False
+        complexity_route = _classify_query_complexity(normalized_query)
 
         # No history => no routing work
         if not truncated_history:
@@ -28,8 +64,11 @@ def make_route_node(pipeline: Any):
                     "effective_history_pairs": [],
                     "is_dependent": False,
                     "converted_history_messages": [],
+                    "complexity_route": complexity_route,
                 }
             )
+            metadata["complexity_route"] = complexity_route
+            state["metadata"] = metadata
             return state
 
         # Deterministic pronoun anchoring (anti-topic-drift), then entity expansion (topic reinforcement)
@@ -82,8 +121,11 @@ def make_route_node(pipeline: Any):
                 "is_dependent": is_dependent,
                 "effective_history_pairs": effective_history_pairs,
                 "converted_history_messages": converted_effective_history,
+                "complexity_route": complexity_route,
             }
         )
+        metadata["complexity_route"] = complexity_route
+        state["metadata"] = metadata
         return state
 
     return route
