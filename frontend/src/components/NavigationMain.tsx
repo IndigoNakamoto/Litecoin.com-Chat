@@ -449,7 +449,7 @@ const Navigation = () => {
               <li className="ml-2 p-2 pl-4 text-left">
                 <a href="https://litecoin.com/litecoin-foundation#contact">Contact</a>
               </li>
-              <li className="mb-2 ml-2 p-2 pl-4 text-left">
+              <li className="mb-2 ml-2 p-2 pl-4 text-left">w
                 <a href="https://litecoin.com/financials">Financials</a>
               </li>
             </>

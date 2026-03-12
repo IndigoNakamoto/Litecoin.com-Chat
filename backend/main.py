@@ -22,11 +22,6 @@ from contextlib import asynccontextmanager
 # Load environment variables from .env file
 load_dotenv()
 
-# Suppress FutureWarning from langchain_google_genai (uses deprecated google.generativeai).
-# Migrate to langchain-google-genai 4.x + google-genai SDK when upgrading to LangChain 1.x.
-import warnings
-warnings.filterwarnings("ignore", category=FutureWarning, module="langchain_google_genai.*")
-
 # Import the RAG chain constructor and data models
 from backend.rag_pipeline import RAGPipeline, LLM_MODEL_NAME, GENERIC_USER_ERROR_MESSAGE
 from backend.data_models import ChatRequest, ChatMessage, UserQuestion, LLMRequestLog
@@ -38,6 +33,7 @@ from backend.api.v1.admin.redis import router as admin_redis_router
 from backend.api.v1.admin.settings import router as admin_settings_router
 from backend.api.v1.admin.cache import router as admin_cache_router
 from backend.api.v1.admin.users import router as admin_users_router
+from backend.api.v1.admin.knowledge_candidates import router as admin_knowledge_candidates_router
 from backend.dependencies import get_user_questions_collection, get_llm_request_logs_collection
 from bson import ObjectId
 from fastapi.encoders import jsonable_encoder # Import jsonable_encoder
@@ -598,6 +594,7 @@ app.include_router(admin_redis_router, prefix="/api/v1/admin/redis", tags=["Admi
 app.include_router(admin_settings_router, prefix="/api/v1/admin/settings", tags=["Admin"])
 app.include_router(admin_cache_router, prefix="/api/v1/admin/cache", tags=["Admin"])
 app.include_router(admin_users_router, prefix="/api/v1/admin/users", tags=["Admin"])
+app.include_router(admin_knowledge_candidates_router, prefix="/api/v1/admin", tags=["Admin"])
 
 # Import cache utilities and suggested questions utility
 from backend.cache_utils import suggested_question_cache
@@ -1150,6 +1147,7 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
         cache_type = None
         status = "success"
         error_message = None
+        grounding_meta = None
         
         try:
             # Check usage status and include in stream if not ok
@@ -1319,6 +1317,7 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                     metadata = chunk_data.get("metadata", {})
                     cache_hit = metadata.get("cache_hit", False)
                     cache_type = metadata.get("cache_type")
+                    grounding_meta = metadata.get("grounding_metadata")
                 elif chunk_data["type"] == "follow_ups":
                     payload = {
                         "status": "follow_ups",
@@ -1393,6 +1392,31 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                 cache_type=cache_type,
                 error_message=error_message,
             )
+
+            # Knowledge Gap Flywheel: queue candidates when grounding was used
+            # Note: streaming chunks don't carry grounding_metadata (only ainvoke does),
+            # so we also check for the provenance marker the LLM inserts in grounded answers.
+            if (
+                getattr(rag_pipeline_instance, "use_knowledge_gap_detection", False)
+                and status == "success"
+                and full_answer
+                and not cache_hit
+                and (grounding_meta or sources_count == 0 or "Based on public sources:" in full_answer)
+            ):
+                try:
+                    from backend.services.knowledge_gap_detector import detect_and_queue_knowledge_gap
+                    background_tasks.add_task(
+                        detect_and_queue_knowledge_gap,
+                        request_id=request_id,
+                        user_question=request.query,
+                        generated_answer=full_answer,
+                        published_sources_count=sources_count,
+                        retriever_k=getattr(rag_pipeline_instance, "retriever_k", 14),
+                        grounding_metadata=grounding_meta,
+                        embedding_model=rag_pipeline_instance.vector_store_manager.embeddings,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to queue knowledge gap detection: %s", e)
 
     return StreamingResponse(
         generate_stream(),

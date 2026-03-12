@@ -259,21 +259,15 @@ class GeminiRewriter(BaseRewriter):
             logger.info(f"GeminiRewriter initialized: model={self.model}")
     
     def _get_client(self):
-        """Lazy-load Gemini client."""
+        """Lazy-load Gemini client via langchain_google_genai."""
         if self._client is None:
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=self.api_key)
-                self._client = genai.GenerativeModel(
-                    model_name=self.model,
-                    generation_config={
-                        "temperature": 0.1,
-                        "max_output_tokens": 100,
-                    },
-                )
-            except ImportError:
-                logger.error("google-generativeai not installed")
-                raise
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            self._client = ChatGoogleGenerativeAI(
+                model=self.model,
+                google_api_key=self.api_key,
+                temperature=0.1,
+                max_output_tokens=100,
+            )
         return self._client
     
     async def rewrite(self, query: str, chat_history: List[Tuple[str, str]]) -> str:
@@ -295,10 +289,9 @@ class GeminiRewriter(BaseRewriter):
         try:
             client = self._get_client()
             
-            # Use async generation
-            response = await client.generate_content_async(prompt)
+            response = await client.ainvoke(prompt)
             
-            rewritten = response.text.strip() if response.text else query
+            rewritten = response.content.strip() if response.content else query
             rewritten = self._clean_response(rewritten, query)
             
             logger.debug(f"Gemini rewrite: '{query}' -> '{rewritten}'")

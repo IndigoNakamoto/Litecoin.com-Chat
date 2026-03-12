@@ -257,6 +257,33 @@ user_questions_count_from_db = Gauge(
     ["endpoint_type"],  # endpoint_type: "chat", "stream", or "total"
 )
 
+# Knowledge Gap Flywheel Metrics
+knowledge_candidates_total = Counter(
+    "knowledge_candidates_total",
+    "Total knowledge gap candidates created",
+    ["trigger"],  # trigger: "grounding", "no_kb_sources", "provenance_marker"
+)
+
+knowledge_candidates_approved_total = Counter(
+    "knowledge_candidates_approved_total",
+    "Total knowledge gap candidates approved by admin",
+)
+
+knowledge_candidates_rejected_total = Counter(
+    "knowledge_candidates_rejected_total",
+    "Total knowledge gap candidates rejected by admin",
+)
+
+knowledge_candidates_published_total = Counter(
+    "knowledge_candidates_published_total",
+    "Total knowledge gap candidates published as CMS drafts",
+)
+
+knowledge_candidates_deduped_total = Counter(
+    "knowledge_candidates_deduped_total",
+    "Total knowledge gap candidates deduplicated (frequency incremented)",
+)
+
 # Rate limiting metrics
 rate_limit_rejections_total = Counter(
     "rate_limit_rejections_total",

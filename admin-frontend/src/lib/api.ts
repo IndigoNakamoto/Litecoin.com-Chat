@@ -302,6 +302,84 @@ export const usersApi = {
 };
 
 /**
+ * Knowledge Candidates API client.
+ */
+export const knowledgeCandidatesApi = {
+  async list(params: {
+    status?: string;
+    limit?: number;
+    offset?: number;
+    sort_by?: string;
+    sort_order?: number;
+  } = {}): Promise<{
+    candidates: KnowledgeCandidate[];
+    total: number;
+    limit: number;
+    offset: number;
+  }> {
+    const searchParams = new URLSearchParams();
+    if (params.status) searchParams.set("status", params.status);
+    if (params.limit) searchParams.set("limit", String(params.limit));
+    if (params.offset) searchParams.set("offset", String(params.offset));
+    if (params.sort_by) searchParams.set("sort_by", params.sort_by);
+    if (params.sort_order !== undefined) searchParams.set("sort_order", String(params.sort_order));
+    const qs = searchParams.toString();
+    return apiRequest(`/api/v1/admin/knowledge-candidates${qs ? `?${qs}` : ""}`);
+  },
+
+  async get(id: string): Promise<{ candidate: KnowledgeCandidate }> {
+    return apiRequest(`/api/v1/admin/knowledge-candidates/${id}`);
+  },
+
+  async update(
+    id: string,
+    data: { status?: "approved" | "rejected"; admin_notes?: string }
+  ): Promise<{ candidate: KnowledgeCandidate; updated: boolean }> {
+    return apiRequest(`/api/v1/admin/knowledge-candidates/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  },
+
+  async publish(id: string): Promise<{
+    published: boolean;
+    payload_article_id: string;
+    candidate_id: string;
+  }> {
+    return apiRequest(`/api/v1/admin/knowledge-candidates/${id}/publish`, {
+      method: "POST",
+    });
+  },
+
+  async stats(): Promise<{
+    by_status: Record<string, { count: number; total_frequency: number }>;
+    top_pending_topics: Array<{ topic: string; count: number; total_frequency: number }>;
+    total_candidates: number;
+  }> {
+    return apiRequest("/api/v1/admin/knowledge-candidates/stats");
+  },
+};
+
+export interface KnowledgeCandidate {
+  id: string;
+  user_question: string;
+  request_id: string;
+  timestamp: string;
+  generated_answer: string;
+  grounding_sources: Array<{ url?: string; title?: string }>;
+  kb_sources_used: Array<Record<string, unknown>>;
+  kb_coverage_score: number;
+  topic_cluster: string | null;
+  question_frequency: number;
+  status: "pending" | "approved" | "rejected" | "published";
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  admin_notes: string | null;
+  payload_article_id: string | null;
+  similar_candidate_ids: string[];
+}
+
+/**
  * Question logs API client.
  */
 export const questionLogsApi = {

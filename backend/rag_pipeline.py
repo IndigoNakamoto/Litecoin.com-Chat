@@ -24,8 +24,7 @@ from cache_utils import query_cache, SemanticCache
 from backend.utils.input_sanitizer import sanitize_query_input, detect_prompt_injection
 from backend.utils.litecoin_vocabulary import normalize_ltc_keywords, expand_ltc_entities, LTC_ENTITY_EXPANSIONS
 from fastapi import HTTPException
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
-import google.generativeai as genai
+from langchain_google_genai import HarmCategory, HarmBlockThreshold
 from backend.rag_graph.graph import build_rag_graph
 from backend.rag_graph.nodes.factory import build_nodes
 
@@ -38,6 +37,11 @@ USE_REDIS_CACHE = os.getenv("USE_REDIS_CACHE", "false").lower() == "true"
 # --- Advanced RAG Feature Flags ---
 USE_INTENT_CLASSIFICATION = os.getenv("USE_INTENT_CLASSIFICATION", "true").lower() == "true"
 USE_FAQ_INDEXING = os.getenv("USE_FAQ_INDEXING", "true").lower() == "true"
+
+# --- Knowledge Gap Flywheel ---
+USE_SEARCH_GROUNDING = os.getenv("USE_SEARCH_GROUNDING", "true").lower() == "true"
+USE_KNOWLEDGE_GAP_DETECTION = os.getenv("USE_KNOWLEDGE_GAP_DETECTION", "true").lower() == "true"
+SEARCH_GROUNDING_SOURCE_THRESHOLD = int(os.getenv("SEARCH_GROUNDING_SOURCE_THRESHOLD", "2"))
 
 # --- Short-query semantic sparsity mitigations ---
 # When enabled, very short queries (e.g. "MWEB", "supply") are expanded via the LLM
@@ -257,7 +261,8 @@ QA_WITH_HISTORY_PROMPT = ChatPromptTemplate.from_messages(
 SYSTEM_INSTRUCTION = """You are a neutral, factual Litecoin expert.
 
 Rules:
-- Answer only from the provided source text. If information is missing, say so clearly.
+- Answer primarily from the provided source text. If information is missing, say so clearly.
+- If you supplement your answer with information from web search beyond the provided source text, clearly mark that information with "Based on public sources:" so the user understands its provenance.
 - Never mention internal retrieval mechanics (e.g., "context", "documents", "retrieved information").
 - Use canonical terms: MWEB, LitVM, Charlie Lee (or Creator), Halving, Scrypt, Lightning.
 - For multi-part/list/history questions, include all relevant items present in the source text.
@@ -343,14 +348,7 @@ class RAGPipeline:
             }
         )
         
-        # Initialize local tokenizer for accurate token counting (faster than API calls)
-        try:
-            genai.configure(api_key=google_api_key)
-            self.tokenizer_model = genai.GenerativeModel(LLM_MODEL_NAME)
-            logger.info(f"Local tokenizer initialized for accurate token counting")
-        except Exception as e:
-            logger.warning(f"Failed to initialize local tokenizer: {e}. Will use fallback methods.")
-            self.tokenizer_model = None
+        self.tokenizer_model = None
 
         # Setup hybrid retrievers (BM25 + semantic + history-aware)
         self._setup_retrievers()
@@ -366,6 +364,34 @@ class RAGPipeline:
         self.document_chain_complex = create_stuff_documents_chain(self.llm, complex_prompt)
         # Backward-compatible alias
         self.document_chain = self.document_chain_simple
+
+        # Search grounding: create grounded chain variants for KB-gap fallback
+        self.search_grounding_enabled = USE_SEARCH_GROUNDING
+        self.search_grounding_source_threshold = SEARCH_GROUNDING_SOURCE_THRESHOLD
+        if USE_SEARCH_GROUNDING:
+            try:
+                # Gemini 3.x models use the google_search tool (not the deprecated
+                # google_search_retrieval). We try the gRPC proto type first, then
+                # fall back to a plain dict which langchain_google_genai also accepts.
+                try:
+                    from google.ai.generativelanguage_v1beta.types import Tool as GapicTool
+                    self._search_grounding_tool = GapicTool(google_search={})
+                except ImportError:
+                    self._search_grounding_tool = {"google_search": {}}
+                grounded_llm = self.llm.bind(tools=[self._search_grounding_tool])
+                self.document_chain_grounded_simple = create_stuff_documents_chain(grounded_llm, RAG_PROMPT)
+                self.document_chain_grounded_complex = create_stuff_documents_chain(grounded_llm, complex_prompt)
+                logger.info("Search grounding enabled (google_search tool)")
+            except Exception as e:
+                logger.warning(f"Failed to initialize search grounding: {e}. Grounding disabled.")
+                self.search_grounding_enabled = False
+                self._search_grounding_tool = None
+                self.document_chain_grounded_simple = None
+                self.document_chain_grounded_complex = None
+        else:
+            self._search_grounding_tool = None
+            self.document_chain_grounded_simple = None
+            self.document_chain_grounded_complex = None
         
         # Create full retrieval chain that passes chat_history to final generation
         self.rag_chain = create_retrieval_chain(
@@ -417,6 +443,7 @@ class RAGPipeline:
         self.estimate_gemini_cost = estimate_gemini_cost
         self.check_spend_limit = check_spend_limit
         self.record_spend = record_spend
+        self.use_knowledge_gap_detection = USE_KNOWLEDGE_GAP_DETECTION
 
         # LangGraph compiled graph (lazy)
         self._rag_graph = None
@@ -782,10 +809,21 @@ Rules:
         return f"{system_instruction}\n\nContext:\n{context_text}\n\n{history_text}User: {query_text}"
 
     def _select_document_chain(self, state: Dict[str, Any]):
-        """Choose generation chain/profile based on routed complexity."""
+        """Choose generation chain/profile based on routed complexity and KB coverage."""
         complexity_route = str(state.get("complexity_route") or "simple").lower()
+        published_sources = state.get("published_sources") or []
+        use_grounding = (
+            self.search_grounding_enabled
+            and len(published_sources) <= self.search_grounding_source_threshold
+        )
+
         if complexity_route == "complex":
+            if use_grounding and self.document_chain_grounded_complex:
+                return self.document_chain_grounded_complex, "complex_grounded", SYSTEM_INSTRUCTION_COMPLEX
             return self.document_chain_complex, "complex", SYSTEM_INSTRUCTION_COMPLEX
+
+        if use_grounding and self.document_chain_grounded_simple:
+            return self.document_chain_grounded_simple, "simple_grounded", SYSTEM_INSTRUCTION
         return self.document_chain_simple, "simple", SYSTEM_INSTRUCTION
 
     def _estimate_token_usage(self, prompt_text: str, answer_text: str) -> Tuple[int, int]:
@@ -920,6 +958,33 @@ Rules:
         
         return input_tokens, output_tokens
 
+    def _extract_grounding_metadata(self, response: Any) -> Optional[Dict[str, Any]]:
+        """
+        Extract search grounding metadata from a Gemini LLM response.
+
+        When search grounding activates, the response contains grounding_chunks
+        and grounding_supports that indicate which parts came from web search.
+        Returns None if no grounding metadata is present.
+        """
+        if not self.search_grounding_enabled:
+            return None
+        try:
+            metadata = getattr(response, "response_metadata", None) or {}
+            grounding_meta = metadata.get("grounding_metadata")
+            if grounding_meta:
+                return grounding_meta
+
+            # Some SDK versions nest it differently
+            candidates_meta = metadata.get("candidates", [])
+            if candidates_meta and isinstance(candidates_meta, list):
+                for candidate in candidates_meta:
+                    gm = candidate.get("grounding_metadata") if isinstance(candidate, dict) else None
+                    if gm:
+                        return gm
+        except Exception as e:
+            logger.debug("Could not extract grounding metadata: %s", e)
+        return None
+
     def refresh_vector_store(self):
         """
         Refreshes the vector store by reloading from disk and recreating the RAG chain.
@@ -964,6 +1029,12 @@ Rules:
                 self.history_aware_retriever,
                 self.document_chain_simple
             )
+
+            # Rebuild grounded chain variants
+            if self.search_grounding_enabled and self._search_grounding_tool:
+                grounded_llm = self.llm.bind(tools=[self._search_grounding_tool])
+                self.document_chain_grounded_simple = create_stuff_documents_chain(grounded_llm, RAG_PROMPT)
+                self.document_chain_grounded_complex = create_stuff_documents_chain(grounded_llm, complex_prompt)
             
             logger.info("Vector store and hybrid retrievers refreshed")
 
@@ -1128,6 +1199,9 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             answer = answer_result.content if hasattr(answer_result, "content") else str(answer_result)
             llm_duration = time.time() - llm_start
 
+            # Extract grounding metadata (search grounding provenance)
+            grounding_meta = self._extract_grounding_metadata(answer_result)
+
             # Token usage + cost
             input_tokens, output_tokens = 0, 0
             cost_usd = 0.0
@@ -1185,6 +1259,7 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     "rewritten_query": rewritten_query if rewritten_query and rewritten_query != query_text else None,
                     "response_profile": response_profile,
                     "complexity_route": state.get("complexity_route"),
+                    "grounding_metadata": grounding_meta,
                 }
             )
             return answer, published_sources, metadata
@@ -1290,6 +1365,9 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             llm_duration = time.time() - llm_start
             total_duration = time.time() - start_time
 
+            # Extract grounding metadata (search grounding provenance)
+            grounding_meta = self._extract_grounding_metadata(answer_obj) if answer_obj else None
+
             input_tokens, output_tokens = 0, 0
             cost_usd = 0.0
             if self.monitoring_enabled:
@@ -1355,6 +1433,7 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     "cache_type": None,
                     "response_profile": response_profile,
                     "complexity_route": state.get("complexity_route"),
+                    "grounding_metadata": grounding_meta,
                 }
             )
             yield {"type": "metadata", "metadata": metadata}

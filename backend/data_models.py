@@ -211,3 +211,39 @@ class LLMRequestLog(BaseModel):
                 "error_message": None
             }
         }
+
+
+class KnowledgeCandidate(BaseModel):
+    """
+    Represents a knowledge gap detected when search grounding supplements KB content.
+    Queued for admin review; approved candidates become Payload CMS draft articles.
+    """
+    id: Optional[str] = Field(None, description="MongoDB document ID.")
+    user_question: str = Field(..., description="The user question that triggered a KB gap.")
+    request_id: str = Field(..., description="Request ID from the originating LLM call.")
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="When the gap was detected.")
+    generated_answer: str = Field(..., description="The full answer generated (including search-grounded content).")
+    grounding_sources: List[Dict[str, Any]] = Field(default_factory=list, description="Web sources used by search grounding.")
+    kb_sources_used: List[Dict[str, Any]] = Field(default_factory=list, description="KB sources that were available.")
+    kb_coverage_score: float = Field(0.0, description="Ratio of KB sources to retriever_k (0.0-1.0).")
+    topic_cluster: Optional[str] = Field(None, description="Detected topic cluster (e.g. 'mweb', 'mining').")
+    question_frequency: int = Field(1, description="Number of similar questions that mapped to this candidate.")
+    question_embedding: Optional[List[float]] = Field(None, description="Embedding vector for dedup comparisons.")
+    status: Literal["pending", "approved", "rejected", "published"] = Field("pending", description="Review status.")
+    reviewed_by: Optional[str] = Field(None, description="Admin who reviewed the candidate.")
+    reviewed_at: Optional[datetime] = Field(None, description="When the candidate was reviewed.")
+    admin_notes: Optional[str] = Field(None, description="Notes from the admin reviewer.")
+    payload_article_id: Optional[str] = Field(None, description="Payload CMS article ID once published as draft.")
+    similar_candidate_ids: List[str] = Field(default_factory=list, description="IDs of deduplicated similar candidates.")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "user_question": "What is Litecoin's block time?",
+                "request_id": "550e8400-e29b-41d4-a716-446655440000",
+                "generated_answer": "Litecoin has a block time of 2.5 minutes...",
+                "kb_coverage_score": 0.0,
+                "question_frequency": 3,
+                "status": "pending",
+            }
+        }

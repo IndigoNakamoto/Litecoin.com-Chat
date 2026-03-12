@@ -55,6 +55,9 @@ class RAGState(TypedDict, total=False):
     error_type: Optional[str]
     error_message: Optional[str]
 
+    # Grounding (search grounding metadata from Gemini when KB gaps are filled)
+    grounding_metadata: Optional[Dict[str, Any]]
+
     # Metadata
     metadata: Dict[str, Any]
 

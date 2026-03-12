@@ -9,7 +9,7 @@ import { UserStatistics } from "@/components/UserStatistics";
 import { Button } from "@/components/ui/button";
 import { authApi } from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { LogOut, FileText } from "lucide-react";
+import { LogOut, FileText, Lightbulb } from "lucide-react";
 import Link from "next/link";
 
 export default function DashboardPage() {
@@ -27,6 +27,12 @@ export default function DashboardPage() {
           <div className="container mx-auto px-4 py-4 flex justify-between items-center">
             <h1 className="text-2xl font-bold text-card-foreground">Admin Panel</h1>
             <div className="flex gap-2 items-center">
+              <Link href="/knowledge">
+                <Button variant="outline">
+                  <Lightbulb className="h-4 w-4 mr-2" />
+                  Knowledge Gaps
+                </Button>
+              </Link>
               <Link href="/questions">
                 <Button variant="outline">
                   <FileText className="h-4 w-4 mr-2" />

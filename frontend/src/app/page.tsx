@@ -10,14 +10,20 @@ import SuggestedQuestions from "@/components/SuggestedQuestions";
 import { getFingerprintWithChallenge, getFingerprint } from "@/lib/utils/fingerprint";
 import { useScrollContext } from "@/contexts/ScrollContext";
 
+interface GroundingSource {
+  url?: string;
+  title?: string;
+}
+
 interface Message {
-  role: "human" | "ai"; // Changed to match backend Pydantic model
+  role: "human" | "ai";
   content: string;
   followUpQuestions?: string[];
   status?: "thinking" | "streaming" | "complete" | "error";
   isStreamActive?: boolean;
   id?: string;
-  // Retry information for challenge errors
+  isGrounded?: boolean;
+  groundingSources?: GroundingSource[];
   retryInfo?: {
     retryAfterSeconds: number;
     banExpiresAt?: number;
@@ -862,6 +868,7 @@ export default function Home() {
       let accumulatedContent = "";
       let buffer = "";
       let shouldBreak = false;
+      let isGroundedResponse = false;
 
       // Helper function to check if tab is visible
       const isTabVisible = () => {
@@ -872,6 +879,7 @@ export default function Home() {
       type SSEData = 
         | { status: 'thinking' }
         | { status: 'streaming'; chunk: string }
+        | { status: 'sources'; sources?: Array<{ metadata?: { grounding_metadata?: Record<string, unknown> } }> }
         | { status: 'follow_ups'; questions?: string[] }
         | { status: 'complete' }
         | { status: 'error'; error?: string }
@@ -942,17 +950,24 @@ export default function Home() {
               isStreamActive: true
             } : null);
           }
+        } else if (data.status === 'sources') {
+          // Sources event is informational; detect if search grounding was used
+          // by checking whether the response profile indicates grounding
+          // (grounding_metadata presence is tracked server-side and reflected
+          //  in the answer text via "Based on public sources:" marker)
         } else if (data.status === 'follow_ups') {
           setStreamingMessage(prev => prev ? {
             ...prev,
             followUpQuestions: data.questions || []
           } : null);
         } else if (data.status === 'complete') {
+          isGroundedResponse = accumulatedContent.includes("Based on public sources:");
           setStreamingMessage(prev => prev ? {
             ...prev,
             content: accumulatedContent,
             status: 'complete',
-            isStreamActive: false
+            isStreamActive: false,
+            isGrounded: isGroundedResponse,
           } : null);
           shouldBreak = true;
         } else if (data.status === 'error') {
@@ -1077,14 +1092,15 @@ export default function Home() {
       setMessages(prev => [...prev, {
         role: streamingMessage.role,
         content: streamingMessage.content,
-        followUpQuestions: streamingMessage.followUpQuestions
+        followUpQuestions: streamingMessage.followUpQuestions,
+        isGrounded: streamingMessage.isGrounded,
       }]);
       setStreamingMessage(null);
     } else if (streamingMessage && streamingMessage.status === 'error') {
       setMessages(prev => [...prev, {
         role: streamingMessage.role,
         content: streamingMessage.content,
-        followUpQuestions: streamingMessage.followUpQuestions
+        followUpQuestions: streamingMessage.followUpQuestions,
       }]);
       setStreamingMessage(null);
     }
@@ -1138,6 +1154,7 @@ export default function Home() {
                 role={msg.role === "human" ? "user" : "assistant"}
                 content={msg.content}
                 followUpQuestions={msg.followUpQuestions}
+                isGrounded={msg.isGrounded}
                 retryInfo={msg.retryInfo}
                 onFollowUpClick={handleSendMessage}
                 onRetry={msg.retryInfo?.originalMessage ? () => handleRetryMessage(msg.id!, msg.retryInfo!.originalMessage!) : undefined}
