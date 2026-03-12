@@ -1,125 +1,133 @@
-#!/usr/bin/env python3
-"""
-Test script to verify astream_query functionality with full RAG processing capabilities.
-"""
-import os
-import sys
+from unittest.mock import AsyncMock, MagicMock
 
-# Load environment variables BEFORE any other imports
-from dotenv import load_dotenv
-dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
-if os.path.exists(dotenv_path):
-    load_dotenv(dotenv_path, override=True)
-    print('✅ Loaded .env file')
-else:
-    print('❌ No .env file found')
-
-# Now import other modules
-import asyncio
 import pytest
-from rag_pipeline import RAGPipeline
+from langchain_core.documents import Document
+
+from backend.rag_pipeline import RAGPipeline
+
+
+class DummyGraph:
+    def __init__(self, state):
+        self.state = state
+
+    async def ainvoke(self, _payload):
+        return self.state
+
+
+class DummyChain:
+    def __init__(self, chunks):
+        self.chunks = chunks
+
+    async def astream(self, _payload):
+        for chunk in self.chunks:
+            yield chunk
+
+
+def make_pipeline(state, chunks=None, follow_ups=None):
+    pipeline = object.__new__(RAGPipeline)
+    pipeline._get_rag_graph = lambda: DummyGraph(state)
+    pipeline._select_document_chain = lambda _state: (DummyChain(chunks or []), "simple", "test instruction")
+    pipeline.query_cache = MagicMock()
+    pipeline.query_cache.set = MagicMock()
+    pipeline.use_redis_cache = False
+    pipeline.semantic_cache = None
+    pipeline.get_redis_vector_cache = MagicMock(return_value=None)
+    pipeline.monitoring_enabled = False
+    pipeline.generic_user_error_message = "Generic error"
+    pipeline.no_kb_match_response = "No KB response"
+    pipeline.agenerate_follow_up_questions = AsyncMock(return_value=follow_ups or [])
+    pipeline.track_llm_metrics = MagicMock()
+    pipeline.estimate_gemini_cost = MagicMock(return_value=0.0)
+    pipeline.record_spend = AsyncMock(return_value={})
+    pipeline.model_name = "test-model"
+    return pipeline
+
 
 @pytest.mark.asyncio
-async def test_astream_query():
-    """Test the modified astream_query method."""
-    try:
-        print('🚀 Initializing RAGPipeline...')
-        pipeline = RAGPipeline()
-        print('✅ RAGPipeline initialized successfully')
+async def test_astream_query_emits_follow_ups_before_complete():
+    sources = [
+        Document(
+            page_content="Litecoin was created by Charlie Lee in 2011.",
+            metadata={"status": "published", "title": "Litecoin History"},
+        )
+    ]
+    state = {
+        "metadata": {},
+        "context_docs": sources,
+        "published_sources": sources,
+        "retrieval_failed": False,
+        "converted_history_messages": [],
+        "sanitized_query": "What is Litecoin?",
+        "complexity_route": "simple",
+    }
+    pipeline = make_pipeline(
+        state,
+        chunks=["Litecoin ", "is a cryptocurrency."],
+        follow_ups=["How is Litecoin different from Bitcoin?", "Who created Litecoin?"],
+    )
 
-        # Test 1: Basic streaming query without history
-        print('\n📝 Test 1: Basic streaming query')
-        print('Query: "What is Litecoin?"')
+    events = [event async for event in pipeline.astream_query("What is Litecoin?", [])]
+    event_types = [event["type"] for event in events]
 
-        chunks = []
-        sources_count = 0
-        from_cache = False
+    assert event_types == ["sources", "chunk", "chunk", "follow_ups", "metadata", "complete"]
+    assert events[3]["questions"] == [
+        "How is Litecoin different from Bitcoin?",
+        "Who created Litecoin?",
+    ]
+    assert events[-1]["from_cache"] is False
+    pipeline.agenerate_follow_up_questions.assert_awaited_once()
+    pipeline.query_cache.set.assert_called_once()
 
-        async for chunk in pipeline.astream_query('What is Litecoin?', []):
-            if chunk['type'] == 'sources':
-                sources_count = len(chunk['sources'])
-                print(f'📚 Received {sources_count} sources')
-                # Check if sources are filtered (should only be published)
-                published_count = sum(1 for doc in chunk['sources'] if doc.metadata.get('status') == 'published')
-                print(f'📋 Published sources: {published_count}/{sources_count}')
 
-            elif chunk['type'] == 'chunk':
-                chunks.append(chunk['content'])
+@pytest.mark.asyncio
+async def test_astream_query_emits_follow_ups_for_early_answer_cache_path():
+    sources = [
+        Document(
+            page_content="Litecoin launched in 2011.",
+            metadata={"status": "published", "title": "Launch"},
+        )
+    ]
+    state = {
+        "metadata": {},
+        "early_answer": "Cached answer",
+        "early_sources": sources,
+    }
+    pipeline = make_pipeline(
+        state,
+        follow_ups=["When was Litecoin launched?", "What problem was it designed to solve?"],
+    )
 
-            elif chunk['type'] == 'complete':
-                from_cache = chunk.get('from_cache', False)
-                print(f'✅ Complete! From cache: {from_cache}')
-                break
+    events = [event async for event in pipeline.astream_query("What is Litecoin?", [])]
+    event_types = [event["type"] for event in events]
+    follow_up_index = event_types.index("follow_ups")
+    metadata_index = event_types.index("metadata")
+    complete_index = event_types.index("complete")
 
-        full_response = ''.join(chunks)
-        print(f'📏 Response length: {len(full_response)} characters')
-        print(f'💬 Response preview: {full_response[:150]}...')
+    assert follow_up_index < metadata_index < complete_index
+    assert events[follow_up_index]["questions"] == [
+        "When was Litecoin launched?",
+        "What problem was it designed to solve?",
+    ]
+    assert events[complete_index]["from_cache"] is True
+    pipeline.agenerate_follow_up_questions.assert_awaited_once()
 
-        # Test 2: Query with chat history (conversational context)
-        print('\n📝 Test 2: Conversational query with history')
-        print('Query: "Who created it?" (with previous context)')
 
-        history = [('What is Litecoin?', full_response[:200] + '...')]  # Simulate previous response
+@pytest.mark.asyncio
+async def test_astream_query_omits_follow_ups_when_no_sources():
+    state = {
+        "metadata": {},
+        "context_docs": [],
+        "published_sources": [],
+        "retrieval_failed": False,
+    }
+    pipeline = make_pipeline(
+        state,
+        follow_ups=["This should never be emitted?"],
+    )
 
-        chunks2 = []
-        sources_count2 = 0
+    events = [event async for event in pipeline.astream_query("Unknown query", [])]
+    event_types = [event["type"] for event in events]
 
-        async for chunk in pipeline.astream_query('Who created it?', history):
-            if chunk['type'] == 'sources':
-                sources_count2 = len(chunk['sources'])
-                print(f'📚 Received {sources_count2} sources (with history)')
-                published_count2 = sum(1 for doc in chunk['sources'] if doc.metadata.get('status') == 'published')
-                print(f'📋 Published sources: {published_count2}/{sources_count2}')
-
-            elif chunk['type'] == 'chunk':
-                chunks2.append(chunk['content'])
-
-            elif chunk['type'] == 'complete':
-                from_cache2 = chunk.get('from_cache', False)
-                print(f'✅ Complete! From cache: {from_cache2}')
-                break
-
-        full_response2 = ''.join(chunks2)
-        print(f'📏 Response length: {len(full_response2)} characters')
-        print(f'💬 Response preview: {full_response2[:150]}...')
-
-        # Test 3: Verify caching works
-        print('\n📝 Test 3: Cache verification')
-        print('Repeating first query to test caching...')
-
-        chunks3 = []
-        async for chunk in pipeline.astream_query('What is Litecoin?', []):
-            if chunk['type'] == 'sources':
-                print(f'📚 Cache test - Received {len(chunk["sources"])} sources')
-            elif chunk['type'] == 'chunk':
-                chunks3.append(chunk['content'])
-            elif chunk['type'] == 'complete':
-                from_cache3 = chunk.get('from_cache', False)
-                print(f'✅ Cache test complete! From cache: {from_cache3}')
-                break
-
-        cached_response = ''.join(chunks3)
-        cache_match = full_response == cached_response
-        print(f'📋 Cache response matches: {cache_match}')
-
-        print('\n🎉 All tests completed successfully!')
-        print('✅ astream_query now has the same RAG processing capabilities as aquery')
-        print('✅ Streaming functionality preserved')
-        print('✅ Chat history support added')
-        print('✅ Source filtering implemented')
-        print('✅ Caching functionality maintained')
-
-        # Assertions for pytest
-        assert len(full_response) > 0, "Response should not be empty"
-        assert sources_count > 0, "Should have sources"
-        assert cache_match, "Cache response should match original"
-
-    except Exception as e:
-        print(f'❌ Error during test: {e}')
-        import traceback
-        traceback.print_exc()
-        raise  # Re-raise for pytest to catch
-
-if __name__ == '__main__':
-    result = asyncio.run(test_astream_query())
-    print(f'\n🏁 Final result: {"PASSED" if result else "FAILED"}')
+    assert event_types == ["sources", "chunk", "metadata", "complete"]
+    assert "follow_ups" not in event_types
+    pipeline.agenerate_follow_up_questions.assert_not_awaited()

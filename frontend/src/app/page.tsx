@@ -13,7 +13,7 @@ import { useScrollContext } from "@/contexts/ScrollContext";
 interface Message {
   role: "human" | "ai"; // Changed to match backend Pydantic model
   content: string;
-  sources?: { metadata?: { title?: string; source?: string } }[];
+  followUpQuestions?: string[];
   status?: "thinking" | "streaming" | "complete" | "error";
   isStreamActive?: boolean;
   id?: string;
@@ -61,6 +61,13 @@ export default function Home() {
   const chatWindowRef = useRef<ChatWindowRef>(null);
   const lastUserMessageIdRef = useRef<string | null>(null);
   const { setScrollPosition, setPinnedMessageId, resetPinningContext, pinnedMessageId } = useScrollContext();
+  
+  const getChatApiBaseUrl = useCallback(() => {
+    if (typeof window !== "undefined") {
+      return `${window.location.origin}/chat`;
+    }
+    return process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+  }, []);
   
   
   const clearConversation = useCallback(() => {
@@ -145,7 +152,7 @@ export default function Home() {
     }
     
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+      const backendUrl = getChatApiBaseUrl();
       
       // Always send base fingerprint in X-Fingerprint header so backend uses hash instead of IP
       const headers: Record<string, string> = {};
@@ -308,7 +315,7 @@ export default function Home() {
       }
       
       try {
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+        const backendUrl = getChatApiBaseUrl();
         
         // Always send base fingerprint in X-Fingerprint header so backend uses hash instead of IP
         const headers: Record<string, string> = {};
@@ -447,7 +454,7 @@ export default function Home() {
         eventSourceRef.current.close();
       }
 
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+      const backendUrl = getChatApiBaseUrl();
       
       // Ensure we have a fresh challenge and fingerprint before each request
       // Challenges are one-time use, so we need a new one for each request
@@ -853,8 +860,7 @@ export default function Home() {
       streamReaderRef.current = streamReader;
 
       let accumulatedContent = "";
-      let sources: { metadata?: { title?: string; source?: string } }[] = [];
-      let buffer = ""; // Buffer for incomplete lines
+      let buffer = "";
       let shouldBreak = false;
 
       // Helper function to check if tab is visible
@@ -865,8 +871,8 @@ export default function Home() {
       // Type for SSE data objects
       type SSEData = 
         | { status: 'thinking' }
-        | { status: 'sources'; sources?: { metadata?: { title?: string; source?: string } }[] }
         | { status: 'streaming'; chunk: string }
+        | { status: 'follow_ups'; questions?: string[] }
         | { status: 'complete' }
         | { status: 'error'; error?: string }
         | { status: 'usage_status'; usage_status?: { status: string; warning_level: string | null } };
@@ -890,12 +896,6 @@ export default function Home() {
           }
         } else if (data.status === 'thinking') {
           setStreamingMessage(prev => prev ? { ...prev, status: 'thinking' } : null);
-        } else if (data.status === 'sources') {
-          sources = data.sources || [];
-          setStreamingMessage(prev => prev ? {
-            ...prev,
-            sources: sources
-          } : null);
         } else if (data.status === 'streaming') {
           // When tab is hidden, process chunks immediately without delay to avoid throttling
           const tabVisible = isTabVisible();
@@ -915,7 +915,6 @@ export default function Home() {
                   ...prev,
                   content: accumulatedContent,
                   status: 'streaming',
-                  sources: sources,
                   isStreamActive: true
                 } : null);
                 // Delay between words for natural typing rhythm (only when visible)
@@ -930,7 +929,6 @@ export default function Home() {
                 ...prev,
                 content: accumulatedContent,
                 status: 'streaming',
-                sources: sources,
                 isStreamActive: true
               } : null);
             }
@@ -941,16 +939,19 @@ export default function Home() {
               ...prev,
               content: accumulatedContent,
               status: 'streaming',
-              sources: sources,
               isStreamActive: true
             } : null);
           }
+        } else if (data.status === 'follow_ups') {
+          setStreamingMessage(prev => prev ? {
+            ...prev,
+            followUpQuestions: data.questions || []
+          } : null);
         } else if (data.status === 'complete') {
           setStreamingMessage(prev => prev ? {
             ...prev,
             content: accumulatedContent,
             status: 'complete',
-            sources: sources,
             isStreamActive: false
           } : null);
           shouldBreak = true;
@@ -1076,14 +1077,14 @@ export default function Home() {
       setMessages(prev => [...prev, {
         role: streamingMessage.role,
         content: streamingMessage.content,
-        sources: streamingMessage.sources
+        followUpQuestions: streamingMessage.followUpQuestions
       }]);
       setStreamingMessage(null);
     } else if (streamingMessage && streamingMessage.status === 'error') {
       setMessages(prev => [...prev, {
         role: streamingMessage.role,
         content: streamingMessage.content,
-        sources: streamingMessage.sources
+        followUpQuestions: streamingMessage.followUpQuestions
       }]);
       setStreamingMessage(null);
     }
@@ -1136,8 +1137,9 @@ export default function Home() {
                 messageId={msg.id}
                 role={msg.role === "human" ? "user" : "assistant"}
                 content={msg.content}
-                sources={msg.sources}
+                followUpQuestions={msg.followUpQuestions}
                 retryInfo={msg.retryInfo}
+                onFollowUpClick={handleSendMessage}
                 onRetry={msg.retryInfo?.originalMessage ? () => handleRetryMessage(msg.id!, msg.retryInfo!.originalMessage!) : undefined}
               />
             ))}
@@ -1145,7 +1147,6 @@ export default function Home() {
               <StreamingMessage
                 content={streamingMessage.content}
                 status={streamingMessage.status || "thinking"}
-                sources={streamingMessage.sources}
                 isStreamActive={streamingMessage.isStreamActive || false}
               />
             )}

@@ -87,6 +87,16 @@ class QueryRouting(BaseModel):
         )
     )
 
+
+class FollowUpQuestions(BaseModel):
+    """Structured output for user-facing follow-up questions."""
+    questions: List[str] = Field(
+        description=(
+            "Two to four short grounded follow-up questions a user could ask next, "
+            "based only on the assistant answer and source excerpts."
+        )
+    )
+
 # Lazy-load local RAG services only when enabled
 _inference_router = None
 _infinity_embeddings = None
@@ -635,6 +645,113 @@ class RAGPipeline:
 
         return rewritten
 
+    def _build_follow_up_source_context(
+        self,
+        published_sources: List[Document],
+        max_sources: int = 3,
+        max_chars_per_source: int = 280,
+    ) -> str:
+        """Condense a few sources so follow-up suggestions stay grounded."""
+        snippets: List[str] = []
+        for index, doc in enumerate(published_sources[:max_sources], start=1):
+            metadata = doc.metadata or {}
+            title = metadata.get("doc_title") or metadata.get("title") or metadata.get("source") or f"Source {index}"
+            excerpt = re.sub(r"\s+", " ", (doc.page_content or "")).strip()
+            if len(excerpt) > max_chars_per_source:
+                excerpt = excerpt[: max_chars_per_source - 3].rstrip() + "..."
+            snippets.append(f"{index}. {title}: {excerpt}")
+        return "\n".join(snippets)
+
+    def _normalize_follow_up_questions(self, questions: List[str], query_text: str) -> List[str]:
+        """Deduplicate and clean model-generated follow-up questions."""
+        cleaned_questions: List[str] = []
+        seen: set[str] = set()
+        normalized_query = re.sub(r"\s+", " ", (query_text or "").strip().lower()).rstrip("?.!")
+
+        for question in questions or []:
+            if not isinstance(question, str):
+                continue
+
+            cleaned = re.sub(r"^\s*[-*0-9.)\s]+", "", question)
+            cleaned = re.sub(r"\s+", " ", cleaned).strip().strip('"').strip("'")
+            cleaned = cleaned.rstrip(".")
+            if not cleaned:
+                continue
+            if not cleaned.endswith("?"):
+                cleaned += "?"
+
+            normalized = cleaned.lower().rstrip("?.!")
+            if normalized == normalized_query or normalized in seen:
+                continue
+
+            seen.add(normalized)
+            cleaned_questions.append(cleaned)
+            if len(cleaned_questions) >= 4:
+                break
+
+        return cleaned_questions
+
+    async def agenerate_follow_up_questions(
+        self,
+        query_text: str,
+        answer_text: str,
+        published_sources: List[Document],
+        chat_history: List[Tuple[str, str]],
+    ) -> List[str]:
+        """Generate short grounded follow-up questions for successful sourced answers."""
+        if not answer_text or not published_sources:
+            return []
+
+        normalized_answer = answer_text.strip()
+        if normalized_answer in {self.generic_user_error_message, self.no_kb_match_response}:
+            return []
+
+        source_context = self._build_follow_up_source_context(published_sources)
+        if not source_context:
+            return []
+
+        recent_history = "\n".join(
+            f"Human: {human}"
+            for human, _ in (chat_history or [])[-2:]
+            if human and isinstance(human, str)
+        ) or "None"
+
+        system_prompt = """You generate short follow-up questions for a Litecoin knowledge-base chat.
+
+Rules:
+1) Return 2 to 4 concise questions.
+2) Ground every question in the assistant answer and source excerpts.
+3) Do not invent facts, people, dates, roadmap items, or comparisons not supported by the input.
+4) Do not repeat the user's current question.
+5) Prefer natural next-step questions a curious user would ask."""
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            (
+                "human",
+                "Current user query:\n{query}\n\n"
+                "Recent chat history:\n{chat_history}\n\n"
+                "Assistant answer:\n{answer}\n\n"
+                "Grounding source excerpts:\n{sources}",
+            ),
+        ])
+
+        try:
+            structured_llm = self.llm.with_structured_output(FollowUpQuestions)
+            chain = prompt | structured_llm
+            result = await chain.ainvoke(
+                {
+                    "query": query_text,
+                    "chat_history": recent_history,
+                    "answer": answer_text,
+                    "sources": source_context,
+                }
+            )
+            return self._normalize_follow_up_questions(getattr(result, "questions", []) or [], query_text)
+        except Exception as e:
+            logger.warning("Failed to generate follow-up questions: %s", e, exc_info=True)
+            return []
+
     def _build_prompt_text(
         self,
         query_text: str,
@@ -1111,6 +1228,14 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     yield {"type": "chunk", "content": char}
                     if i % 10 == 0:
                         await asyncio.sleep(0.001)
+                follow_up_questions = await self.agenerate_follow_up_questions(
+                    query_text,
+                    answer_text,
+                    sources,
+                    chat_history,
+                )
+                if follow_up_questions:
+                    yield {"type": "follow_ups", "questions": follow_up_questions}
                 metadata.setdefault("duration_seconds", time.time() - start_time)
                 yield {"type": "metadata", "metadata": metadata}
                 yield {"type": "complete", "from_cache": True}
@@ -1210,6 +1335,15 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                         logger.warning("Redis cache storage failed in stream: %s", e)
             if self.semantic_cache and not self.use_redis_cache:
                 self.semantic_cache.set(rewritten_query, [], full_answer, published_sources)
+
+            follow_up_questions = await self.agenerate_follow_up_questions(
+                sanitized_query,
+                full_answer,
+                published_sources,
+                chat_history,
+            )
+            if follow_up_questions:
+                yield {"type": "follow_ups", "questions": follow_up_questions}
 
             metadata.update(
                 {

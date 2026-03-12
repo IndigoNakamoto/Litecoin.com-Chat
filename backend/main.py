@@ -1245,6 +1245,20 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                             # Small delay to control streaming speed
                             if i % 10 == 0:  # Yield control every 10 characters
                                 await asyncio.sleep(0.001)
+
+                        follow_up_questions = await rag_pipeline_instance.agenerate_follow_up_questions(
+                            request.query,
+                            answer,
+                            published_sources,
+                            paired_chat_history,
+                        )
+                        if follow_up_questions:
+                            payload = {
+                                "status": "follow_ups",
+                                "questions": follow_up_questions,
+                                "isComplete": False,
+                            }
+                            yield f"data: {json.dumps(payload)}\n\n"
                         
                         # Signal completion with cache flag
                         payload = {
@@ -1305,6 +1319,13 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                     metadata = chunk_data.get("metadata", {})
                     cache_hit = metadata.get("cache_hit", False)
                     cache_type = metadata.get("cache_type")
+                elif chunk_data["type"] == "follow_ups":
+                    payload = {
+                        "status": "follow_ups",
+                        "questions": chunk_data.get("questions", []),
+                        "isComplete": False,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
                 elif chunk_data["type"] == "complete":
                     from_cache = chunk_data.get("from_cache", False)
                     if from_cache:

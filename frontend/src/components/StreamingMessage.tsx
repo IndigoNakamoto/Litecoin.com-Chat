@@ -1,9 +1,3 @@
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
 import React, { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -12,14 +6,12 @@ import { normalizeMarkdown } from "@/lib/markdownUtils";
 interface StreamingMessageProps {
   content: string;
   status: "thinking" | "streaming" | "complete" | "error";
-  sources?: { metadata?: { title?: string; source?: string } }[];
   isStreamActive: boolean;
 }
 
 const StreamingMessage: React.FC<StreamingMessageProps> = ({
   content,
   status,
-  sources,
   isStreamActive
 }) => {
   // Normalize markdown to fix LLM output issues (missing newlines before headings)
@@ -116,23 +108,6 @@ const StreamingMessage: React.FC<StreamingMessageProps> = ({
         </div>
       </div>
 
-      {/* Sources */}
-      {sources && sources.length > 0 && status === "complete" && (
-        <Accordion type="single" collapsible className="w-full mt-4">
-            <AccordionItem value="sources">
-              <AccordionTrigger className="text-[14px] text-gray-800">Sources</AccordionTrigger>
-              <AccordionContent>
-                <ul className="list-disc pl-5 text-sm text-gray-800">
-                {sources.map((source, index) => (
-                  <li key={index} className="select-text">
-                    <span className="no-underline">{source.metadata?.title || source.metadata?.source || "Unknown Source"}</span>
-                  </li>
-                ))}
-              </ul>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      )}
     </div>
   );
 };

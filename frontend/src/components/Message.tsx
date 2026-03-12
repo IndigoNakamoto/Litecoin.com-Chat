@@ -1,10 +1,5 @@
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
+import FollowUpQuestions from "@/components/FollowUpQuestions";
 import React, { useState, useEffect, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -13,7 +8,7 @@ import { normalizeMarkdown } from "@/lib/markdownUtils";
 interface MessageProps {
   role: "user" | "assistant";
   content: string;
-  sources?: { metadata?: { title?: string; source?: string } }[];
+  followUpQuestions?: string[];
   messageId?: string;
   retryInfo?: {
     retryAfterSeconds: number;
@@ -23,9 +18,18 @@ interface MessageProps {
     originalMessage?: string;
   };
   onRetry?: () => void;
+  onFollowUpClick?: (question: string) => void;
 }
 
-const Message: React.FC<MessageProps> = ({ role, content, sources, messageId, retryInfo, onRetry }) => {
+const Message: React.FC<MessageProps> = ({
+  role,
+  content,
+  followUpQuestions,
+  messageId,
+  retryInfo,
+  onRetry,
+  onFollowUpClick,
+}) => {
   const isUser = role === "user";
   const messageRef = React.useRef<HTMLDivElement>(null);
   
@@ -196,6 +200,12 @@ const Message: React.FC<MessageProps> = ({ role, content, sources, messageId, re
             {normalizedContent}
           </ReactMarkdown>
         </div>
+        {followUpQuestions && followUpQuestions.length > 0 && onFollowUpClick && (
+          <FollowUpQuestions
+            questions={followUpQuestions}
+            onQuestionClick={onFollowUpClick}
+          />
+        )}
       </div>
     );
   }
@@ -265,22 +275,6 @@ const Message: React.FC<MessageProps> = ({ role, content, sources, messageId, re
             {normalizedContent}
           </ReactMarkdown>
         </div>
-        {sources && sources.length > 0 && (
-          <Accordion type="single" collapsible className="w-full">
-            <AccordionItem value="sources">
-              <AccordionTrigger className="text-[14px] text-white">Sources</AccordionTrigger>
-              <AccordionContent>
-                <ul className="list-disc pl-5 text-sm text-white">
-                  {sources.map((source, index) => (
-                    <li key={index} className="select-text">
-                      <span className="no-underline">{source.metadata?.title || source.metadata?.source || "Unknown Source"}</span>
-                    </li>
-                  ))}
-                </ul>
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-        )}
         {retryInfo && onRetry && (
           <div className="mt-3 pt-3 border-t border-white/20">
             <div className="flex flex-col gap-2">
