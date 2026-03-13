@@ -881,7 +881,7 @@ export default function Home() {
         | { status: 'streaming'; chunk: string }
         | { status: 'sources'; sources?: Array<{ metadata?: { grounding_metadata?: Record<string, unknown> } }> }
         | { status: 'follow_ups'; questions?: string[] }
-        | { status: 'complete' }
+        | { status: 'complete'; isGrounded?: boolean }
         | { status: 'error'; error?: string }
         | { status: 'usage_status'; usage_status?: { status: string; warning_level: string | null } };
 
@@ -961,7 +961,7 @@ export default function Home() {
             followUpQuestions: data.questions || []
           } : null);
         } else if (data.status === 'complete') {
-          isGroundedResponse = accumulatedContent.includes("Based on public sources:");
+          isGroundedResponse = data.isGrounded === true;
           setStreamingMessage(prev => prev ? {
             ...prev,
             content: accumulatedContent,

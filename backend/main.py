@@ -1148,6 +1148,7 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
         status = "success"
         error_message = None
         grounding_meta = None
+        is_grounded = False
         
         try:
             # Check usage status and include in stream if not ok
@@ -1313,11 +1314,11 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
                 elif chunk_data["type"] == "metadata":
-                    # Capture metadata for logging
                     metadata = chunk_data.get("metadata", {})
                     cache_hit = metadata.get("cache_hit", False)
                     cache_type = metadata.get("cache_type")
                     grounding_meta = metadata.get("grounding_metadata")
+                    is_grounded = metadata.get("is_grounded", False)
                 elif chunk_data["type"] == "follow_ups":
                     payload = {
                         "status": "follow_ups",
@@ -1334,7 +1335,8 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                         "status": "complete",
                         "chunk": "",
                         "isComplete": True,
-                        "fromCache": from_cache
+                        "fromCache": from_cache,
+                        "isGrounded": is_grounded,
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
                     break
@@ -1394,14 +1396,14 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
             )
 
             # Knowledge Gap Flywheel: queue candidates when grounding was used
-            # Note: streaming chunks don't carry grounding_metadata (only ainvoke does),
-            # so we also check for the provenance marker the LLM inserts in grounded answers.
+            # or no KB sources matched.  is_grounded is derived from the actual
+            # grounding_metadata on the LLM response (post-hoc detection).
             if (
                 getattr(rag_pipeline_instance, "use_knowledge_gap_detection", False)
                 and status == "success"
                 and full_answer
                 and not cache_hit
-                and (grounding_meta or sources_count == 0 or "Based on public sources:" in full_answer)
+                and (is_grounded or sources_count == 0)
             ):
                 try:
                     from backend.services.knowledge_gap_detector import detect_and_queue_knowledge_gap
@@ -1414,6 +1416,7 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                         retriever_k=getattr(rag_pipeline_instance, "retriever_k", 14),
                         grounding_metadata=grounding_meta,
                         embedding_model=rag_pipeline_instance.vector_store_manager.embeddings,
+                        grounded_profile=is_grounded,
                     )
                 except Exception as e:
                     logger.warning("Failed to queue knowledge gap detection: %s", e)

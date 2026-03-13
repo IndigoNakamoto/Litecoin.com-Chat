@@ -85,6 +85,7 @@ def _determine_gap_trigger(
     grounding_metadata: Optional[Dict],
     published_sources_count: int,
     answer_text: str,
+    grounded_profile: bool = False,
 ) -> Optional[str]:
     """
     Determine which gap signal triggered candidacy.
@@ -92,6 +93,8 @@ def _determine_gap_trigger(
     """
     if grounding_metadata and grounding_metadata.get("grounding_chunks"):
         return "grounding"
+    if grounded_profile:
+        return "grounded_chain"
     if published_sources_count == 0:
         return "no_kb_sources"
     if PROVENANCE_MARKER in answer_text:
@@ -108,6 +111,7 @@ async def detect_and_queue_knowledge_gap(
     grounding_metadata: Optional[Dict],
     embedding_model: Any,
     kb_sources: Optional[List[Dict[str, Any]]] = None,
+    grounded_profile: bool = False,
 ) -> Optional[str]:
     """
     Detect a knowledge gap and queue a candidate for admin review.
@@ -115,7 +119,7 @@ async def detect_and_queue_knowledge_gap(
     Returns the candidate ID if a new candidate was created, or None if
     the gap was deduplicated or no gap was detected.
     """
-    trigger = _determine_gap_trigger(grounding_metadata, published_sources_count, generated_answer)
+    trigger = _determine_gap_trigger(grounding_metadata, published_sources_count, generated_answer, grounded_profile)
     if trigger is None:
         return None
 

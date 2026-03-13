@@ -273,6 +273,31 @@ export const cacheApi = {
       method: "POST",
     });
   },
+
+  /**
+   * Get response cache statistics (query cache + semantic cache).
+   */
+  async getResponseStats(): Promise<{
+    query_cache: { size: number; max_size: number };
+    semantic_cache: Record<string, any> | null;
+  }> {
+    return apiRequest("/api/v1/admin/cache/response/stats", {
+      method: "GET",
+    });
+  },
+
+  /**
+   * Clear all response caches (query cache + semantic cache).
+   */
+  async clearResponseCaches(): Promise<{
+    success: boolean;
+    message: string;
+    cleared_caches: string[];
+  }> {
+    return apiRequest("/api/v1/admin/cache/response/clear", {
+      method: "POST",
+    });
+  },
 };
 
 /**

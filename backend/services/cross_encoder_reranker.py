@@ -84,6 +84,9 @@ class CrossEncoderReranker:
             reverse=True,
         )
 
+        for score, idx, doc in scored:
+            doc.metadata["rerank_score"] = float(score)
+
         if logger.isEnabledFor(logging.DEBUG):
             for score, idx, doc in scored[:5]:
                 title = doc.metadata.get("doc_title", doc.metadata.get("doc_title_hierarchical", "?"))

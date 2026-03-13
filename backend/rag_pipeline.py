@@ -17,8 +17,7 @@ except ImportError:
     from pydantic.v1 import BaseModel, Field
 from langchain_community.retrievers import BM25Retriever
 from langchain.retrievers import EnsembleRetriever
-from langchain.chains import create_history_aware_retriever, create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains import create_history_aware_retriever
 from data_ingestion.vector_store_manager import VectorStoreManager
 from cache_utils import query_cache, SemanticCache
 from backend.utils.input_sanitizer import sanitize_query_input, detect_prompt_injection
@@ -41,7 +40,11 @@ USE_FAQ_INDEXING = os.getenv("USE_FAQ_INDEXING", "true").lower() == "true"
 # --- Knowledge Gap Flywheel ---
 USE_SEARCH_GROUNDING = os.getenv("USE_SEARCH_GROUNDING", "true").lower() == "true"
 USE_KNOWLEDGE_GAP_DETECTION = os.getenv("USE_KNOWLEDGE_GAP_DETECTION", "true").lower() == "true"
+
+# Legacy heuristic thresholds – no longer used for chain selection (the model
+# now autonomously decides when to search), kept for backward-compat env parsing.
 SEARCH_GROUNDING_SOURCE_THRESHOLD = int(os.getenv("SEARCH_GROUNDING_SOURCE_THRESHOLD", "2"))
+SEARCH_GROUNDING_RELEVANCE_THRESHOLD = float(os.getenv("SEARCH_GROUNDING_RELEVANCE_THRESHOLD", "3.0"))
 
 # --- Short-query semantic sparsity mitigations ---
 # When enabled, very short queries (e.g. "MWEB", "supply") are expanded via the LLM
@@ -261,6 +264,7 @@ QA_WITH_HISTORY_PROMPT = ChatPromptTemplate.from_messages(
 SYSTEM_INSTRUCTION = """You are a neutral, factual Litecoin expert.
 
 Rules:
+- You ONLY answer questions about Litecoin, its ecosystem, and closely related cryptocurrency topics where Litecoin is a primary subject. For questions unrelated to Litecoin, politely decline and say you are a Litecoin-focused assistant.
 - Answer primarily from the provided source text. If information is missing, say so clearly.
 - If you supplement your answer with information from web search beyond the provided source text, clearly mark that information with "Based on public sources:" so the user understands its provenance.
 - Never mention internal retrieval mechanics (e.g., "context", "documents", "retrieved information").
@@ -282,9 +286,42 @@ For complex questions:
 - Prioritize completeness over brevity, but avoid repetition.
 """
 
+SYSTEM_INSTRUCTION_GROUNDED = """You are a neutral, factual Litecoin expert with access to Google Search.
+
+Rules:
+- You ONLY answer questions about Litecoin, its ecosystem, and closely related cryptocurrency topics where Litecoin is a primary subject. For questions unrelated to Litecoin, politely decline and say you are a Litecoin-focused assistant. Do NOT use Google Search for non-Litecoin topics.
+- First check the provided source text. If it fully answers the question, use it.
+- If the provided source text does NOT contain the specific information needed, you MUST use your Google Search tool to find the answer from the web. Do not simply state that information is missing.
+- Seamlessly integrate information from web search into your answer without labeling or distinguishing its source. Present all information as a unified, authoritative response.
+- Never mention internal retrieval mechanics (e.g., "context", "documents", "retrieved information", "source text", "web search").
+- Use canonical terms: MWEB, LitVM, Charlie Lee (or Creator), Halving, Scrypt, Lightning.
+- For multi-part/list/history questions, include all relevant items from any source.
+- If asked for real-time prices/market data, state your knowledge is static and suggest a live source.
+
+Response style:
+- Start with a direct 1-2 sentence answer.
+- Then use a `##` heading and concise bullet points for key details.
+- Bold important Litecoin terms when natural.
+"""
+
+SYSTEM_INSTRUCTION_GROUNDED_COMPLEX = SYSTEM_INSTRUCTION_GROUNDED + """
+
+For complex questions:
+- Explain the reasoning chain explicitly and keep sections logically ordered.
+- When comparing multiple concepts, use clear trade-offs and constraints.
+- Prioritize completeness over brevity, but avoid repetition.
+"""
+
 # 3. RAG prompt for final answer generation with chat history support
 RAG_PROMPT = ChatPromptTemplate.from_messages([
     ("system", SYSTEM_INSTRUCTION),
+    ("system", "Context:\n{context}"),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}"),
+])
+
+RAG_PROMPT_GROUNDED = ChatPromptTemplate.from_messages([
+    ("system", SYSTEM_INSTRUCTION_GROUNDED),
     ("system", "Context:\n{context}"),
     MessagesPlaceholder("chat_history"),
     ("human", "{input}"),
@@ -353,51 +390,53 @@ class RAGPipeline:
         # Setup hybrid retrievers (BM25 + semantic + history-aware)
         self._setup_retrievers()
         
-        # Create document combining chains for simple/complex response profiles
-        self.document_chain_simple = create_stuff_documents_chain(self.llm, RAG_PROMPT)
-        complex_prompt = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_INSTRUCTION_COMPLEX),
-            ("system", "Context:\n{context}"),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ])
-        self.document_chain_complex = create_stuff_documents_chain(self.llm, complex_prompt)
-        # Backward-compatible alias
-        self.document_chain = self.document_chain_simple
-
-        # Search grounding: create grounded chain variants for KB-gap fallback
+        # Search grounding: bind google_search tool to the generation LLM so
+        # the model can autonomously decide when KB context is insufficient.
         self.search_grounding_enabled = USE_SEARCH_GROUNDING
-        self.search_grounding_source_threshold = SEARCH_GROUNDING_SOURCE_THRESHOLD
+        self._search_grounding_tool = None
         if USE_SEARCH_GROUNDING:
             try:
-                # Gemini 3.x models use the google_search tool (not the deprecated
-                # google_search_retrieval). We try the gRPC proto type first, then
-                # fall back to a plain dict which langchain_google_genai also accepts.
                 try:
                     from google.ai.generativelanguage_v1beta.types import Tool as GapicTool
                     self._search_grounding_tool = GapicTool(google_search={})
                 except ImportError:
                     self._search_grounding_tool = {"google_search": {}}
-                grounded_llm = self.llm.bind(tools=[self._search_grounding_tool])
-                self.document_chain_grounded_simple = create_stuff_documents_chain(grounded_llm, RAG_PROMPT)
-                self.document_chain_grounded_complex = create_stuff_documents_chain(grounded_llm, complex_prompt)
-                logger.info("Search grounding enabled (google_search tool)")
+                self._generation_llm = self.llm.bind(tools=[self._search_grounding_tool])
+                logger.info("Search grounding enabled (google_search tool bound to generation LLM)")
             except Exception as e:
                 logger.warning(f"Failed to initialize search grounding: {e}. Grounding disabled.")
                 self.search_grounding_enabled = False
-                self._search_grounding_tool = None
-                self.document_chain_grounded_simple = None
-                self.document_chain_grounded_complex = None
+                self._generation_llm = self.llm
         else:
-            self._search_grounding_tool = None
-            self.document_chain_grounded_simple = None
-            self.document_chain_grounded_complex = None
-        
-        # Create full retrieval chain that passes chat_history to final generation
-        self.rag_chain = create_retrieval_chain(
-            self.history_aware_retriever,
-            self.document_chain_simple
-        )
+            self._generation_llm = self.llm
+
+        # Select system instructions: grounded variants instruct the LLM to use
+        # its google_search tool when KB context is insufficient.
+        if self.search_grounding_enabled:
+            self._simple_instruction = SYSTEM_INSTRUCTION_GROUNDED
+            self._complex_instruction = SYSTEM_INSTRUCTION_GROUNDED_COMPLEX
+        else:
+            self._simple_instruction = SYSTEM_INSTRUCTION
+            self._complex_instruction = SYSTEM_INSTRUCTION_COMPLEX
+
+        # Build document chains as prompt | llm (no StrOutputParser) so that
+        # streaming yields AIMessageChunk objects whose response_metadata
+        # carries grounding_metadata when the model invokes google_search.
+        simple_prompt = ChatPromptTemplate.from_messages([
+            ("system", self._simple_instruction),
+            ("system", "Context:\n{context}\n{context_coverage_note}"),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ])
+        complex_prompt = ChatPromptTemplate.from_messages([
+            ("system", self._complex_instruction),
+            ("system", "Context:\n{context}\n{context_coverage_note}"),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ])
+        self.document_chain_simple = simple_prompt | self._generation_llm
+        self.document_chain_complex = complex_prompt | self._generation_llm
+        self.document_chain = self.document_chain_simple
         
         # Initialize semantic cache with the embedding model from VectorStoreManager
         # Skip legacy semantic cache when using Redis Stack cache (unified semantic cache provider)
@@ -808,23 +847,53 @@ Rules:
         # Build prompt text from the new RAG_PROMPT template structure
         return f"{system_instruction}\n\nContext:\n{context_text}\n\n{history_text}User: {query_text}"
 
+    _GROUNDING_STOPWORDS = frozenset({
+        "how", "does", "what", "when", "where", "why", "who", "which",
+        "the", "a", "an", "is", "are", "was", "were", "be", "been",
+        "have", "has", "had", "do", "did", "will", "would", "shall",
+        "can", "could", "should", "may", "might", "must",
+        "and", "or", "but", "if", "for", "to", "of", "not", "no",
+        "in", "on", "at", "by", "with", "from", "about", "into",
+        "its", "it", "this", "that", "these", "those",
+        "improve", "work", "use", "make", "get", "help",
+        "between", "through", "over", "more", "also", "than",
+    })
+
+    def _find_missing_query_terms(self, query: str, documents: List[Document]) -> List[str]:
+        """Return significant query terms absent from all retrieved documents."""
+        if not documents:
+            return []
+
+        terms = query.lower().split()
+        terms = [t.strip("?.,!;:'\"()[]{}") for t in terms]
+        significant = [t for t in terms if t and len(t) > 3 and t not in self._GROUNDING_STOPWORDS]
+
+        if not significant:
+            return []
+
+        combined = " ".join(d.page_content.lower() for d in documents[:10])
+
+        missing = []
+        for term in significant:
+            if term not in combined and term.rstrip("s") not in combined:
+                missing.append(term)
+
+        return missing
+
     def _select_document_chain(self, state: Dict[str, Any]):
-        """Choose generation chain/profile based on routed complexity and KB coverage."""
+        """Choose generation chain based on routed complexity.
+
+        Grounding is no longer decided here.  The google_search tool is always
+        bound to the generation LLM (when enabled), so the model autonomously
+        decides whether to search.  Actual grounding usage is detected post-hoc
+        from the response's ``grounding_metadata``.
+        """
         complexity_route = str(state.get("complexity_route") or "simple").lower()
-        published_sources = state.get("published_sources") or []
-        use_grounding = (
-            self.search_grounding_enabled
-            and len(published_sources) <= self.search_grounding_source_threshold
-        )
 
         if complexity_route == "complex":
-            if use_grounding and self.document_chain_grounded_complex:
-                return self.document_chain_grounded_complex, "complex_grounded", SYSTEM_INSTRUCTION_COMPLEX
-            return self.document_chain_complex, "complex", SYSTEM_INSTRUCTION_COMPLEX
+            return self.document_chain_complex, "complex", self._complex_instruction
 
-        if use_grounding and self.document_chain_grounded_simple:
-            return self.document_chain_grounded_simple, "simple_grounded", SYSTEM_INSTRUCTION
-        return self.document_chain_simple, "simple", SYSTEM_INSTRUCTION
+        return self.document_chain_simple, "simple", self._simple_instruction
 
     def _estimate_token_usage(self, prompt_text: str, answer_text: str) -> Tuple[int, int]:
         """
@@ -962,19 +1031,31 @@ Rules:
         """
         Extract search grounding metadata from a Gemini LLM response.
 
-        When search grounding activates, the response contains grounding_chunks
-        and grounding_supports that indicate which parts came from web search.
+        Handles multiple library versions:
+        - v2.1.5+: grounding_metadata nested under response_metadata
+        - v2.1.5+ (PR #944): grounding_chunks/grounding_supports at top level
+        - Older: candidates list with grounding_metadata per candidate
         Returns None if no grounding metadata is present.
         """
         if not self.search_grounding_enabled:
             return None
         try:
             metadata = getattr(response, "response_metadata", None) or {}
+
+            # Primary: nested under "grounding_metadata" key
             grounding_meta = metadata.get("grounding_metadata")
             if grounding_meta:
                 return grounding_meta
 
-            # Some SDK versions nest it differently
+            # Some SDK versions put grounding fields at the top level
+            if metadata.get("grounding_chunks") or metadata.get("grounding_supports"):
+                return {
+                    "grounding_chunks": metadata.get("grounding_chunks", []),
+                    "grounding_supports": metadata.get("grounding_supports", []),
+                    "web_search_queries": metadata.get("web_search_queries", []),
+                }
+
+            # Fallback: nested under candidates list
             candidates_meta = metadata.get("candidates", [])
             if candidates_meta and isinstance(candidates_meta, list):
                 for candidate in candidates_meta:
@@ -1014,27 +1095,22 @@ Rules:
             # RECREATE ALL RETRIEVERS (this is the critical fix!)
             self._setup_retrievers()
             
-            # Rebuild the document chain and retrieval chain (in case LLM changed, though unlikely)
-            document_chain = create_stuff_documents_chain(self.llm, RAG_PROMPT)
-            complex_prompt = ChatPromptTemplate.from_messages([
-                ("system", SYSTEM_INSTRUCTION_COMPLEX),
-                ("system", "Context:\n{context}"),
+            # Rebuild document chains (prompt | generation_llm) to match __init__ pattern
+            simple_prompt = ChatPromptTemplate.from_messages([
+                ("system", self._simple_instruction),
+                ("system", "Context:\n{context}\n{context_coverage_note}"),
                 MessagesPlaceholder("chat_history"),
                 ("human", "{input}"),
             ])
-            self.document_chain_simple = document_chain
-            self.document_chain_complex = create_stuff_documents_chain(self.llm, complex_prompt)
+            complex_prompt = ChatPromptTemplate.from_messages([
+                ("system", self._complex_instruction),
+                ("system", "Context:\n{context}\n{context_coverage_note}"),
+                MessagesPlaceholder("chat_history"),
+                ("human", "{input}"),
+            ])
+            self.document_chain_simple = simple_prompt | self._generation_llm
+            self.document_chain_complex = complex_prompt | self._generation_llm
             self.document_chain = self.document_chain_simple
-            self.rag_chain = create_retrieval_chain(
-                self.history_aware_retriever,
-                self.document_chain_simple
-            )
-
-            # Rebuild grounded chain variants
-            if self.search_grounding_enabled and self._search_grounding_tool:
-                grounded_llm = self.llm.bind(tools=[self._search_grounding_tool])
-                self.document_chain_grounded_simple = create_stuff_documents_chain(grounded_llm, RAG_PROMPT)
-                self.document_chain_grounded_complex = create_stuff_documents_chain(grounded_llm, complex_prompt)
             
             logger.info("Vector store and hybrid retrievers refreshed")
 
@@ -1193,14 +1269,33 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             metadata["response_profile"] = response_profile
 
             llm_start = time.time()
+            context_text = format_docs(context_docs)
+
+            coverage_note = ""
+            missing: List[str] = []
+            if self.search_grounding_enabled:
+                missing = self._find_missing_query_terms(sanitized_query, published_sources)
+                if missing:
+                    coverage_note = (
+                        f"IMPORTANT: The provided context does NOT contain information about: "
+                        f"{', '.join(missing)}. You MUST use Google Search for these topics."
+                    )
+
             answer_result = await active_chain.ainvoke(
-                {"input": sanitized_query, "context": context_docs, "chat_history": converted_history}
+                {"input": sanitized_query, "context": context_text,
+                 "context_coverage_note": coverage_note, "chat_history": converted_history}
             )
             answer = answer_result.content if hasattr(answer_result, "content") else str(answer_result)
             llm_duration = time.time() - llm_start
 
-            # Extract grounding metadata (search grounding provenance)
             grounding_meta = self._extract_grounding_metadata(answer_result)
+            is_grounded = grounding_meta is not None and bool(grounding_meta.get("grounding_chunks"))
+
+            if not is_grounded and coverage_note and answer:
+                missing_in_answer = [t for t in missing if t in answer.lower()]
+                if missing_in_answer:
+                    is_grounded = True
+                    logger.info("Coverage-gap fallback (aquery): missing terms %s in answer → grounded", missing_in_answer)
 
             # Token usage + cost
             input_tokens, output_tokens = 0, 0
@@ -1260,6 +1355,7 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     "response_profile": response_profile,
                     "complexity_route": state.get("complexity_route"),
                     "grounding_metadata": grounding_meta,
+                    "is_grounded": is_grounded,
                 }
             )
             return answer, published_sources, metadata
@@ -1349,15 +1445,36 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             llm_start = time.time()
             full_answer = ""
             answer_obj = None
+            chunk_count = 0
+            context_text = format_docs(context_docs)
+
+            # Tell the model which query terms are missing from context
+            coverage_note = ""
+            missing: List[str] = []
+            if self.search_grounding_enabled:
+                missing = self._find_missing_query_terms(sanitized_query, published_sources)
+                if missing:
+                    coverage_note = (
+                        f"IMPORTANT: The provided context does NOT contain information about: "
+                        f"{', '.join(missing)}. You MUST use Google Search for these topics."
+                    )
+                    logger.info("Context coverage gap → prompting search for: %s", missing)
+
             async for chunk in active_chain.astream(
-                {"input": sanitized_query, "context": context_docs, "chat_history": converted_history}
+                {"input": sanitized_query, "context": context_text,
+                 "context_coverage_note": coverage_note, "chat_history": converted_history}
             ):
+                chunk_count += 1
                 content = ""
                 if hasattr(chunk, "content"):
+                    content = chunk.content or ""
                     answer_obj = chunk
-                    content = chunk.content
+                    if chunk_count == 1:
+                        logger.info("Streaming chunk type: %s (has .content)", type(chunk).__name__)
                 elif isinstance(chunk, str):
                     content = chunk
+                    if chunk_count == 1:
+                        logger.info("Streaming chunk type: str (StrOutputParser may still be active)")
                 if content:
                     full_answer += content
                     yield {"type": "chunk", "content": content}
@@ -1365,8 +1482,34 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             llm_duration = time.time() - llm_start
             total_duration = time.time() - start_time
 
-            # Extract grounding metadata (search grounding provenance)
+            # Diagnose grounding metadata on the last streaming chunk.
+            if answer_obj:
+                resp_meta = getattr(answer_obj, "response_metadata", None) or {}
+                logger.info(
+                    "Last streaming chunk: type=%s, response_metadata keys=%s, has grounding_metadata=%s",
+                    type(answer_obj).__name__,
+                    list(resp_meta.keys()),
+                    "grounding_metadata" in resp_meta,
+                )
+            else:
+                logger.warning("answer_obj is None after streaming %d chunks (all were strings)", chunk_count)
+
             grounding_meta = self._extract_grounding_metadata(answer_obj) if answer_obj else None
+            is_grounded = grounding_meta is not None and bool(grounding_meta.get("grounding_chunks"))
+            if is_grounded:
+                logger.info("Search grounding detected via response metadata (grounding_chunks present)")
+
+            # Fallback: if we prompted the model to search (coverage gap) and the
+            # answer actually covers the missing terms, treat it as grounded even
+            # when the library doesn't propagate grounding_metadata.
+            if not is_grounded and coverage_note and full_answer:
+                missing_in_answer = [t for t in missing if t in full_answer.lower()]
+                if missing_in_answer:
+                    is_grounded = True
+                    logger.info(
+                        "Coverage-gap fallback: answer contains missing terms %s → marked grounded",
+                        missing_in_answer,
+                    )
 
             input_tokens, output_tokens = 0, 0
             cost_usd = 0.0
@@ -1434,6 +1577,7 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     "response_profile": response_profile,
                     "complexity_route": state.get("complexity_route"),
                     "grounding_metadata": grounding_meta,
+                    "is_grounded": is_grounded,
                 }
             )
             yield {"type": "metadata", "metadata": metadata}

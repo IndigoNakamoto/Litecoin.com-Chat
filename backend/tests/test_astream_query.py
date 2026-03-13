@@ -40,6 +40,7 @@ def make_pipeline(state, chunks=None, follow_ups=None):
     pipeline.estimate_gemini_cost = MagicMock(return_value=0.0)
     pipeline.record_spend = AsyncMock(return_value={})
     pipeline.model_name = "test-model"
+    pipeline.search_grounding_enabled = False
     return pipeline
 
 

@@ -5,6 +5,7 @@ import { Dashboard } from "@/components/Dashboard";
 import { BansThrottles } from "@/components/BansThrottles";
 import { AbusePreventionSettings } from "@/components/AbusePreventionSettings";
 import { SuggestedQuestionsCache } from "@/components/SuggestedQuestionsCache";
+import { ResponseCacheManager } from "@/components/ResponseCacheManager";
 import { UserStatistics } from "@/components/UserStatistics";
 import { Button } from "@/components/ui/button";
 import { authApi } from "@/lib/api";
@@ -51,6 +52,7 @@ export default function DashboardPage() {
           <UserStatistics />
           <AbusePreventionSettings />
           <BansThrottles />
+          <ResponseCacheManager />
           <SuggestedQuestionsCache />
         </main>
       </div>
