@@ -111,19 +111,28 @@ async def create_payload_draft(
     answer: str,
     topic: Optional[str] = None,
     grounding_sources: Optional[List[Dict]] = None,
+    publish_status: str = "draft",
 ) -> str:
     """
-    Create a draft article in Payload CMS from a knowledge gap candidate.
+    Create an article in Payload CMS from a knowledge gap candidate.
+
+    Args:
+        publish_status: "draft" or "published". When "published", the article
+            goes live immediately and triggers the webhook pipeline to sync
+            into the vector store.
 
     Returns the Payload CMS article ID on success.
     Raises on failure.
     """
+    if publish_status not in ("draft", "published"):
+        raise ValueError(f"Invalid publish_status: {publish_status!r}. Must be 'draft' or 'published'.")
+
     payload_url = _get_payload_url()
     api_key = _get_payload_api_key()
 
     if not api_key:
         raise ValueError(
-            "PAYLOAD_API_KEY environment variable is required to create CMS drafts. "
+            "PAYLOAD_API_KEY environment variable is required to create CMS articles. "
             "Set it to a Payload CMS API key with article create permissions."
         )
 
@@ -132,7 +141,7 @@ async def create_payload_draft(
 
     article_data: Dict[str, Any] = {
         "title": title,
-        "status": "draft",
+        "status": publish_status,
         "markdown": markdown_content,
         "content": _build_lexical_content(markdown_content),
     }
@@ -140,10 +149,11 @@ async def create_payload_draft(
     url = f"{payload_url}/api/articles"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"API-Key {api_key}",
+        "Authorization": f"users API-Key {api_key}",
     }
 
-    logger.info("Creating Payload CMS draft article: title='%s', url=%s", title, url)
+    status_label = "published" if publish_status == "published" else "draft"
+    logger.info("Creating Payload CMS %s article: title='%s', url=%s", status_label, title, url)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(url, json=article_data, headers=headers)
@@ -151,12 +161,12 @@ async def create_payload_draft(
         if response.status_code in (200, 201):
             data = response.json()
             article_id = data.get("doc", {}).get("id") or data.get("id", "")
-            logger.info("Payload CMS draft article created: id=%s, title='%s'", article_id, title)
+            logger.info("Payload CMS %s article created: id=%s, title='%s'", status_label, article_id, title)
             return str(article_id)
         else:
             error_text = response.text[:500]
             logger.error(
-                "Failed to create Payload CMS draft: status=%d, response=%s",
+                "Failed to create Payload CMS article: status=%d, response=%s",
                 response.status_code, error_text,
             )
             raise RuntimeError(

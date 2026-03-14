@@ -9,7 +9,7 @@ export const Users: CollectionConfig = {
   auth: {
     tokenExpiration: 7200, // 2 hours
     useSessions: true, // Use sessions for better cookie handling
-    // Let Payload use default cookie settings - they work better in most cases
+    useAPIKey: true,
   },
   access: {
     create: ({ req }) => {

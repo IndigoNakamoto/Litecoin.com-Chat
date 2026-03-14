@@ -230,14 +230,30 @@ async def update_knowledge_candidate(
         raise HTTPException(status_code=500, detail={"error": "Failed to update candidate"})
 
 
+class CandidatePublishRequest(BaseModel):
+    publish_status: Literal["draft", "published"] = Field(
+        default="draft",
+        description="CMS article status: 'draft' to edit later, 'published' to go live immediately",
+    )
+
+
 @router.post("/knowledge-candidates/{candidate_id}/publish")
-async def publish_knowledge_candidate(request: Request, candidate_id: str) -> Dict[str, Any]:
+async def publish_knowledge_candidate(
+    request: Request,
+    candidate_id: str,
+    body: Optional[CandidatePublishRequest] = None,
+) -> Dict[str, Any]:
     """
-    Approve a candidate and create a Payload CMS draft article from it.
-    The admin can then edit and publish the draft in Payload CMS.
+    Create a Payload CMS article from an approved candidate.
+
+    Accepts an optional JSON body with ``publish_status`` (default "draft").
+    When set to "published", the article goes live immediately and the
+    existing afterChange webhook syncs it into the vector store.
     """
     await check_rate_limit(request, ADMIN_CANDIDATES_RATE_LIMIT)
     _require_admin(request)
+
+    publish_status = (body.publish_status if body else "draft")
 
     try:
         collection = await get_knowledge_candidates_collection()
@@ -255,6 +271,7 @@ async def publish_knowledge_candidate(request: Request, candidate_id: str) -> Di
             answer=doc["generated_answer"],
             topic=doc.get("topic_cluster"),
             grounding_sources=doc.get("grounding_sources", []),
+            publish_status=publish_status,
         )
 
         await collection.update_one(
@@ -263,6 +280,7 @@ async def publish_knowledge_candidate(request: Request, candidate_id: str) -> Di
                 "$set": {
                     "status": "published",
                     "payload_article_id": payload_article_id,
+                    "cms_publish_status": publish_status,
                     "reviewed_at": datetime.utcnow(),
                 }
             },
@@ -278,6 +296,7 @@ async def publish_knowledge_candidate(request: Request, candidate_id: str) -> Di
             "published": True,
             "payload_article_id": payload_article_id,
             "candidate_id": candidate_id,
+            "cms_status": publish_status,
         }
     except HTTPException:
         raise

@@ -100,10 +100,16 @@ export function KnowledgeCandidates() {
     }
   };
 
-  const handlePublish = async (id: string) => {
+  const handlePublish = async (id: string, publishStatus: "draft" | "published") => {
+    if (publishStatus === "published") {
+      const confirmed = window.confirm(
+        "This will publish the article live immediately and sync it to the knowledge base. Continue?"
+      );
+      if (!confirmed) return;
+    }
     setActionLoading(id);
     try {
-      const result = await knowledgeCandidatesApi.publish(id);
+      const result = await knowledgeCandidatesApi.publish(id, publishStatus);
       if (result.published) {
         await fetchData();
       }
@@ -427,19 +433,32 @@ export function KnowledgeCandidates() {
                         </div>
                       )}
 
-                      {/* Publish button for approved candidates */}
+                      {/* Publish buttons for approved candidates */}
                       {candidate.status === "approved" && (
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 items-center">
                           <Button
                             size="sm"
-                            onClick={() => handlePublish(candidate.id)}
+                            onClick={() => handlePublish(candidate.id, "draft")}
                             disabled={actionLoading === candidate.id}
-                            className="bg-blue-700 hover:bg-blue-800 text-white"
+                            variant="outline"
+                          >
+                            {actionLoading === candidate.id
+                              ? "Saving..."
+                              : "Save as Draft"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handlePublish(candidate.id, "published")}
+                            disabled={actionLoading === candidate.id}
+                            className="bg-green-700 hover:bg-green-800 text-white"
                           >
                             {actionLoading === candidate.id
                               ? "Publishing..."
-                              : "Publish as CMS Draft"}
+                              : "Publish Now"}
                           </Button>
+                          <span className="text-xs text-muted-foreground">
+                            Publish Now goes live immediately
+                          </span>
                         </div>
                       )}
                     </div>

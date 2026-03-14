@@ -515,7 +515,7 @@ app.add_middleware(
     CORSMiddleware, 
     allow_origins=origins,
     allow_credentials=True,  # Keep for future cookie-based auth
-    allow_methods=["*"] if is_dev else ["GET", "POST", "PUT", "OPTIONS"],  # All methods in dev, include PUT for admin frontend
+    allow_methods=["*"] if is_dev else ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"] if is_dev else ["Content-Type", "Authorization", "Cache-Control", "X-Fingerprint"],  # All headers in dev
     expose_headers=["*"] if is_dev else [],  # Expose headers in dev
 )

@@ -366,13 +366,15 @@ export const knowledgeCandidatesApi = {
     });
   },
 
-  async publish(id: string): Promise<{
+  async publish(id: string, publishStatus: "draft" | "published" = "draft"): Promise<{
     published: boolean;
     payload_article_id: string;
     candidate_id: string;
+    cms_status: string;
   }> {
     return apiRequest(`/api/v1/admin/knowledge-candidates/${id}/publish`, {
       method: "POST",
+      body: JSON.stringify({ publish_status: publishStatus }),
     });
   },
 
