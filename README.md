@@ -31,8 +31,10 @@ The project has successfully completed the implementation of the core RAG pipeli
 | **Suggested Question Caching** | ✅ **IMPLEMENTED** - Redis-based cache layer for suggested questions with 24-hour TTL, pre-populated on startup, providing instant responses (<100ms) for common questions. See [FEATURE_SUGGESTED_QUESTION_CACHING.md](./docs/features/FEATURE_SUGGESTED_QUESTION_CACHING.md) for details. |
 | **Security Hardening** | ✅ **COMPLETE** - Comprehensive security review and hardening completed. All critical/high vulnerabilities resolved including webhook authentication, CORS configuration, error disclosure fixes, rate limiting, and security headers. All public launch blockers resolved. Multi-layered abuse prevention stack with rate limiting, challenge-response fingerprinting, bot protection, input sanitization, and cost throttling. See [ABUSE_PREVENTION_STACK.md](./docs/security/ABUSE_PREVENTION_STACK.md) for complete documentation and [RED_TEAM_ASSESSMENT_COMBINED.md](./docs/security/RED_TEAM_ASSESSMENT_COMBINED.md) for security audit details. |
 | **Litecoin Basics & FAQ** | ✅ **IMPLEMENTED** - Provides clear, concise answers to fundamental questions about Litecoin, its history, how it works, and common terminology. Caters especially to new users. Content population complete. |
-| **Transaction & Block Explorer** | 📝 **PLANNED** - Allows users to look up details of Litecoin transactions and explore block information. |
-| **Market Data & Insights** | 📝 **PLANNED** - Delivers real-time Litecoin price information, market capitalization, and trading volume from reliable market APIs. |
+| **Search Grounding** | ✅ **IMPLEMENTED** - When the curated knowledge base lacks sufficient information, the system automatically supplements answers with live web search results via Google Search, clearly flagged to the user. Powers a knowledge gap flywheel that surfaces missing topics for editorial review. |
+| **Follow-Up Questions** | ✅ **IMPLEMENTED** - AI-generated contextual follow-up questions appear after each response, enabling guided exploration of Litecoin topics. |
+| **Transaction & Block Explorer** | 🚧 **IN PROGRESS** - Live lookups for Litecoin transactions, addresses, blocks, fees, mempool status, and network stats via the Litecoin Space API. Includes dedicated frontend data cards and graceful error handling for invalid lookups. |
+| **Market Data & Insights** | 🚧 **IN PROGRESS** - Real-time Litecoin price (USD, EUR, GBP, AUD, JPY) and network statistics (hashrate, difficulty, difficulty adjustment progress) from the Litecoin Space API with freshness timestamps. |
 | **Developer Documentation** | 📝 **PLANNED** - Provides quick access to snippets from Litecoin developer documentation and technical resources. |
 | **Curated Knowledge Base** | ✅ **IMPLEMENTED** - A continuously updated library of well-researched articles and data serving as the primary source for the chatbot's answers. Managed through Payload CMS. |
 
@@ -68,7 +70,9 @@ The project has successfully completed the implementation of the core RAG pipeli
 
 * **Trust & Transparency (Source Citations):** Implement in-line citations in AI responses, linking directly to source documents.
 
-* **Contextual Discovery (AI-Generated Follow-up Questions):** Generate relevant, clickable follow-up questions after each response.
+* **Contextual Discovery (AI-Generated Follow-up Questions):** ✅ **COMPLETED** - Generate relevant, clickable follow-up questions after each response.
+
+* **Search Grounding (Knowledge Gap Filling):** ✅ **COMPLETED** - Automatic web search supplementation when the curated knowledge base lacks coverage, with a flywheel that surfaces gaps for editorial review.
 
 * **User Feedback Loop:** Introduce a mechanism for users to provide direct feedback on AI answer quality.
 
@@ -76,8 +80,8 @@ The project has successfully completed the implementation of the core RAG pipeli
 
 *The goal of this phase is to expand the chatbot's capabilities by integrating real-time data sources and specialized developer tools.*
 
-* **Transaction & Block Explorer:** Integrate live lookups for Litecoin transactions and blocks.  
-* **Market Data & Insights:** Integrate real-time Litecoin price, market cap, and trading volume.  
+* **Transaction & Block Explorer:** 🚧 **IN PROGRESS** - Live lookups for transactions, addresses, blocks, fees, mempool, and network stats via the Litecoin Space API with dedicated frontend data cards.
+* **Market Data & Insights:** 🚧 **IN PROGRESS** - Real-time price data (USD, EUR, GBP, AUD, JPY) and network statistics (hashrate, difficulty) from the Litecoin Space API.
 * **Developer Documentation & Resources:** Ingest and provide quick access to Litecoin developer documentation.
 
 ## **Architectural Overview**
@@ -92,9 +96,13 @@ The architecture is a production-grade platform organized around three primary w
 
 2.  **Routing:** A semantic router determines if the query is a greeting, a follow-up, or a new topic.
 
-3.  **Rewriting:** The system rewrites the query into a "Canonical Intent" to optimize cache hits and search accuracy.
+3.  **Intent Classification:** Detects blockchain data queries (transactions, addresses, blocks, fees, mempool, hashrate, price) and routes them to the **Litecoin Space API** for live data with structured frontend cards.
 
-4.  **Retrieval:** A hybrid engine searches vector and keyword indices, then re-ranks results using sparse embeddings.
+4.  **Rewriting:** The system rewrites the query into a "Canonical Intent" to optimize cache hits and search accuracy.
+
+5.  **Retrieval:** A hybrid engine searches vector and keyword indices, then re-ranks results using sparse embeddings.
+
+6.  **Search Grounding:** When the knowledge base lacks sufficient context, the system supplements answers with Google Search results, flagged to the user, and logs the gap for editorial review.
 
 **System Governance:** A dedicated Admin Dashboard and API that allows operators to control system behavior (spend limits, maintenance mode, user bans) in real-time via Redis, without requiring code deployments.
 
@@ -203,10 +211,10 @@ flowchart TD
 | ✅ | **[M6: MVP Content Population](./docs/milestones/milestone_6_mvp_content_population_validation.md)** | Populate Payload with the complete "Litecoin Basics & FAQ" knowledge base. |
 | ✅ | **[M7: MVP Testing & Deployment](./docs/milestones/milestone_7_mvp_testing_refinement_deployment.md)** | Conduct comprehensive testing, refine UI, and execute initial production deployment. |
 | 📝 | **[M8: Implement Trust & Feedback Features](./docs/milestones/milestone_8_implement_trust_feedback_features.md)** | Implement features from Phase 2 (UX/Accuracy). |
-| 📝 | **[M9: Implement Contextual Discovery](./docs/milestones/milestone_9_implement_contextual_discovery.md)** | Implement features from Phase 2 (UX/Accuracy). |
+| ✅ | **[M9: Implement Contextual Discovery](./docs/milestones/milestone_9_implement_contextual_discovery.md)** | **COMPLETED** - Follow-up questions and search grounding implemented. |
 | ✅ | **[M10: Upgrade Retrieval Engine](./docs/milestones/milestone_10_upgrade_retrieval_engine.md)** | **COMPLETED** - Hybrid search and re-ranking deployed. |
-| 📝 | **[M11: Transaction & Block Explorer](./docs/milestones/milestone_11_transaction_block_explorer.md)** | Implement features from Phase 3 (Live Data). |
-| 📝 | **[M12: Market Data & Insights](./docs/milestones/milestone_12_market_data_insights.md)** | Implement features from Phase 3 (Live Data). |
+| 🚧 | **[M11: Transaction & Block Explorer](./docs/milestones/milestone_11_transaction_block_explorer.md)** | **IN PROGRESS** - Litecoin Space API integration with live data cards. |
+| 🚧 | **[M12: Market Data & Insights](./docs/milestones/milestone_12_market_data_insights.md)** | **IN PROGRESS** - Price and network stats from Litecoin Space API. |
 | 📝 | **[M13: Developer Documentation](./docs/milestones/milestone_13_developer_documentation.md)** | Implement features from Phase 3 (Live Data). |
 
 ## **Technology Stack**
@@ -369,7 +377,7 @@ This runs production builds with the full stack (including monitoring) using loc
 
 ## **Testing**
 
-The Litecoin Knowledge Hub has a comprehensive test suite with **121 passing tests** covering all critical functionality including the RAG pipeline, conversational memory, rate limiting, spend limits, webhook authentication, abuse prevention, and local RAG services.
+The Litecoin Knowledge Hub has a comprehensive test suite with **121+ passing tests** across 31 test files, covering all critical functionality including the RAG pipeline, conversational memory, rate limiting, spend limits, webhook authentication, abuse prevention, local RAG services, and blockchain data integration.
 
 ### Quick Start
 
