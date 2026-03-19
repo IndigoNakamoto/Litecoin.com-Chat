@@ -10,6 +10,7 @@ from .decompose import make_decompose_node
 from .retrieve import make_retrieve_node
 from .resolve_parents import make_resolve_parents_node
 from .spend_limit import make_spend_limit_node
+from .blockchain_lookup import make_blockchain_lookup_node
 
 
 def build_nodes(pipeline: Any) -> Dict[str, Callable[..., Any]]:
@@ -28,6 +29,7 @@ def build_nodes(pipeline: Any) -> Dict[str, Callable[..., Any]]:
         "retrieve": make_retrieve_node(pipeline),
         "resolve_parents": make_resolve_parents_node(pipeline),
         "spend_limit": make_spend_limit_node(pipeline),
+        "blockchain_lookup": make_blockchain_lookup_node(pipeline),
     }
 
 

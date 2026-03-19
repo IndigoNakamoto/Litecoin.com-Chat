@@ -1286,7 +1286,15 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
             # Get streaming response from RAG pipeline
             # This will check QueryCache internally, then run RAG pipeline if needed
             async for chunk_data in rag_pipeline_instance.astream_query(request.query, paired_chat_history):
-                if chunk_data["type"] == "chunk":
+                if chunk_data["type"] == "blockchain_data":
+                    payload = {
+                        "status": "blockchain_data",
+                        "data_type": chunk_data.get("data_type", "unknown"),
+                        "data": chunk_data.get("data", {}),
+                        "isComplete": False,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+                elif chunk_data["type"] == "chunk":
                     # Collect full answer for logging
                     full_answer += chunk_data['content']
                     # Use proper JSON encoding for the chunk content

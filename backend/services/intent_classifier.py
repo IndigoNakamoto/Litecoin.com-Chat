@@ -12,7 +12,7 @@ cost-effective intent detection.
 import os
 import re
 import logging
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Set
 from enum import Enum
 
 try:
@@ -31,6 +31,7 @@ class Intent(Enum):
     GREETING = "greeting"
     THANKS = "thanks"
     FAQ_MATCH = "faq_match"
+    BLOCKCHAIN_LOOKUP = "blockchain_lookup"
     SEARCH = "search"
 
 
@@ -73,6 +74,41 @@ class IntentClassifier:
     THANKS_RESPONSE = (
         "You're welcome! Is there anything else you'd like to know about Litecoin?"
     )
+
+    # Litecoin transaction ID: 64 hex characters
+    _TX_RE = re.compile(r"\b[0-9a-f]{64}\b", re.IGNORECASE)
+
+    # Litecoin addresses: Legacy (L/M prefix, 26-35 chars) or Bech32 (ltc1, 42-62 chars)
+    _ADDR_RE = re.compile(r"\b(?:[LM][1-9A-HJ-NP-Za-km-z]{25,34}|ltc1[a-z0-9]{39,59})\b")
+
+    # Block height: digits optionally preceded by "block" context words
+    _BLOCK_HEIGHT_RE = re.compile(
+        r"(?:block\s*(?:height|number|#)?\s*#?\s*)(\d{1,9})\b", re.IGNORECASE
+    )
+
+    # Keyword sets for live-data queries
+    _FEE_KEYWORDS: Set[str] = {
+        "fee", "fees", "transaction fee", "recommended fee", "current fee",
+        "fee rate", "fee estimate", "sat per byte", "litoshi per byte",
+    }
+    _MEMPOOL_KEYWORDS: Set[str] = {
+        "mempool", "unconfirmed transactions", "pending transactions",
+        "mempool congestion", "mempool status",
+    }
+    _HASHRATE_KEYWORDS: Set[str] = {
+        "hashrate", "hash rate", "mining hashrate", "network hashrate",
+        "mining difficulty", "difficulty adjustment",
+    }
+    _PRICE_KEYWORDS: Set[str] = {
+        "litecoin price", "ltc price", "current price", "price of litecoin",
+        "price of ltc", "how much is litecoin", "how much is ltc",
+        "ltc usd", "ltc eur",
+    }
+    _BLOCK_TIP_KEYWORDS: Set[str] = {
+        "block height", "block tip", "current block", "latest block",
+        "newest block", "last block", "tip height", "chain height",
+        "how tall is the blockchain", "how many blocks",
+    }
     
     @staticmethod
     def _normalize(text: str) -> str:
@@ -149,6 +185,12 @@ class IntentClassifier:
         if self._is_thanks(query_lower):
             logger.debug(f"Classified as THANKS: {query[:50]}")
             return Intent.THANKS, None, self.THANKS_RESPONSE
+        
+        # Check for blockchain data lookup (live API queries)
+        blockchain_entity = self._detect_blockchain_lookup(query_lower, query)
+        if blockchain_entity:
+            logger.debug(f"Classified as BLOCKCHAIN_LOOKUP: {query[:50]} -> {blockchain_entity}")
+            return Intent.BLOCKCHAIN_LOOKUP, blockchain_entity, None
         
         # Check for FAQ match (if rapidfuzz available)
         matched_faq = self._match_faq(query)
@@ -240,6 +282,45 @@ class IntentClassifier:
         
         return False
     
+    def _detect_blockchain_lookup(self, query_lower: str, query_raw: str) -> Optional[str]:
+        """
+        Detect if the query is requesting live blockchain data.
+
+        Returns an entity string encoding the lookup type and value,
+        e.g. "tx:abc123...", "address:ltc1q...", "fees", "price".
+        Returns None if this is not a blockchain data query.
+        """
+        # Transaction ID (64-char hex)
+        tx_match = self._TX_RE.search(query_raw)
+        if tx_match:
+            return f"tx:{tx_match.group(0)}"
+
+        # Litecoin address
+        addr_match = self._ADDR_RE.search(query_raw)
+        if addr_match:
+            return f"address:{addr_match.group(0)}"
+
+        # Block height with explicit context ("block 12345", "block height 12345")
+        height_match = self._BLOCK_HEIGHT_RE.search(query_raw)
+        if height_match:
+            return f"block_height:{height_match.group(1)}"
+
+        # Block tip (no specific height — e.g. "current block height?")
+        if any(kw in query_lower for kw in self._BLOCK_TIP_KEYWORDS):
+            return "block_tip"
+
+        # Keyword-based lookups (check longest matches first)
+        if any(kw in query_lower for kw in self._PRICE_KEYWORDS):
+            return "price"
+        if any(kw in query_lower for kw in self._FEE_KEYWORDS):
+            return "fees"
+        if any(kw in query_lower for kw in self._MEMPOOL_KEYWORDS):
+            return "mempool"
+        if any(kw in query_lower for kw in self._HASHRATE_KEYWORDS):
+            return "hashrate"
+
+        return None
+
     def _match_faq(self, query: str) -> Optional[str]:
         """
         Fuzzy match against FAQ questions.

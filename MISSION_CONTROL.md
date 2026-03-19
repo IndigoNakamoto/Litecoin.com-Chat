@@ -14,11 +14,11 @@
 | 8 | Implement Trust and Feedback Features | Planned | Source citations, user feedback loops |
 | 9 | Implement Contextual Discovery | Planned | Related content, topic exploration |
 | 10 | Upgrade Retrieval Engine | Cancelled | Scope absorbed into M3 improvements |
-| 11 | Transaction & Block Explorer | Planned | On-chain data integration |
+| 11 | Transaction & Block Explorer | In Progress | Litecoin Space API integration built |
 | 12 | Market Data & Insights | Planned | Price feeds, market analysis |
 | 13 | Developer Documentation & Resources | Planned | API docs, integration guides |
 
-**Summary:** 5 completed, 2 in progress, 1 cancelled, 5 planned
+**Summary:** 5 completed, 3 in progress, 1 cancelled, 4 planned
 
 ## Architecture Overview
 
@@ -88,4 +88,5 @@ Per `docs/testing/TEST_SUITE_IMPLEMENTATION_PLAN.md`: target 80-90% coverage, 85
 
 | Date | Change | Milestone | Status |
 |------|--------|-----------|--------|
+| 2026-03-19 | Litecoin Space blockchain data integration: API client, graph node, intent detection, 7 frontend components, SSE protocol extension | M11 | In Progress |
 | 2026-03-19 | Initialized `.cursor/rules/` agentic workspace with 7 rule files | — | Setup complete |

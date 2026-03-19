@@ -15,6 +15,11 @@ interface GroundingSource {
   title?: string;
 }
 
+interface BlockchainData {
+  dataType: string;
+  data: Record<string, unknown>;
+}
+
 interface Message {
   role: "human" | "ai";
   content: string;
@@ -24,6 +29,7 @@ interface Message {
   id?: string;
   isGrounded?: boolean;
   groundingSources?: GroundingSource[];
+  blockchainData?: BlockchainData;
   retryInfo?: {
     retryAfterSeconds: number;
     banExpiresAt?: number;
@@ -883,7 +889,8 @@ export default function Home() {
         | { status: 'follow_ups'; questions?: string[] }
         | { status: 'complete'; isGrounded?: boolean }
         | { status: 'error'; error?: string }
-        | { status: 'usage_status'; usage_status?: { status: string; warning_level: string | null } };
+        | { status: 'usage_status'; usage_status?: { status: string; warning_level: string | null } }
+        | { status: 'blockchain_data'; data_type: string; data: Record<string, unknown> };
 
       // Helper function to process a single SSE data object
       const processData = async (data: SSEData) => {
@@ -950,6 +957,14 @@ export default function Home() {
               isStreamActive: true
             } : null);
           }
+        } else if (data.status === 'blockchain_data') {
+          setStreamingMessage(prev => prev ? {
+            ...prev,
+            blockchainData: {
+              dataType: data.data_type,
+              data: data.data,
+            },
+          } : null);
         } else if (data.status === 'sources') {
           // Sources event is informational; detect if search grounding was used
           // by checking whether the response profile indicates grounding
@@ -1155,6 +1170,7 @@ export default function Home() {
                 content={msg.content}
                 followUpQuestions={msg.followUpQuestions}
                 isGrounded={msg.isGrounded}
+                blockchainData={msg.blockchainData}
                 retryInfo={msg.retryInfo}
                 onFollowUpClick={handleSendMessage}
                 onRetry={msg.retryInfo?.originalMessage ? () => handleRetryMessage(msg.id!, msg.retryInfo!.originalMessage!) : undefined}

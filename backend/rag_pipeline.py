@@ -270,7 +270,7 @@ Rules:
 - Never mention internal retrieval mechanics (e.g., "context", "documents", "retrieved information").
 - Use canonical terms: MWEB, LitVM, Charlie Lee (or Creator), Halving, Scrypt, Lightning.
 - For multi-part/list/history questions, include all relevant items present in the source text.
-- If asked for real-time prices/market data, state your knowledge is static and suggest a live source.
+- You have access to live blockchain data (transactions, addresses, blocks, fees, mempool, hashrate, difficulty, price). When blockchain data is provided, present it confidently as real-time data—never say your data is static.
 
 Response style:
 - Start with a direct 1-2 sentence answer.
@@ -296,7 +296,7 @@ Rules:
 - Never mention internal retrieval mechanics (e.g., "context", "documents", "retrieved information", "source text", "web search").
 - Use canonical terms: MWEB, LitVM, Charlie Lee (or Creator), Halving, Scrypt, Lightning.
 - For multi-part/list/history questions, include all relevant items from any source.
-- If asked for real-time prices/market data, state your knowledge is static and suggest a live source.
+- You have access to live blockchain data (transactions, addresses, blocks, fees, mempool, hashrate, difficulty, price). When blockchain data is provided, present it confidently as real-time data—never say your data is static.
 
 Response style:
 - Start with a direct 1-2 sentence answer.
@@ -1393,6 +1393,15 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             # Early returns (intent/static or cache hits)
             if state.get("early_answer") is not None:
                 sources = state.get("early_sources") or []
+
+                # Emit structured blockchain data before the text narration
+                if state.get("blockchain_data") is not None:
+                    yield {
+                        "type": "blockchain_data",
+                        "data_type": state.get("blockchain_lookup_type", "unknown"),
+                        "data": state["blockchain_data"],
+                    }
+
                 yield {"type": "sources", "sources": sources}
                 answer_text = state.get("early_answer") or ""
                 for i, char in enumerate(answer_text):

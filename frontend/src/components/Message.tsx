@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import FollowUpQuestions from "@/components/FollowUpQuestions";
+import BlockchainDataRenderer from "@/components/blockchain/BlockchainDataRenderer";
 import React, { useState, useEffect, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -10,6 +11,10 @@ interface MessageProps {
   content: string;
   followUpQuestions?: string[];
   isGrounded?: boolean;
+  blockchainData?: {
+    dataType: string;
+    data: Record<string, unknown>;
+  };
   messageId?: string;
   retryInfo?: {
     retryAfterSeconds: number;
@@ -27,6 +32,7 @@ const Message: React.FC<MessageProps> = ({
   content,
   followUpQuestions,
   isGrounded,
+  blockchainData,
   messageId,
   retryInfo,
   onRetry,
@@ -141,6 +147,12 @@ const Message: React.FC<MessageProps> = ({
     // AI messages take full width
     return (
       <div ref={messageRef} id={messageId} className="w-full">
+        {blockchainData && (
+          <BlockchainDataRenderer
+            dataType={blockchainData.dataType}
+            data={blockchainData.data}
+          />
+        )}
         <div className="prose prose-lg max-w-none prose-p:my-6 prose-headings:my-4 leading-relaxed">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}

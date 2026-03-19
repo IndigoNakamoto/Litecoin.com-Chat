@@ -58,6 +58,10 @@ class RAGState(TypedDict, total=False):
     # Grounding (search grounding metadata from Gemini when KB gaps are filled)
     grounding_metadata: Optional[Dict[str, Any]]
 
+    # Blockchain data (populated by blockchain_lookup node for live API queries)
+    blockchain_data: Optional[Dict[str, Any]]
+    blockchain_lookup_type: Optional[str]
+
     # Metadata
     metadata: Dict[str, Any]
 

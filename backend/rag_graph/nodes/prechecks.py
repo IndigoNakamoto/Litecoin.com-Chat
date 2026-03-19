@@ -23,7 +23,7 @@ def make_prechecks_node(pipeline: Any):
         metadata: Dict[str, Any] = state.get("metadata") or {}
 
         # 1) Intent/static responses (optional)
-        if getattr(pipeline, "use_intent_classification", False) and not is_dependent:
+        if getattr(pipeline, "use_intent_classification", False):
             intent_classifier = pipeline.get_intent_classifier() if hasattr(pipeline, "get_intent_classifier") else None
             if intent_classifier:
                 try:
@@ -33,60 +33,68 @@ def make_prechecks_node(pipeline: Any):
                     state["intent"] = getattr(intent, "value", str(intent))
                     state["matched_faq"] = matched_faq
 
-                    if intent in (Intent.GREETING, Intent.THANKS) and static_response:
-                        state.update(
-                            {
-                                "early_answer": static_response,
-                                "early_sources": [],
-                                "early_cache_type": f"intent_{intent.value}",
-                            }
-                        )
-                        metadata.update(
-                            {
-                                "input_tokens": 0,
-                                "output_tokens": 0,
-                                "cost_usd": 0.0,
-                                "cache_hit": True,
-                                "cache_type": state["early_cache_type"],
-                                "intent": intent.value,
-                            }
-                        )
+                    # Blockchain lookups always proceed (live data, independent of history)
+                    if intent == Intent.BLOCKCHAIN_LOOKUP:
+                        logger.info(f"Blockchain lookup detected (is_dependent={is_dependent}): {matched_faq}")
                         state["metadata"] = metadata
                         return state
 
-                    # FAQ match: try suggested question cache (if available)
-                    if intent == Intent.FAQ_MATCH and matched_faq:
-                        suggested_cache = (
-                            pipeline.get_suggested_question_cache()
-                            if hasattr(pipeline, "get_suggested_question_cache")
-                            else None
-                        )
-                        if suggested_cache and hasattr(suggested_cache, "get"):
-                            cached = await suggested_cache.get(matched_faq)
-                            if cached:
-                                answer, sources = cached
-                                # Skip entries that only contain the generic error message
-                                if answer and answer.strip() != getattr(pipeline, "generic_user_error_message", ""):
-                                    state.update(
-                                        {
-                                            "early_answer": answer,
-                                            "early_sources": sources,
-                                            "early_cache_type": "intent_faq_match",
-                                        }
-                                    )
-                                    metadata.update(
-                                        {
-                                            "input_tokens": 0,
-                                            "output_tokens": 0,
-                                            "cost_usd": 0.0,
-                                            "cache_hit": True,
-                                            "cache_type": "intent_faq_match",
-                                            "intent": "faq_match",
-                                            "matched_faq": matched_faq,
-                                        }
-                                    )
-                                    state["metadata"] = metadata
-                                    return state
+                    # Greeting/thanks/FAQ short-circuits only for independent queries
+                    if not is_dependent:
+                        if intent in (Intent.GREETING, Intent.THANKS) and static_response:
+                            state.update(
+                                {
+                                    "early_answer": static_response,
+                                    "early_sources": [],
+                                    "early_cache_type": f"intent_{intent.value}",
+                                }
+                            )
+                            metadata.update(
+                                {
+                                    "input_tokens": 0,
+                                    "output_tokens": 0,
+                                    "cost_usd": 0.0,
+                                    "cache_hit": True,
+                                    "cache_type": state["early_cache_type"],
+                                    "intent": intent.value,
+                                }
+                            )
+                            state["metadata"] = metadata
+                            return state
+
+                        # FAQ match: try suggested question cache (if available)
+                        if intent == Intent.FAQ_MATCH and matched_faq:
+                            suggested_cache = (
+                                pipeline.get_suggested_question_cache()
+                                if hasattr(pipeline, "get_suggested_question_cache")
+                                else None
+                            )
+                            if suggested_cache and hasattr(suggested_cache, "get"):
+                                cached = await suggested_cache.get(matched_faq)
+                                if cached:
+                                    answer, sources = cached
+                                    # Skip entries that only contain the generic error message
+                                    if answer and answer.strip() != getattr(pipeline, "generic_user_error_message", ""):
+                                        state.update(
+                                            {
+                                                "early_answer": answer,
+                                                "early_sources": sources,
+                                                "early_cache_type": "intent_faq_match",
+                                            }
+                                        )
+                                        metadata.update(
+                                            {
+                                                "input_tokens": 0,
+                                                "output_tokens": 0,
+                                                "cost_usd": 0.0,
+                                                "cache_hit": True,
+                                                "cache_type": "intent_faq_match",
+                                                "intent": "faq_match",
+                                                "matched_faq": matched_faq,
+                                            }
+                                        )
+                                        state["metadata"] = metadata
+                                        return state
                 except Exception:
                     # Best-effort only; fall through to normal flow.
                     pass
