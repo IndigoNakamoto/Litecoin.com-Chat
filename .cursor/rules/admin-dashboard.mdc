@@ -1,0 +1,70 @@
+---
+description: "Admin management dashboard standards: Next.js 16, Radix/Tailwind, Bearer token auth"
+globs: admin-frontend/src/**
+alwaysApply: false
+---
+
+# Admin Dashboard
+
+## Identity
+
+This is the **operator management dashboard** for the Litecoin Knowledge Hub. It is used by administrators to monitor system health, manage caches, review knowledge gaps, and configure abuse prevention. It is NOT the public chat interface.
+
+## Stack
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| Framework | Next.js | 16.0.9 |
+| React | React | 19.2.1 |
+| UI Components | Radix UI primitives | (NO Shadcn — no `components.json`) |
+| Styling | Tailwind CSS | v4 |
+| Icons | Lucide React | latest |
+| Utilities | clsx, tailwind-merge | latest |
+
+## Key Conventions
+
+### UI Components
+
+Components in `components/ui/` are **hand-rolled Radix primitives** — NOT Shadcn. There is no `components.json`, no Shadcn CLI. Do not run `npx shadcn-ui` in this project. Do not assume `cn()` utility or Shadcn component APIs.
+
+When adding new UI primitives, build them from Radix directly following the patterns in existing `components/ui/` files.
+
+### Authentication
+
+Bearer token auth stored in `localStorage` as `admin_token`:
+
+- Login: `POST /api/v1/admin/auth/login` → receives token
+- Verification: `GET /api/v1/admin/auth/verify` with `Authorization: Bearer <token>`
+- Protection: `AuthGuard` component wraps all protected routes, redirects to `/` (login) on auth failure
+
+### API Client
+
+`lib/api.ts` is the centralized API client. All calls go **directly to the backend** — there is no Next.js rewrite proxy like the public frontend uses. The backend URL comes from `NEXT_PUBLIC_BACKEND_URL`.
+
+### Page Structure
+
+| Route | Component | Purpose |
+|-------|-----------|---------|
+| `/` | `page.tsx` | Login |
+| `/dashboard` | `Dashboard.tsx` | System overview, Redis stats |
+| `/knowledge` | `KnowledgeCandidates.tsx` | Knowledge gap review and management |
+| `/questions` | `QuestionLogs.tsx` | Recent question logs and analytics |
+
+### Dashboard Components (map 1:1 to admin API endpoints)
+
+| Component | Admin API |
+|-----------|-----------|
+| `UserStatistics` | `GET /api/v1/admin/users/stats` |
+| `AbusePreventionSettings` | `GET/PUT /api/v1/admin/settings/abuse-prevention` |
+| `BansThrottles` | `GET /api/v1/admin/redis/stats`, `POST clear-bans/clear-throttles` |
+| `ResponseCacheManager` | `GET /api/v1/admin/cache/response/stats`, `POST response/clear` |
+| `SuggestedQuestionsCache` | `GET/POST /api/v1/admin/cache/suggested-questions/*` |
+| `KnowledgeCandidates` | `GET/PATCH/POST /api/v1/admin/knowledge-candidates/*` |
+| `QuestionLogs` | `GET /api/v1/admin/llm-logs/recent` |
+
+## Forbidden
+
+- Never import from `frontend/` — these are completely separate applications
+- Never use Shadcn CLI or assume Shadcn component APIs
+- Never use fingerprint challenge auth — that is public-frontend-only
+- Never proxy API calls through Next.js rewrites — call the backend directly

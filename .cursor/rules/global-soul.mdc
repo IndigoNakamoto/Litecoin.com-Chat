@@ -1,0 +1,48 @@
+---
+description: "Core philosophy and cross-cutting standards for the Litecoin Knowledge Hub monorepo"
+globs: 
+alwaysApply: true
+---
+
+# Litecoin Knowledge Hub — Global Standards
+
+## Project Identity
+
+This is the **Litecoin Knowledge Hub**: a RAG-powered conversational assistant that provides accurate, sourced answers about Litecoin. It is a multi-service monorepo with 5 distinct services:
+
+| Service | Path | Stack | Purpose |
+|---------|------|-------|---------|
+| Backend | `backend/` | FastAPI, LangGraph, Pydantic v2 | RAG pipeline, API, admin endpoints |
+| Public Frontend | `frontend/` | Next.js 15.5, Shadcn, Tailwind v4 | End-user chat interface |
+| Admin Frontend | `admin-frontend/` | Next.js 16, Radix, Tailwind v4 | Operator management dashboard |
+| Payload CMS | `payload_cms/` | Payload 3.x, Next.js, MongoDB | Content management, article authoring |
+| Ops/Scripts | `scripts/`, `docker-compose*.yml` | Bash, Python, Docker Compose | Orchestration, backups, reindexing |
+
+## Dual-Mode Philosophy
+
+**UI Work (Vibe Coding):** When working on frontend components, styling, or UX — iterate fast, prioritize visual quality, use the component libraries idiomatically. Trust the design system.
+
+**RAG Work (Reasoning Mode):** When working on `backend/rag_graph/`, `backend/rag_pipeline.py`, or any retrieval/generation logic — slow down. Trace every state change through the graph. Verify with tests. No guessing, no hallucinating retrieval behavior.
+
+## Hard Boundaries
+
+1. **Never cross-import between `frontend/` and `admin-frontend/`.** They share zero code, zero types, zero components. They use different UI libraries (Shadcn vs bare Radix) and different Next.js versions.
+
+2. **All RAG changes must trace impact** through the chain: graph node → `rag_pipeline.py` orchestration → API response format. A change to retrieval affects generation; a change to state shape affects every node.
+
+3. **Never commit secrets.** Files matching `.env`, `.env.*`, `credentials.*`, `*.pem`, `*.key` must never be staged. The env files (`.env.docker.dev`, `.env.docker.prod`, `backend/.env`, `payload_cms/.env`) are gitignored.
+
+4. **Tests are the verification gate.** No build task is "done" until `pytest backend/tests/` passes. The test suite has 29 files covering security, RAG correctness, admin API, and operational concerns.
+
+## Project State
+
+See `MISSION_CONTROL.md` in the project root for the current milestone heartbeat, active work streams, and verification gate status.
+
+## Key File References
+
+- RAG orchestration: `backend/rag_pipeline.py` (1663 lines — the brain)
+- Graph state machine: `backend/rag_graph/` (8 nodes, 3 conditional exits)
+- API data models: `backend/data_models.py` (Pydantic v2)
+- Test suite: `backend/tests/` (29 test files, 121+ passing)
+- Milestones: `docs/milestones/` (13 milestones)
+- Development philosophy: `docs/DEVELOPMENT_CYCLE.md`, `docs/DEVELOPMENT_CYCLE_V2.md`

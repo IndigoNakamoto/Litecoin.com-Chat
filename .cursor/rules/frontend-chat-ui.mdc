@@ -1,0 +1,91 @@
+---
+description: "Public chat interface standards: Next.js 15.5, Shadcn/Tailwind, streaming SSE"
+globs: frontend/src/**
+alwaysApply: false
+---
+
+# Frontend Chat UI
+
+## Identity
+
+This is the **public-facing** Litecoin Knowledge Hub chat interface, served at `chat.lite.space/chat`. End users interact with the RAG assistant through this UI. It is NOT the admin dashboard.
+
+## Stack
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| Framework | Next.js | 15.5.8 |
+| React | React | 19 |
+| UI Components | Shadcn UI | configured (`components.json` present) |
+| Styling | Tailwind CSS | v4 |
+| Animation | Framer Motion | latest |
+| Markdown | react-markdown | latest |
+| Rich Text | TipTap | (for CMS article editor in `components/cms/`) |
+| Validation | Zod + react-hook-form | latest |
+
+## Key Conventions
+
+### Component Library
+
+Shadcn UI components live in `components/ui/`. To add a new component:
+
+```bash
+npx shadcn-ui@latest add <component-name>
+```
+
+Do NOT hand-roll components that Shadcn provides. Do NOT copy Shadcn patterns into `admin-frontend/` — it uses bare Radix without Shadcn.
+
+### Routing & Base Path
+
+The app uses `basePath: '/chat'` in `next.config.ts`. All internal links and API calls are relative to this base path. Never hardcode absolute URLs to the backend.
+
+### API Communication
+
+Next.js rewrites proxy API calls to the backend:
+
+```
+/api/v1/:path* → ${BACKEND_URL}/api/v1/:path*
+```
+
+Always use relative fetch paths like `/api/v1/chat/stream`. The backend URL is resolved by the rewrite config, not by client code.
+
+### Streaming Protocol
+
+Chat responses use `ReadableStream` + `TextDecoder` with SSE-style JSON lines:
+
+```
+data: {"type": "thinking", ...}\n
+data: {"type": "streaming", "content": "chunk..."}\n
+data: {"type": "sources", "sources": [...]}\n
+data: {"type": "follow_ups", "questions": [...]}\n
+data: {"type": "complete"}\n
+```
+
+Event types to handle: `thinking`, `streaming`, `sources`, `follow_ups`, `complete`, `error`, `usage_status`.
+
+On 403 `invalid_challenge`, fetch a new challenge from `/api/v1/auth/challenge` and retry once.
+
+### Authentication
+
+The public frontend uses **fingerprint challenge-response** for rate limiting — NOT Bearer tokens. Auth flow:
+
+1. `GET /api/v1/auth/challenge` → receive challenge
+2. Include `X-Fingerprint` header on subsequent requests
+
+There is no login page, no user accounts, no `localStorage` tokens in this frontend.
+
+### Content Sources
+
+- **Suggested questions**: Fetched from Payload CMS REST API at `NEXT_PUBLIC_PAYLOAD_URL/api/suggested-questions`
+- **Chat responses**: Streamed from backend via `/api/v1/chat/stream`
+
+### CMS Components
+
+`components/cms/` contains an article editor (TipTap-based) with `ArticleEditor.tsx`, `FrontmatterForm.tsx`, `TiptapEditor.tsx`. These are part of the public frontend for content contribution workflows.
+
+## Forbidden
+
+- Never import from `admin-frontend/` — these are completely separate applications
+- Never use Bearer token auth patterns — that is admin-only
+- Never hardcode `localhost:8000` or any backend URL in client code
+- Never use `getServerSideProps` patterns from older Next.js — this is App Router (Next.js 15)

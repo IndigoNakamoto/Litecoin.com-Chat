@@ -1,0 +1,95 @@
+---
+description: "Orchestration standards: Docker Compose, scripts, backups, reindexing, and monitoring"
+globs: 
+  - scripts/**
+  - docker-compose*.yml
+  - monitoring/**
+alwaysApply: false
+---
+
+# Ops Gateway
+
+## Identity
+
+The operational layer that manages the "hands" of the system — container orchestration, data backups, vector reindexing, cache management, and production verification.
+
+## Docker Compose Topology
+
+| File | Purpose | Services |
+|------|---------|----------|
+| `docker-compose.dev.yml` | Local development | mongodb, backend, redis, frontend, payload_cms, admin_frontend |
+| `docker-compose.prod.yml` | Production deployment | Full stack with production configs |
+| `docker-compose.prod-local.yml` | Local production testing | Production-like on localhost |
+| `docker-compose.override.yml` | Dev overrides | Volume mounts, hot reload |
+| `payload_cms/docker-compose.yml` | CMS standalone | Payload CMS + MongoDB |
+| `monitoring/docker-compose.monitoring.yml` | Observability | Prometheus, Grafana |
+
+### Service Ports (dev)
+
+| Service | Host Port | Container Port |
+|---------|-----------|----------------|
+| MongoDB | 27017 | 27017 |
+| Backend (FastAPI) | 8000 | 8000 |
+| Redis | 6379 | 6379 |
+| Frontend | 3000 | 3000 |
+| Payload CMS | 3001 | 3000 |
+| Admin Frontend | 3002 | 3000 |
+
+## Scripts by Category
+
+### Lifecycle
+
+- `run-dev.sh` / `run-prod.sh` / `run-prod-local.sh` — start stacks
+- `down-prod.sh` / `shutdown-prod.sh` — stop stacks
+- `rebuild-backend.sh` / `rebuild-frontend.sh` / `rebuild-admin-frontend.sh` — targeted rebuilds
+
+### Data & Backup
+
+- `backup-mongodb.sh` — MongoDB dump
+- `archive-encrypt-mongodb-backup.sh` — encrypted archive
+- `backup-and-stage-for-github.sh` — prepare backup for version control
+
+### Reindex
+
+- `reindex_vectors.py` — full vector store rebuild
+- `reindex_with_faq.py` — rebuild with FAQ parent documents
+
+Run these after CMS schema changes, embedding model changes, or chunking strategy updates.
+
+### Cache Management
+
+- `clear-semantic-cache.py` / `semantic-cache-stats.py` — semantic cache ops
+- `clear-redis-settings.sh` — reset Redis admin settings
+- `refresh-suggested-cache.sh` — refresh suggested questions cache
+- `clear-prometheus-data.sh` / `reset-all-metrics.sh` — monitoring reset
+
+### Verification
+
+- `verify-production-builds.sh` — validate all containers built correctly
+- `verify-https-enforcement.sh` — check TLS config
+- `verify-mongo-auth.sh` — validate MongoDB authentication
+
+### Monitoring
+
+- `check-prometheus-metrics.sh` — query Prometheus
+- `test-monitoring-ports.sh` — verify monitoring stack connectivity
+- `backend-uptime-check.sh` / `install-backend-uptime-check.sh` — uptime monitoring
+
+## Environment Files
+
+| File | Purpose |
+|------|---------|
+| `.env.docker.dev` | Docker dev environment variables |
+| `.env.docker.prod` | Docker production environment variables |
+| `backend/.env` | Backend secrets (API keys) |
+| `payload_cms/.env` | CMS secrets (PAYLOAD_SECRET) |
+
+**Never commit these files.** They are in `.gitignore`.
+
+## Key Rules
+
+- Always specify which services a script change affects
+- Reindex scripts must be run after any change to CMS collections or embedding models
+- Test scripts against dev stack before running on production
+- When modifying Docker Compose files, validate with `docker compose config` before committing
+- Backup scripts should be tested with restore verification

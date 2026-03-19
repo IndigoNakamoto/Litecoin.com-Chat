@@ -1,0 +1,89 @@
+---
+description: "FastAPI backend standards: LangGraph RAG state machine, Pydantic models, API routes, and testing"
+globs: backend/**
+alwaysApply: false
+---
+
+# Backend RAG Expert
+
+## Architecture Overview
+
+The backend has two layers:
+
+1. **LangGraph State Machine** (`rag_graph/`): Handles everything *before* answer generation — sanitization, routing, caching, decomposition, retrieval, parent resolution, spend gating.
+2. **RAG Pipeline** (`rag_pipeline.py`): The orchestration layer that owns the LLM, prompt chains, and cache write-back. It calls `graph.ainvoke()` then performs generation.
+
+Never duplicate retrieval logic outside the graph. Never put generation logic inside the graph.
+
+## RAG Graph Internals
+
+### State
+
+`RAGState` is defined as `TypedDict(total=False)` in `rag_graph/state.py`. All keys are optional. Never add required keys — it will break every node that returns a partial state update.
+
+### Nodes (8 total, in execution order)
+
+| Node | File | Responsibility |
+|------|------|----------------|
+| sanitize_normalize | `nodes/sanitize_normalize.py` | Input sanitization, history truncation, keyword normalization |
+| route | `nodes/route.py` | Complexity classification, history dependency detection |
+| prechecks | `nodes/prechecks.py` | Intent classification, FAQ/cache lookup, query expansion |
+| semantic_cache | `nodes/semantic_cache.py` | Embedding generation, vector cache lookup |
+| decompose | `nodes/decompose.py` | Compound query splitting |
+| retrieve | `nodes/retrieve.py` | Hybrid vector + BM25 retrieval, reranking |
+| resolve_parents | `nodes/resolve_parents.py` | Parent-document pattern for FAQ chunks |
+| spend_limit | `nodes/spend_limit.py` | Cost estimation, budget enforcement |
+
+### Conditional Exits
+
+Three points can short-circuit to END: after `prechecks` (early answer/error), after `semantic_cache` (cache hit/error), after `retrieve` (error). See `graph.py` lines 34-58.
+
+### Adding a New Node
+
+1. Create the node function in `nodes/`
+2. Register it in `nodes/factory.py` via `build_nodes()`
+3. Wire it into the graph in `graph.py` with appropriate conditional edges
+4. Add tests in `backend/tests/`
+
+## API Layer
+
+### Public Routes (in `main.py`)
+
+- `GET /api/v1/auth/challenge` — fingerprint challenge for rate limiting
+- `POST /api/v1/chat/stream` — streaming SSE chat responses
+
+### Admin Routes (in `api/v1/admin/`)
+
+All admin routes require Bearer token auth via `verify_admin_token` dependency. Organized into routers: `auth`, `settings`, `redis`, `cache`, `users`, `knowledge_candidates`, `logs`.
+
+### Webhook Sync (in `api/v1/sync/`)
+
+- `POST /api/v1/sync/payload` — receives HMAC-signed webhooks from Payload CMS
+- Validates signature via shared secret, prevents replay attacks
+
+## Data Models
+
+`data_models.py` uses Pydantic v2. Key models:
+
+- `ChatRequest` / `ChatMessage` — API request/response
+- `PayloadArticleMetadata` — document chunk metadata from CMS
+- `PayloadWebhookDoc` — webhook payload structure
+- `KnowledgeCandidate` — knowledge gap tracking
+- `LLMRequestLog` / `UserQuestion` — observability
+
+The graph uses `langchain_core.documents.Document` for `context_docs` and `published_sources`, not the Pydantic models.
+
+## Testing Standards
+
+- Framework: `pytest` with `pytest-asyncio`
+- Fixtures: `conftest.py` provides `mock_redis` (AsyncMock with `_storage`/`_sets` dicts), `mock_mongo` (mongomock), `mock_llm`, `client` (TestClient with dependency overrides)
+- Pattern: Class-based test suites, `@pytest.mark.asyncio` for async, `@pytest.mark.skipif` for optional dependencies
+- Rule: Every change to a RAG node or pipeline method requires a corresponding test update or addition
+- Run: `pytest backend/tests/ -v`
+
+## Style
+
+- Python 3.11+, type hints on all public functions
+- Async by default (`async def` for all API and pipeline methods)
+- Use `logging.getLogger(__name__)` — not print statements
+- Pydantic v2 model_validator / field_validator — not v1 validator decorators
