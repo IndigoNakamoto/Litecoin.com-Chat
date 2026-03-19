@@ -14,11 +14,11 @@
 | 8 | Implement Trust and Feedback Features | Planned | Source citations, user feedback loops |
 | 9 | Implement Contextual Discovery | Completed | Follow-up questions, search grounding |
 | 10 | Upgrade Retrieval Engine | Cancelled | Scope absorbed into M3 improvements |
-| 11 | Transaction & Block Explorer | In Progress | Litecoin Space API integration built |
-| 12 | Market Data & Insights | Planned | Price feeds, market analysis |
+| 11 | Transaction & Block Explorer | Completed | Litecoin Space API: tx, address, block, fees, mempool, tip |
+| 12 | Market Data & Insights | Completed | Price (5 currencies), hashrate, difficulty, adjustment progress |
 | 13 | Developer Documentation & Resources | Planned | API docs, integration guides |
 
-**Summary:** 6 completed, 2 in progress, 1 cancelled, 4 planned
+**Summary:** 8 completed, 2 in progress, 1 cancelled, 2 planned
 
 ## Architecture Overview
 
@@ -93,7 +93,7 @@ Per `docs/testing/TEST_SUITE_IMPLEMENTATION_PLAN.md`: target 80-90% coverage, 85
 
 | Date | Change | Milestone | Status |
 |------|--------|-----------|--------|
-| 2026-03-19 | Fixed blockchain API: plain-text endpoints, price endpoint path, 404 error handling, price freshness timestamps | M11 | In Progress |
-| 2026-03-19 | Fixed intent detection: blockchain queries now fire regardless of is_dependent flag; removed static data disclaimer from system prompt | M11 | In Progress |
-| 2026-03-19 | Litecoin Space blockchain data integration: API client, graph node, intent detection, 7 frontend components, SSE protocol extension | M11 | In Progress |
+| 2026-03-19 | Fixed blockchain API: plain-text endpoints, price endpoint path, 404 error handling, price freshness timestamps | M11/M12 | Completed |
+| 2026-03-19 | Fixed intent detection: blockchain queries now fire regardless of is_dependent flag; removed static data disclaimer from system prompt | M11 | Completed |
+| 2026-03-19 | Litecoin Space blockchain data integration: API client, graph node, intent detection, 7 frontend components, SSE protocol extension | M11/M12 | Completed |
 | 2026-03-19 | Initialized `.cursor/rules/` agentic workspace with 7 rule files | — | Setup complete |

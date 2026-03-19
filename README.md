@@ -33,8 +33,8 @@ The project has successfully completed the implementation of the core RAG pipeli
 | **Litecoin Basics & FAQ** | ✅ **IMPLEMENTED** - Provides clear, concise answers to fundamental questions about Litecoin, its history, how it works, and common terminology. Caters especially to new users. Content population complete. |
 | **Search Grounding** | ✅ **IMPLEMENTED** - When the curated knowledge base lacks sufficient information, the system automatically supplements answers with live web search results via Google Search, clearly flagged to the user. Powers a knowledge gap flywheel that surfaces missing topics for editorial review. |
 | **Follow-Up Questions** | ✅ **IMPLEMENTED** - AI-generated contextual follow-up questions appear after each response, enabling guided exploration of Litecoin topics. |
-| **Transaction & Block Explorer** | 🚧 **IN PROGRESS** - Live lookups for Litecoin transactions, addresses, blocks, fees, mempool status, and network stats via the Litecoin Space API. Includes dedicated frontend data cards and graceful error handling for invalid lookups. |
-| **Market Data & Insights** | 🚧 **IN PROGRESS** - Real-time Litecoin price (USD, EUR, GBP, AUD, JPY) and network statistics (hashrate, difficulty, difficulty adjustment progress) from the Litecoin Space API with freshness timestamps. |
+| **Transaction & Block Explorer** | ✅ **IMPLEMENTED** - Live lookups for Litecoin transactions, addresses, blocks, fees, mempool status, and network stats via the Litecoin Space API. Includes dedicated frontend data cards and graceful error handling for invalid lookups. |
+| **Market Data & Insights** | ✅ **IMPLEMENTED** - Real-time Litecoin price (USD, EUR, GBP, AUD, JPY) and network statistics (hashrate, difficulty, difficulty adjustment progress) from the Litecoin Space API with freshness timestamps. |
 | **Developer Documentation** | 📝 **PLANNED** - Provides quick access to snippets from Litecoin developer documentation and technical resources. |
 | **Curated Knowledge Base** | ✅ **IMPLEMENTED** - A continuously updated library of well-researched articles and data serving as the primary source for the chatbot's answers. Managed through Payload CMS. |
 
@@ -80,8 +80,8 @@ The project has successfully completed the implementation of the core RAG pipeli
 
 *The goal of this phase is to expand the chatbot's capabilities by integrating real-time data sources and specialized developer tools.*
 
-* **Transaction & Block Explorer:** 🚧 **IN PROGRESS** - Live lookups for transactions, addresses, blocks, fees, mempool, and network stats via the Litecoin Space API with dedicated frontend data cards.
-* **Market Data & Insights:** 🚧 **IN PROGRESS** - Real-time price data (USD, EUR, GBP, AUD, JPY) and network statistics (hashrate, difficulty) from the Litecoin Space API.
+* **Transaction & Block Explorer:** ✅ **COMPLETED** - Live lookups for transactions, addresses, blocks, fees, mempool, and network stats via the Litecoin Space API with dedicated frontend data cards.
+* **Market Data & Insights:** ✅ **COMPLETED** - Real-time price data (USD, EUR, GBP, AUD, JPY) and network statistics (hashrate, difficulty) from the Litecoin Space API.
 * **Developer Documentation & Resources:** Ingest and provide quick access to Litecoin developer documentation.
 
 ## **Architectural Overview**
@@ -213,8 +213,8 @@ flowchart TD
 | 📝 | **[M8: Implement Trust & Feedback Features](./docs/milestones/milestone_8_implement_trust_feedback_features.md)** | Implement features from Phase 2 (UX/Accuracy). |
 | ✅ | **[M9: Implement Contextual Discovery](./docs/milestones/milestone_9_implement_contextual_discovery.md)** | **COMPLETED** - Follow-up questions and search grounding implemented. |
 | ✅ | **[M10: Upgrade Retrieval Engine](./docs/milestones/milestone_10_upgrade_retrieval_engine.md)** | **COMPLETED** - Hybrid search and re-ranking deployed. |
-| 🚧 | **[M11: Transaction & Block Explorer](./docs/milestones/milestone_11_transaction_block_explorer.md)** | **IN PROGRESS** - Litecoin Space API integration with live data cards. |
-| 🚧 | **[M12: Market Data & Insights](./docs/milestones/milestone_12_market_data_insights.md)** | **IN PROGRESS** - Price and network stats from Litecoin Space API. |
+| ✅ | **[M11: Transaction & Block Explorer](./docs/milestones/milestone_11_transaction_block_explorer.md)** | **COMPLETED** - Litecoin Space API integration with live data cards. |
+| ✅ | **[M12: Market Data & Insights](./docs/milestones/milestone_12_market_data_insights.md)** | **COMPLETED** - Price and network stats from Litecoin Space API. |
 | 📝 | **[M13: Developer Documentation](./docs/milestones/milestone_13_developer_documentation.md)** | Implement features from Phase 3 (Live Data). |
 
 ## **Technology Stack**
