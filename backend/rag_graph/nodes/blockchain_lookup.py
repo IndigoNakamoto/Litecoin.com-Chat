@@ -26,6 +26,7 @@ def make_blockchain_lookup_node(pipeline: Any):
             LitecoinSpaceClient,
             format_litoshis,
             format_hashrate,
+            format_share,
             BlockchainLookupType,
         )
 
@@ -155,6 +156,108 @@ def make_blockchain_lookup_node(pipeline: Any):
                 }
                 state["blockchain_lookup_type"] = BlockchainLookupType.HASHRATE.value
 
+            elif entity == "mining_pools" or entity.startswith("mining_pools:"):
+                period_key = "1w"
+                api_period: str | None = "1w"
+                if entity.startswith("mining_pools:"):
+                    suffix = entity.split(":", 1)[1].strip()
+                    if suffix == "all" or suffix == "":
+                        period_key = "all"
+                        api_period = None
+                    else:
+                        period_key = suffix
+                        api_period = suffix
+                data = await client.get_mining_pools(api_period)
+                pools = data.get("pools") or []
+                total_blocks = data.get("blockCount")
+                last_est = data.get("lastEstimatedHashrate")
+                period_label = period_key.upper() if len(period_key) <= 3 else period_key
+                answer = f"**Mining pools** _(blocks in last {period_label}, from [Litecoin Space](https://litecoinspace.org))_\n\n"
+                show = pools[:25]
+                for p in show:
+                    name = p.get("name", "?")
+                    rank = p.get("rank", "")
+                    blocks = p.get("blockCount", "")
+                    slug = p.get("slug", "")
+                    link = p.get("link") or ""
+                    line = f"{rank}. **{name}** — {blocks:,} blocks" if isinstance(blocks, int) else f"{rank}. **{name}**"
+                    if link:
+                        line += f" — [site]({link})"
+                    if slug:
+                        line += f" _(slug `{slug}`)_"
+                    answer += f"- {line}\n"
+                if len(pools) > 25:
+                    answer += f"\n_Showing top 25 of {len(pools)} pools._\n"
+                if isinstance(total_blocks, int):
+                    answer += f"\n**Total blocks** (window): {total_blocks:,}\n"
+                if last_est is not None:
+                    try:
+                        answer += f"**Estimated network hashrate** (reference): {format_hashrate(float(last_est))}\n"
+                    except (TypeError, ValueError):
+                        pass
+                state["blockchain_data"] = data
+                state["blockchain_lookup_type"] = BlockchainLookupType.MINING_POOLS.value
+
+            elif entity.startswith("mining_pool:"):
+                slug = entity.split(":", 1)[1].strip()
+                detail = await client.get_mining_pool_detail(slug)
+                pool = (detail.get("pool") or {}) if isinstance(detail, dict) else {}
+                if not pool:
+                    state["early_answer"] = (
+                        f"**Mining pool not found**\n\n"
+                        f"No data for slug `{slug}` from Litecoin Space. "
+                        f"Check the `slug` field in pool rankings (e.g. `f2pool`, `viabtc`)."
+                    )
+                    state["early_sources"] = []
+                    state["early_cache_type"] = "blockchain_lookup_error"
+                    metadata.update({
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cost_usd": 0.0,
+                        "cache_hit": False,
+                        "cache_type": "blockchain_lookup_error",
+                        "intent": "blockchain_lookup",
+                        "blockchain_entity": entity,
+                        "blockchain_lookup_duration": time.time() - start,
+                    })
+                    state["metadata"] = metadata
+                    return state
+                name = pool.get("name", slug)
+                link = pool.get("link") or ""
+                bc = detail.get("blockCount") or {}
+                bs = detail.get("blockShare") or {}
+                est = detail.get("estimatedHashrate")
+                rep = detail.get("reportedHashrate")
+                answer = f"**{name}** _(mining pool)_\n\n"
+                if link:
+                    answer += f"- **Website:** {link}\n"
+                if isinstance(est, (int, float)):
+                    answer += f"- **Estimated hashrate:** {format_hashrate(float(est))}\n"
+                if rep is not None:
+                    try:
+                        answer += f"- **Reported hashrate:** {format_hashrate(float(rep))}\n"
+                    except (TypeError, ValueError):
+                        answer += f"- **Reported hashrate:** {rep}\n"
+                if isinstance(bc, dict):
+                    answer += (
+                        "- **Blocks found:** "
+                        f"24h {bc.get('24h', 'n/a')}, 1w {bc.get('1w', 'n/a')}, "
+                        f"all {bc.get('all', 'n/a')}\n"
+                    )
+                if isinstance(bs, dict):
+                    answer += (
+                        "- **Share of blocks:** "
+                        f"24h {format_share(bs.get('24h'))}, 1w {format_share(bs.get('1w'))}, "
+                        f"all {format_share(bs.get('all'))}\n"
+                    )
+                addrs = pool.get("addresses")
+                if isinstance(addrs, list) and addrs:
+                    preview = addrs[:3]
+                    answer += f"- **Known coinbase addresses (sample):** {', '.join(preview)}\n"
+                answer += "\n_Data from [Litecoin Space](https://litecoinspace.org) (weekly averages for hashrate series)._"
+                state["blockchain_data"] = detail
+                state["blockchain_lookup_type"] = BlockchainLookupType.MINING_POOL.value
+
             elif entity == "price":
                 price = await client.get_price()
                 age_label = ""
@@ -243,6 +346,14 @@ def make_blockchain_lookup_node(pipeline: Any):
                         f"**Block not found**\n\n"
                         f"The requested block was not found on the Litecoin blockchain. "
                         f"The current chain height may be lower than the requested block."
+                    )
+                elif entity.startswith("mining_pool:"):
+                    slug = entity.split(":", 1)[1].strip()
+                    answer = (
+                        f"**Mining pool not found**\n\n"
+                        f"No pool matched `{slug}` in the Litecoin Space mining index. "
+                        f"Try the slug shown in [pool rankings](https://litecoinspace.org) "
+                        f"(e.g. `f2pool`, `viabtc`)."
                     )
                 else:
                     answer = "**Blockchain data unavailable**\n\nThe requested data could not be retrieved."

@@ -58,7 +58,7 @@ class TestBlockchainLookupNode:
         mock_fees = FeeData(fastestFee=2, halfHourFee=1, hourFee=1, economyFee=1, minimumFee=1)
 
         with patch(
-            "backend.rag_graph.nodes.blockchain_lookup.LitecoinSpaceClient"
+            "backend.services.blockchain_client.LitecoinSpaceClient"
         ) as MockClient:
             instance = AsyncMock()
             instance.get_recommended_fees = AsyncMock(return_value=mock_fees)
@@ -88,7 +88,7 @@ class TestBlockchainLookupNode:
         mock_price = PriceData(time=1700000000, USD=72.50, EUR=67.0, GBP=58.0)
 
         with patch(
-            "backend.rag_graph.nodes.blockchain_lookup.LitecoinSpaceClient"
+            "backend.services.blockchain_client.LitecoinSpaceClient"
         ) as MockClient:
             instance = AsyncMock()
             instance.get_price = AsyncMock(return_value=mock_price)
@@ -113,7 +113,7 @@ class TestBlockchainLookupNode:
         node = make_blockchain_lookup_node(mock_pipeline)
 
         with patch(
-            "backend.rag_graph.nodes.blockchain_lookup.LitecoinSpaceClient"
+            "backend.services.blockchain_client.LitecoinSpaceClient"
         ) as MockClient:
             instance = AsyncMock()
             instance.get_recommended_fees = AsyncMock(side_effect=Exception("API timeout"))
@@ -127,9 +127,47 @@ class TestBlockchainLookupNode:
             }
             result = await node(state)
 
-        assert result.get("error_message") is not None
-        assert "blockchain" in result["error_message"].lower()
-        assert result.get("early_answer") is None
+        assert result.get("early_answer") is not None
+        assert "blockchain" in result["early_answer"].lower()
+        assert result.get("early_cache_type") == "blockchain_lookup_error"
+
+    @pytest.mark.asyncio
+    async def test_mining_pools_lookup(self, mock_pipeline):
+        from backend.rag_graph.nodes.blockchain_lookup import make_blockchain_lookup_node
+
+        node = make_blockchain_lookup_node(mock_pipeline)
+        sample = {
+            "pools": [
+                {
+                    "name": "Alpha",
+                    "rank": 1,
+                    "blockCount": 50,
+                    "slug": "alpha",
+                    "link": "",
+                }
+            ],
+            "blockCount": 50,
+            "lastEstimatedHashrate": 1e15,
+        }
+
+        with patch(
+            "backend.services.blockchain_client.LitecoinSpaceClient"
+        ) as MockClient:
+            instance = AsyncMock()
+            instance.get_mining_pools = AsyncMock(return_value=sample)
+            MockClient.return_value = instance
+
+            state = {
+                "intent": "blockchain_lookup",
+                "matched_faq": "mining_pools",
+                "sanitized_query": "List Litecoin mining pools",
+                "metadata": {},
+            }
+            result = await node(state)
+
+        assert result.get("blockchain_lookup_type") == "mining_pools"
+        assert "Alpha" in result["early_answer"]
+        assert result.get("early_cache_type") == "blockchain_lookup"
 
     @pytest.mark.asyncio
     async def test_unknown_entity_no_crash(self, mock_pipeline):
@@ -138,7 +176,7 @@ class TestBlockchainLookupNode:
         node = make_blockchain_lookup_node(mock_pipeline)
 
         with patch(
-            "backend.rag_graph.nodes.blockchain_lookup.LitecoinSpaceClient"
+            "backend.services.blockchain_client.LitecoinSpaceClient"
         ) as MockClient:
             MockClient.return_value = AsyncMock()
 

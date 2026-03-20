@@ -4,6 +4,11 @@ Litecoin Space Blockchain API Client
 Async HTTP client for the Litecoin Space (mempool.space fork) REST API.
 All blockchain data lookups are proxied through this client to enforce
 rate limiting, caching, and consistent error handling.
+
+Endpoint reference: https://litecoinspace.org/docs/api — REST paths under
+`/api` and `/api/v1` (difficulty, address, block, tx, mempool, fees,
+mining, lightning, …). This module implements the subset used by RAG
+live lookup; add thin `get_*` methods plus intent routing for more.
 """
 
 from __future__ import annotations
@@ -158,6 +163,8 @@ class BlockchainLookupType(str, Enum):
     FEES = "fees"
     MEMPOOL = "mempool"
     HASHRATE = "hashrate"
+    MINING_POOLS = "mining_pools"
+    MINING_POOL = "mining_pool"
     PRICE = "price"
     DIFFICULTY = "difficulty"
 
@@ -222,8 +229,8 @@ class LitecoinSpaceClient:
             response=resp,  # type: ignore[possibly-undefined]
         )
 
-    async def _get(self, path: str) -> Dict[str, Any]:
-        """GET returning parsed JSON."""
+    async def _get(self, path: str) -> Any:
+        """GET returning parsed JSON (object or array)."""
         resp = await self._request(path)
         return resp.json()
 
@@ -290,9 +297,7 @@ class LitecoinSpaceClient:
         return MempoolData.model_validate(data)
 
     async def get_hashrate(self) -> HashrateData:
-        data = await self._cached_get(
-            "hashrate", "/v1/mining/hashrate/1w", CACHE_TTL_VOLATILE
-        )
+        data = await self.get_mining_network_hashrate_detail("1w")
         current = data.get("currentHashrate", 0)
         difficulty = data.get("currentDifficulty", 0)
         return HashrateData(current_hashrate=current, current_difficulty=difficulty)
@@ -322,6 +327,58 @@ class LitecoinSpaceClient:
         await self._cache_set(cache_key, text, CACHE_TTL_VOLATILE)
         return int(text)
 
+    async def get_mining_pools(self, time_period: Optional[str] = "1w") -> Dict[str, Any]:
+        """
+        GET /v1/mining/pools[/:timePeriod] — pool rankings by blocks found.
+
+        time_period: one of 24h, 3d, 1w, 1m, 3m, 6m, 1y, 2y, 3y; None or '' for full history.
+        """
+        path = "/v1/mining/pools"
+        if time_period:
+            path = f"{path}/{time_period}"
+        ck = f"mining:pools:{time_period or 'all'}"
+        data = await self._cached_get(ck, path, CACHE_TTL_VOLATILE)
+        if not isinstance(data, dict):
+            return {}
+        return data
+
+    async def get_mining_pool_detail(self, slug: str) -> Dict[str, Any]:
+        """GET /v1/mining/pool/:slug — pool metadata, block counts/shares, estimated hashrate."""
+        slug = slug.strip().lower()
+        return await self._cached_get(
+            f"mining:pool:{slug}",
+            f"/v1/mining/pool/{slug}",
+            CACHE_TTL_VOLATILE,
+        )
+
+    async def get_mining_pool_hashrates(
+        self, time_period: Optional[str] = "1m"
+    ) -> List[Dict[str, Any]]:
+        """
+        GET /v1/mining/hashrate/pools[/:timePeriod] — pool hashrate leaderboard.
+
+        time_period: 1m, 3m, 6m, 1y, 2y, 3y, or None/'' for all available.
+        """
+        path = "/v1/mining/hashrate/pools"
+        if time_period:
+            path = f"{path}/{time_period}"
+        ck = f"mining:hr:pools:{time_period or 'all'}"
+        data = await self._cached_get(ck, path, CACHE_TTL_VOLATILE)
+        if isinstance(data, list):
+            return data
+        return []
+
+    async def get_mining_network_hashrate_detail(
+        self, time_period: Optional[str] = "1w"
+    ) -> Dict[str, Any]:
+        """GET /v1/mining/hashrate[/:timePeriod] — full network hashrate/difficulty payload."""
+        path = "/v1/mining/hashrate"
+        if time_period:
+            path = f"{path}/{time_period}"
+        ck = f"mining:hashrate:{time_period or 'all'}"
+        data = await self._cached_get(ck, path, CACHE_TTL_VOLATILE)
+        return data if isinstance(data, dict) else {}
+
 
 def data_is_confirmed(data: Any) -> bool:
     """Check if raw transaction JSON indicates confirmation."""
@@ -348,3 +405,13 @@ def format_hashrate(hashrate_hs: float) -> str:
     if hashrate_hs >= 1e9:
         return f"{hashrate_hs / 1e9:.2f} GH/s"
     return f"{hashrate_hs:.0f} H/s"
+
+
+def format_share(fraction: Optional[float]) -> str:
+    """Format block-share / hashrate share (0–1) as a percentage string."""
+    if fraction is None:
+        return "n/a"
+    try:
+        return f"{float(fraction) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return "n/a"

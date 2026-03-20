@@ -86,6 +86,58 @@ class IntentClassifier:
         r"(?:block\s*(?:height|number|#)?\s*#?\s*)(\d{1,9})\b", re.IGNORECASE
     )
 
+    # Mining pool list: rankings / names of pools (Litecoin Space /api/v1/mining/pools)
+    _MINING_POOL_LIST_RES = (
+        # Plural only — avoids "join a mining pool" (recommendation-style queries)
+        re.compile(r"\bmining\s+pools\b", re.IGNORECASE),
+        re.compile(
+            r"\b(list|lists|show|name|names|give|what\s+are|which|all|every)\b.{0,48}\bpools?\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(top|largest|biggest|rank(?:ed|ing)?s?|order(?:ed)?)\b.{0,48}\b(?:mining\s+)?pools?\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\bpools?\b.{0,32}\b(rank|ranking|largest|biggest|top|order)\b",
+            re.IGNORECASE,
+        ),
+    )
+
+    # Recognized pool name → API slug (litecoinspace.org); longer / more specific first
+    _MINING_POOL_SLUG_RES: List[Tuple[re.Pattern[str], str]] = [
+        (re.compile(r"\bfoundry\s*usa\b|\bfoundryusa\b", re.I), "foundryusa"),
+        (re.compile(r"\bbinance\s*pool\b|\bbinancepool\b", re.I), "binancepool"),
+        (re.compile(r"\blitecoin\s*pool(?:\.org)?\b|\blitecoinpoolorg\b", re.I), "litecoinpoolorg"),
+        (re.compile(r"\bluxor(?:\s*labs)?\b|\bluxorlabs\b", re.I), "luxorlabs"),
+        (re.compile(r"\bmining\s*dutch\b|\bminingdutch\b", re.I), "miningdutch"),
+        (re.compile(r"\bsbi\s*crypto\b|\bsbicrypto\b", re.I), "sbicrypto"),
+        (re.compile(r"\bsigma\s*pool\b|\bsigmapoolcom\b", re.I), "sigmapoolcom"),
+        (re.compile(r"\bsolopool\b", re.I), "solopoolorg"),
+        (re.compile(r"\bprohashing\b", re.I), "prohashing"),
+        (re.compile(r"\bf2\s*pool\b|\bf2pool\b", re.I), "f2pool"),
+        (re.compile(r"\bvia\s*btc\b|\bviabtc\b", re.I), "viabtc"),
+        (re.compile(r"\bant\s*pool\b|\bantpool\b", re.I), "antpool"),
+        (re.compile(r"\bnice\s*hash\b|\bnicehash\b", re.I), "nicehash"),
+        (re.compile(r"\bslush\s*pool\b|\bslushpool\b", re.I), "slushpool"),
+        (re.compile(r"\bpoolin\b", re.I), "poolin"),
+    ]
+
+    _POOL_HISTORY_PERIOD_RES = re.compile(
+        r"\b(24h|3d|1w|1m|3m|6m|1y|2y|3y)\b", re.IGNORECASE
+    )
+
+    _POOL_DETAIL_SIGNAL_RES = re.compile(
+        r"\b(hashrate|hash\s*rate|hashing|blocks?\s+found|block\s+share|share\s+of|"
+        r"dominan|percent|percentage|how\s+much|proportion|estimated|reported|"
+        r"mine\b|mining\b|miners?\b|statistics|stats|details|about|who\s+runs)\b",
+        re.IGNORECASE,
+    )
+
+    _POOL_FEE_FOCUS_RES = re.compile(
+        r"\b(fee|fees|payout|payouts|payment|payments|cost|charge)\b", re.IGNORECASE
+    )
+
     # Keyword sets for live-data queries
     _FEE_KEYWORDS: Set[str] = {
         "fee", "fees", "transaction fee", "recommended fee", "current fee",
@@ -305,6 +357,11 @@ class IntentClassifier:
         if height_match:
             return f"block_height:{height_match.group(1)}"
 
+        # Named mining pool stats (before generic network hashrate)
+        slug = self._detect_mining_pool_slug(query_lower)
+        if slug and self._wants_specific_pool_stats(query_lower):
+            return f"mining_pool:{slug}"
+
         # Block tip (no specific height — e.g. "current block height?")
         if any(kw in query_lower for kw in self._BLOCK_TIP_KEYWORDS):
             return "block_tip"
@@ -316,9 +373,56 @@ class IntentClassifier:
             return "fees"
         if any(kw in query_lower for kw in self._MEMPOOL_KEYWORDS):
             return "mempool"
+        if self._wants_mining_pool_ranking(query_lower):
+            period = self._extract_mining_pool_period(query_lower)
+            if period == "all":
+                return "mining_pools:all"
+            if period:
+                return f"mining_pools:{period}"
+            return "mining_pools"
         if any(kw in query_lower for kw in self._HASHRATE_KEYWORDS):
             return "hashrate"
 
+        return None
+
+    def _detect_mining_pool_slug(self, query_lower: str) -> Optional[str]:
+        for pattern, slug in self._MINING_POOL_SLUG_RES:
+            if pattern.search(query_lower):
+                return slug
+        return None
+
+    def _wants_specific_pool_stats(self, query_lower: str) -> bool:
+        if not self._POOL_DETAIL_SIGNAL_RES.search(query_lower):
+            return False
+        if self._POOL_FEE_FOCUS_RES.search(query_lower) and not re.search(
+            r"\b(hashrate|hash\s*rate|block\s+share|share\s+of|how\s+much\s+of|"
+            r"percent|percentage|dominan|proportion)\b",
+            query_lower,
+            re.IGNORECASE,
+        ):
+            return False
+        return True
+
+    def _wants_mining_pool_ranking(self, query_lower: str) -> bool:
+        if self._MINING_POOL_LIST_RES[0].search(query_lower):
+            return True
+        loose = any(p.search(query_lower) for p in self._MINING_POOL_LIST_RES[1:])
+        if not loose:
+            return False
+        return bool(
+            re.search(
+                r"\b(litecoin|ltc|mining|mine|miners?|scrypt|blocks?|hashrate|hash\s*rate)\b",
+                query_lower,
+                re.IGNORECASE,
+            )
+        )
+
+    def _extract_mining_pool_period(self, query_lower: str) -> Optional[str]:
+        if re.search(r"\b(all[\s-]?time|overall|entire\s+history)\b", query_lower):
+            return "all"
+        m = self._POOL_HISTORY_PERIOD_RES.search(query_lower)
+        if m:
+            return m.group(1).lower()
         return None
 
     def _match_faq(self, query: str) -> Optional[str]:

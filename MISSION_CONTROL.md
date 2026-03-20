@@ -14,7 +14,7 @@
 | 8 | Implement Trust and Feedback Features | Planned | Source citations, user feedback loops |
 | 9 | Implement Contextual Discovery | Completed | Follow-up questions, search grounding |
 | 10 | Upgrade Retrieval Engine | Cancelled | Scope absorbed into M3 improvements |
-| 11 | Transaction & Block Explorer | Completed | Litecoin Space API: tx, address, block, fees, mempool, tip |
+| 11 | Transaction & Block Explorer | Completed | Litecoin Space API: tx, address, block, fees, mempool, tip, mining pools |
 | 12 | Market Data & Insights | Completed | Price (5 currencies), hashrate, difficulty, adjustment progress |
 | 13 | Developer Documentation & Resources | Planned | API docs, integration guides |
 
@@ -82,9 +82,9 @@ Per `docs/testing/TEST_SUITE_IMPLEMENTATION_PLAN.md`: target 80-90% coverage, 85
 | `backend/rag_pipeline.py` | ~1670 | RAG orchestration — the brain |
 | `backend/rag_graph/state.py` | ~65 | Graph state definition (TypedDict) |
 | `backend/rag_graph/graph.py` | ~80 | Graph wiring and conditional edges |
-| `backend/rag_graph/nodes/blockchain_lookup.py` | ~250 | Live blockchain data node (Litecoin Space API) |
-| `backend/services/blockchain_client.py` | ~330 | Async API client, Pydantic models, Redis caching |
-| `backend/services/intent_classifier.py` | ~350 | Intent detection (greetings, FAQ, blockchain lookups) |
+| `backend/rag_graph/nodes/blockchain_lookup.py` | ~360 | Live blockchain data node (Litecoin Space API) |
+| `backend/services/blockchain_client.py` | ~420 | Async API client, Pydantic models, Redis caching |
+| `backend/services/intent_classifier.py` | ~450 | Intent detection (greetings, FAQ, blockchain lookups) |
 | `backend/data_models.py` | 250 | API Pydantic v2 models |
 | `backend/main.py` | — | FastAPI app, public routes |
 | `payload_cms/src/payload.config.ts` | — | CMS configuration |
@@ -93,6 +93,7 @@ Per `docs/testing/TEST_SUITE_IMPLEMENTATION_PLAN.md`: target 80-90% coverage, 85
 
 | Date | Change | Milestone | Status |
 |------|--------|-----------|--------|
+| 2026-03-20 | Mining pools: intent for pool rankings + named-pool hashrate/share (Litecoin Space `/v1/mining/pools`, `/v1/mining/pool/:slug`); client helpers + `get_mining_network_hashrate_detail`; doc link for full REST surface | M11 | Completed |
 | 2026-03-19 | Fixed blockchain API: plain-text endpoints, price endpoint path, 404 error handling, price freshness timestamps | M11/M12 | Completed |
 | 2026-03-19 | Fixed intent detection: blockchain queries now fire regardless of is_dependent flag; removed static data disclaimer from system prompt | M11 | Completed |
 | 2026-03-19 | Litecoin Space blockchain data integration: API client, graph node, intent detection, 7 frontend components, SSE protocol extension | M11/M12 | Completed |

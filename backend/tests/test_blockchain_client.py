@@ -15,6 +15,7 @@ from backend.services.blockchain_client import (
     PriceData,
     format_litoshis,
     format_hashrate,
+    format_share,
 )
 
 
@@ -81,6 +82,22 @@ SAMPLE_FEES = {
 SAMPLE_MEMPOOL = {"count": 1500, "vsize": 2000000, "total_fee": 50000}
 
 SAMPLE_HASHRATE = {"currentHashrate": 1.2e15, "currentDifficulty": 30000000.0}
+
+SAMPLE_MINING_POOLS = {
+    "pools": [
+        {
+            "poolId": 1,
+            "name": "TestPool",
+            "link": "https://example.com",
+            "blockCount": 10,
+            "rank": 1,
+            "emptyBlocks": 0,
+            "slug": "testpool",
+        }
+    ],
+    "blockCount": 100,
+    "lastEstimatedHashrate": 2e15,
+}
 
 SAMPLE_PRICES = {
     "time": 1700000000,
@@ -186,7 +203,7 @@ class TestLitecoinSpaceClient:
     @pytest.mark.asyncio
     async def test_get_price(self, client_no_cache, mock_http):
         _, response = mock_http
-        response.json.return_value = SAMPLE_PRICES
+        response.json.return_value = {"prices": [SAMPLE_PRICES]}
         price = await client_no_cache.get_price()
         assert isinstance(price, PriceData)
         assert price.USD == 72.50
@@ -209,6 +226,22 @@ class TestLitecoinSpaceClient:
         assert fees.fastestFee == 2
         mock_http[0].get.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_get_mining_pools(self, client_no_cache, mock_http):
+        _, response = mock_http
+        response.json.return_value = SAMPLE_MINING_POOLS
+        data = await client_no_cache.get_mining_pools("1w")
+        assert data["blockCount"] == 100
+        assert data["pools"][0]["slug"] == "testpool"
+        mock_http[0].get.assert_called_once_with("/v1/mining/pools/1w")
+
+    @pytest.mark.asyncio
+    async def test_get_mining_pools_all_time(self, client_no_cache, mock_http):
+        _, response = mock_http
+        response.json.return_value = SAMPLE_MINING_POOLS
+        await client_no_cache.get_mining_pools(None)
+        mock_http[0].get.assert_called_with("/v1/mining/pools")
+
 
 class TestFormatters:
     """Test helper formatting functions."""
@@ -229,3 +262,7 @@ class TestFormatters:
     def test_format_hashrate_gh(self):
         result = format_hashrate(500e9)
         assert "GH/s" in result
+
+    def test_format_share(self):
+        assert "14.04" in format_share(0.1404)
+        assert format_share(None) == "n/a"

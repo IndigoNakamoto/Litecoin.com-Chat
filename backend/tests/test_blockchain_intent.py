@@ -107,6 +107,34 @@ class TestBlockchainIntentDetection:
         assert intent == Intent.BLOCKCHAIN_LOOKUP
         assert entity == "hashrate"
 
+    # -- Mining pools (Litecoin Space) ------------------------------------
+
+    def test_detects_mining_pools_list(self, classifier):
+        intent, entity, _ = classifier.classify("List the Litecoin mining pools")
+        assert intent == Intent.BLOCKCHAIN_LOOKUP
+        assert entity == "mining_pools"
+
+    def test_detects_mining_pools_with_period(self, classifier):
+        intent, entity, _ = classifier.classify("Top mining pools in the last 24h for LTC")
+        assert intent == Intent.BLOCKCHAIN_LOOKUP
+        assert entity == "mining_pools:24h"
+
+    def test_detects_named_pool_hashrate(self, classifier):
+        intent, entity, _ = classifier.classify(
+            "How much of the network hash rate does f2pool have?"
+        )
+        assert intent == Intent.BLOCKCHAIN_LOOKUP
+        assert entity == "mining_pool:f2pool"
+
+    def test_pool_beats_generic_hashrate(self, classifier):
+        intent, entity, _ = classifier.classify("What is ViaBTC's hashrate?")
+        assert intent == Intent.BLOCKCHAIN_LOOKUP
+        assert entity == "mining_pool:viabtc"
+
+    def test_no_pool_list_on_singular_pool_advice(self, classifier):
+        intent, _, _ = classifier.classify("How do I join a mining pool?")
+        assert intent != Intent.BLOCKCHAIN_LOOKUP
+
     # -- Price queries -----------------------------------------------------
 
     def test_detects_price_query(self, classifier):
