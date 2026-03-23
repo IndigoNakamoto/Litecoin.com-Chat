@@ -107,6 +107,27 @@ class TestBlockchainIntentDetection:
         assert intent == Intent.BLOCKCHAIN_LOOKUP
         assert entity == "hashrate"
 
+    def test_detects_current_difficulty_query(self, classifier):
+        intent, entity, _ = classifier.classify("What is the current network difficulty?")
+        assert intent == Intent.BLOCKCHAIN_LOOKUP
+        assert entity == "hashrate"
+
+    def test_mechanism_difficulty_adjustment_not_blockchain_lookup(self, classifier):
+        """Conceptual questions must route to RAG, not live hashrate/difficulty API."""
+        intent, entity, _ = classifier.classify(
+            "How does the difficulty adjustment mechanism ensure consistent block times?"
+        )
+        assert intent != Intent.BLOCKCHAIN_LOOKUP
+        assert entity is None
+
+    def test_explain_difficulty_adjustment_not_blockchain_lookup(self, classifier):
+        intent, _, _ = classifier.classify("Explain how difficulty adjustment works on Litecoin")
+        assert intent != Intent.BLOCKCHAIN_LOOKUP
+
+    def test_how_does_hashrate_relate_not_live_stats(self, classifier):
+        intent, _, _ = classifier.classify("How does hashrate relate to mining rewards?")
+        assert intent != Intent.BLOCKCHAIN_LOOKUP
+
     # -- Mining pools (Litecoin Space) ------------------------------------
 
     def test_detects_mining_pools_list(self, classifier):

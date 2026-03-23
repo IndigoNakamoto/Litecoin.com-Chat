@@ -31,6 +31,10 @@ class PayloadArticleMetadata(BaseModel):
     # Filtering & Sorting
     status: Literal["draft", "published"] = Field(..., description="The publication status.")
     published_date: Optional[datetime] = Field(None, description="The date the article was published.")
+    updated_at: Optional[datetime] = Field(
+        None,
+        description="Last update time from Payload CMS (updatedAt), propagated to each chunk.",
+    )
     locale: str = Field("en", description="The locale of the content.")
     content_length: int = Field(..., description="The character length of the content in this chunk.")
 

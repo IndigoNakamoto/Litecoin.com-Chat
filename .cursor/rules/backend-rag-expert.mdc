@@ -11,7 +11,7 @@ alwaysApply: false
 The backend has two layers:
 
 1. **LangGraph State Machine** (`rag_graph/`): Handles everything *before* answer generation — sanitization, routing, caching, decomposition, retrieval, parent resolution, spend gating.
-2. **RAG Pipeline** (`rag_pipeline.py`): The orchestration layer that owns the LLM, prompt chains, and cache write-back. It calls `graph.ainvoke()` then performs generation.
+2. **RAG Pipeline** (`rag_pipeline.py`): The orchestration layer that owns the LLM, prompt chains, and cache write-back. It calls `graph.ainvoke()` then performs generation. Context strings for the generator use `backend/rag_context_format.py` (`format_docs`) so chunk metadata reaches the model.
 
 Never duplicate retrieval logic outside the graph. Never put generation logic inside the graph.
 

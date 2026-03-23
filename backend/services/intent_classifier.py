@@ -147,10 +147,46 @@ class IntentClassifier:
         "mempool", "unconfirmed transactions", "pending transactions",
         "mempool congestion", "mempool status",
     }
+    # Live hashrate stats only — NOT "difficulty adjustment" / "mining difficulty"
+    # (those phrases appear in conceptual KB questions and must route to RAG).
     _HASHRATE_KEYWORDS: Set[str] = {
         "hashrate", "hash rate", "mining hashrate", "network hashrate",
-        "mining difficulty", "difficulty adjustment",
     }
+
+    # When the user wants *current* difficulty / adjustment timing (API), not *how it works*.
+    _LIVE_DIFFICULTY_OR_ADJUSTMENT_RES: Tuple[re.Pattern, ...] = (
+        re.compile(r"\bnext\s+difficulty\s+adjustment\b", re.IGNORECASE),
+        re.compile(
+            r"\bwhen\s+(is|will|does|do)\s+.{0,64}\bdifficulty\s+adjustment\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(difficulty\s+adjustment)\s+(time|date|schedule|when|in\s+\d)",
+            re.IGNORECASE,
+        ),
+        re.compile(r"\bcurrent\s+(network\s+)?difficulty\b", re.IGNORECASE),
+        re.compile(
+            r"\bwhat\s+is\s+the\s+(current\s+)?(network\s+)?difficulty\b",
+            re.IGNORECASE,
+        ),
+    )
+
+    # Educational / mechanism questions → RAG, not live chain stats.
+    _CONCEPTUAL_CHAIN_EXPLAIN_RE = re.compile(
+        r"""
+        \b(
+          how\s+(does|do|did|can|would|will)\s+
+        | why\s+(does|do|is|are|would|will)\s+
+        | explain\s+(how|why|what)\s+
+        | explain\s+the\s+(difficulty|hash\s*rate|mining|mechanism)\b
+        | what\s+is\s+the\s+(purpose|mechanism|idea|theory|rationale)\s+
+        | describe\s+(how|the\s+mechanism)\b
+        | walk\s+me\s+through\s+
+        | how\s+is\s+(it|this|that)\s+(calculated|determined|done|achieved)\s+
+        )
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
     _PRICE_KEYWORDS: Set[str] = {
         "litecoin price", "ltc price", "current price", "price of litecoin",
         "price of ltc", "how much is litecoin", "how much is ltc",
@@ -380,10 +416,21 @@ class IntentClassifier:
             if period:
                 return f"mining_pools:{period}"
             return "mining_pools"
+
+        conceptual = bool(self._CONCEPTUAL_CHAIN_EXPLAIN_RE.search(query_lower))
+
         if any(kw in query_lower for kw in self._HASHRATE_KEYWORDS):
+            if not conceptual:
+                return "hashrate"
+
+        if not conceptual and self._wants_live_difficulty_or_adjustment_stats(query_lower):
             return "hashrate"
 
         return None
+
+    def _wants_live_difficulty_or_adjustment_stats(self, query_lower: str) -> bool:
+        """True when the user asks for timing or current difficulty values, not how it works."""
+        return any(p.search(query_lower) for p in self._LIVE_DIFFICULTY_OR_ADJUSTMENT_RES)
 
     def _detect_mining_pool_slug(self, query_lower: str) -> Optional[str]:
         for pattern, slug in self._MINING_POOL_SLUG_RES:

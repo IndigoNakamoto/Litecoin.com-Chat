@@ -364,6 +364,20 @@ def process_payload_documents(payload_docs: List[PayloadWebhookDoc]) -> List[Doc
             except (ValueError, TypeError):
                 logger.warning(f"Could not parse 'publishedDate' string '{payload_doc.publishedDate}' for Payload doc ID {payload_doc.id}. Skipping date.")
 
+        updated_at_dt = None
+        raw_updated = getattr(payload_doc, "updatedAt", None)
+        if raw_updated is not None:
+            if isinstance(raw_updated, datetime.datetime):
+                updated_at_dt = raw_updated
+            elif isinstance(raw_updated, str):
+                try:
+                    updated_at_dt = datetime.datetime.fromisoformat(raw_updated.replace("Z", "+00:00"))
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "Could not parse 'updatedAt' for Payload doc ID %s. Skipping.",
+                        payload_doc.id,
+                    )
+
         initial_metadata = {
             "payload_id": payload_doc.id,
             "source": "payload",
@@ -373,6 +387,7 @@ def process_payload_documents(payload_docs: List[PayloadWebhookDoc]) -> List[Doc
             "categories": payload_doc.category or [],
             "status": payload_doc.status,
             "published_date": published_date_dt,
+            "updated_at": updated_at_dt,
             "slug": payload_doc.slug,
             "locale": "en"
         }
