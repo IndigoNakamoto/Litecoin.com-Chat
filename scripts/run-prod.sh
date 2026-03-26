@@ -328,6 +328,29 @@ echo "   Redis Stack: redis://localhost:6380 (local RAG)"
 fi
 echo ""
 
+# Export local RAG URLs before main compose up so ${INFINITY_URL} / ${OLLAMA_URL} substitute
+# correctly when containers are created (the block below used to run only after up — wrong on x86).
+if $START_LOCAL_RAG; then
+    _INFINITY_PORT="${INFINITY_PORT:-7997}"
+    _ARCH_EARLY=$(uname -m)
+    if [[ "$_ARCH_EARLY" == "arm64" || "$_ARCH_EARLY" == "aarch64" ]]; then
+        export INFINITY_URL="http://host.docker.internal:${_INFINITY_PORT}"
+    else
+        export INFINITY_URL="http://infinity:${_INFINITY_PORT}"
+    fi
+    if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "litecoin-ollama"; then
+            export OLLAMA_URL="http://host.docker.internal:11434"
+        else
+            export OLLAMA_URL="${OLLAMA_URL:-http://ollama:11434}"
+        fi
+    else
+        export OLLAMA_URL="${OLLAMA_URL:-http://ollama:11434}"
+    fi
+    echo "🔧 Local RAG URLs for backend container: INFINITY_URL=$INFINITY_URL OLLAMA_URL=$OLLAMA_URL"
+    echo ""
+fi
+
 # Start main production services (pass through filtered arguments like -d for detached mode)
 # Include --profile monitoring to start Prometheus and Grafana
 $DOCKER_COMPOSE $COMPOSE_FILES --profile monitoring up "${DOCKER_ARGS[@]}"

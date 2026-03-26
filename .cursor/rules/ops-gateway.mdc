@@ -20,9 +20,22 @@ The operational layer that manages the "hands" of the system — container orche
 | `docker-compose.dev.yml` | Local development | mongodb, backend, redis, frontend, payload_cms, admin_frontend |
 | `docker-compose.prod.yml` | Production deployment | Full stack with production configs |
 | `docker-compose.prod-local.yml` | Local production testing | Production-like on localhost |
-| `docker-compose.override.yml` | Dev overrides | Volume mounts, hot reload |
+| `docker-compose.override.yml` | Merged with prod (typical) | DB auth + connection string injection; see `docker-compose.override.yml` |
 | `payload_cms/docker-compose.yml` | CMS standalone | Payload CMS + MongoDB |
 | `monitoring/docker-compose.monitoring.yml` | Observability | Prometheus, Grafana |
+
+### Production: tunnel + local RAG + chat tunnel
+
+Use this when bringing up the **full production stack** with the **main Cloudflare tunnel** (`cloudflared`), **monitoring** (`--profile monitoring` inside `run-prod.sh`), **local RAG** (`--local-rag`), and the **litecoin.com chat guest tunnel** (`--chat-tunnel` → `chat_tunnel`, profile `litecoin-integration`):
+
+```bash
+./scripts/down-prod.sh && ./scripts/run-prod.sh -d --local-rag --chat-tunnel
+```
+
+- `run-prod.sh` loads `.env.docker.prod` and `.env.secrets`, URL-encodes Mongo/Redis for `docker-compose.override.yml`, builds with `--no-cache`, then runs `docker compose … --profile monitoring up …`.
+- Main tunnel: set `CLOUDFLARE_TUNNEL_TOKEN` in `.env.docker.prod` (service `cloudflared` in `docker-compose.prod.yml`).
+- Chat tunnel: `CLOUDFLARE_CHAT_TUNNEL_TOKEN` required when using `--chat-tunnel`.
+- Lighter restarts (no full rebuild): use `docker compose` with the same compose files and profiles after env is exported, or the targeted `rebuild-*.sh` scripts.
 
 ### Service Ports (dev)
 
@@ -39,7 +52,7 @@ The operational layer that manages the "hands" of the system — container orche
 
 ### Lifecycle
 
-- `run-dev.sh` / `run-prod.sh` / `run-prod-local.sh` — start stacks
+- `run-dev.sh` / `run-prod.sh` / `run-prod-local.sh` — start stacks (`run-prod.sh` flags: `--local-rag`, `--chat-tunnel`, `--pull` for Ollama model)
 - `down-prod.sh` / `shutdown-prod.sh` — stop stacks
 - `rebuild-backend.sh` / `rebuild-frontend.sh` / `rebuild-admin-frontend.sh` — targeted rebuilds
 

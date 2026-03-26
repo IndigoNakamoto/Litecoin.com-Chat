@@ -103,6 +103,7 @@ Per `docs/testing/TEST_SUITE_IMPLEMENTATION_PLAN.md`: target 80-90% coverage, 85
 
 | Date | Change | Milestone | Status |
 |------|--------|-----------|--------|
+| 2026-03-24 | Ops: `run-prod.sh --local-rag` now exports `INFINITY_URL` / `OLLAMA_URL` **before** main `docker compose up` so the backend container gets `http://infinity:7997` on x86 (was defaulting to `host.docker.internal`). `docker-compose.prod.yml` backend: `extra_hosts: host.docker.internal:host-gateway` for Linux + native Infinity. Fixes “Infinity connection error: All connection attempts failed” when flags are on but URL was wrong. **Recreate backend** after pull: `docker compose … up -d --force-recreate backend`. | M7 | Completed |
 | 2026-03-23 | RAG: SOURCE headers are title+reader URL only (no dates in context); prompts ask for markdown `[Title](URL)` citations without dates; `ARTICLE_PUBLIC_BASE_URL` / `ARTICLE_PUBLIC_PATH_TEMPLATE` in `rag_context_format`. | M8 | Completed |
 | 2026-03-23 | Intent: conceptual questions mentioning difficulty adjustment / hashrate (e.g. “How does the difficulty adjustment mechanism…”) route to RAG; live API kept for “next difficulty adjustment”, current difficulty, and raw hashrate stats. `IntentClassifier` + `test_blockchain_intent.py`. | M11 | Completed |
 | 2026-03-23 | RAG synthesis: user-facing answers omit inline source citations (no bracketed titles, `— [Title] (date)`, or `[title] - (address)`); SOURCE headers remain for internal grounding only; `rag-synthesis-specialist.mdc` aligned. | M8 | Completed |

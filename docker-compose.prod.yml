@@ -88,6 +88,9 @@ services:
         condition: service_healthy
       payload_cms:
         condition: service_healthy
+    # Linux Docker: resolve host.docker.internal for native Infinity/Ollama on the host (ARM path)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./backend/monitoring/data:/app/backend/monitoring/data
       - faiss_index_data:/app/backend/faiss_index_1024  # Persist FAISS index between restarts
