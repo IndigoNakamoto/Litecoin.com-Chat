@@ -54,14 +54,13 @@ Always use relative fetch paths like `/api/v1/chat/stream`. The backend URL is r
 Chat responses use `ReadableStream` + `TextDecoder` with SSE-style JSON lines:
 
 ```
-data: {"type": "thinking", ...}\n
-data: {"type": "streaming", "content": "chunk..."}\n
-data: {"type": "sources", "sources": [...]}\n
-data: {"type": "follow_ups", "questions": [...]}\n
-data: {"type": "complete"}\n
+data: {"status": "thinking", ...}\n
+data: {"status": "streaming", "chunk": "chunk..."}\n
+data: {"status": "follow_ups", "questions": [...]}\n
+data: {"status": "complete", ...}\n
 ```
 
-Event types to handle: `thinking`, `streaming`, `sources`, `follow_ups`, `complete`, `error`, `usage_status`.
+Event types to handle: `thinking`, `streaming`, `follow_ups`, `complete`, `error`, `usage_status`, `blockchain_data`. (Legacy clients may ignore a `sources` event if ever reintroduced.)
 
 On 403 `invalid_challenge`, fetch a new challenge from `/api/v1/auth/challenge` and retry once.
 

@@ -15,13 +15,13 @@ You are governing **final answer generation**: the LLM prompts and the **context
 1. **Metadata-first context:** Every chunk in the LLM context MUST start with a **SOURCE HEADER** before `page_content`: `[SOURCE: title | URL: reader_url_or_n/a]`, then `---` between chunks. URLs are built from chunk `slug` plus `ARTICLE_PUBLIC_BASE_URL` (or `PAYLOAD_PUBLIC_SERVER_URL` / `PAYLOAD_URL`) and `ARTICLE_PUBLIC_PATH_TEMPLATE` (default `/articles/{slug}`). Never emit the literal string `None`.
 2. **Single formatter:** All paths that turn `context_docs` into text for the model or for token estimation MUST use [`format_docs()`](backend/rag_context_format.py). Do not join `page_content` alone.
 3. **Anti-hallucination:** When `context_coverage_note` lists missing query terms, the model must acknowledge KB gaps and use allowed tools only as configured—without inventing article URLs.
-4. **Citations in the answer:** For knowledge-base material, the model should use **markdown** `[Title](URL)` using **only** title and URL from SOURCE headers. **Do not** add publication or updated **dates** to citations. If URL is `n/a`, do not invent links. Do not paste raw SOURCE HEADER lines into the reply.
+4. **No reader-facing provenance:** User replies must **not** include article titles, URLs, markdown links, a `## Sources` section, or bibliographies. Ground claims in excerpt bodies from SOURCE headers only; do not paste SOURCE HEADER lines into the reply.
 5. **Vocabulary sync:** Prefer canonical Litecoin terminology (see [`backend/utils/litecoin_vocabulary.py`](backend/utils/litecoin_vocabulary.py)); avoid generic crypto hype unless it appears in sources.
 
 ## Grounded vs Non-Grounded Modes
 
-- **Search grounding enabled:** KB facts use markdown title+URL; web-only facts stay plain prose (no fake CMS links). Optional “Based on public sources:” where the non-grounded prompt requires it.
-- **Search grounding disabled:** Web supplements use the explicit provenance phrase when applicable.
+- **Search grounding enabled:** KB and web facts are plain prose in the user reply; no fake CMS links to web-only content. No mandatory provenance prefix in the answer text.
+- **Search grounding disabled:** Same — plain prose only in the reply; web supplements integrated without special citation formatting.
 
 ## Definition of Done
 
@@ -29,6 +29,6 @@ A synthesis or prompt change is complete only when:
 
 - `pytest backend/tests/` passes (project gate).
 - Tests cover `format_docs()`: headers, URL building with env, `n/a` when no base or no slug.
-- `PayloadArticleMetadata` includes `updated_at` and Payload ingestion copies `updatedAt` when present (dates are not repeated in user citations).
+- `PayloadArticleMetadata` includes `updated_at` and Payload ingestion copies `updatedAt` when present (`updated_at` supports internal context quality; user replies do not expose citations).
 
 Numeric “faithfulness scores” are not part of CI today; add them only when an automated eval is wired in.

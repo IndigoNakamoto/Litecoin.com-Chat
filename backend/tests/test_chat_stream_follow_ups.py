@@ -59,8 +59,8 @@ def test_chat_stream_endpoint_emits_follow_up_sse_event(client, monkeypatch):
         ]
 
     statuses = [event["status"] for event in sse_payloads]
-    assert statuses == ["thinking", "sources", "streaming", "follow_ups", "complete"]
-    assert sse_payloads[3]["questions"] == [
+    assert statuses == ["thinking", "streaming", "follow_ups", "complete"]
+    assert sse_payloads[2]["questions"] == [
         "When was Litecoin launched?",
         "How is Litecoin different from Bitcoin?",
     ]

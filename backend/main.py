@@ -1221,17 +1221,7 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                         cache_hit = True
                         cache_type = "suggested_question"
                         
-                        # Send sources first
-                        sources_json = jsonable_encoder([
-                            SourceDocument(page_content=doc.page_content, metadata=doc.metadata)
-                            for doc in published_sources
-                        ])
-                        payload = {
-                            "status": "sources",
-                            "sources": sources_json,
-                            "isComplete": False
-                        }
-                        yield f"data: {json.dumps(payload)}\n\n"
+                        # Sources are not sent to the client; sources_count still logged below.
                         
                         # Stream cached response character by character for consistent UX
                         for i, char in enumerate(answer):
@@ -1305,22 +1295,12 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
                 elif chunk_data["type"] == "sources":
-                    # Send sources information
-                    published_sources = [
-                        doc for doc in chunk_data["sources"]
-                        if doc.metadata.get('status') == 'published'
-                    ]
-                    sources_count = len(published_sources)
-                    sources_json = jsonable_encoder([
-                        SourceDocument(page_content=doc.page_content, metadata=doc.metadata)
-                        for doc in published_sources
-                    ])
-                    payload = {
-                        "status": "sources",
-                        "sources": sources_json,
-                        "isComplete": False
-                    }
-                    yield f"data: {json.dumps(payload)}\n\n"
+                    # Track for logging; do not expose source documents on the wire.
+                    sources_count = sum(
+                        1
+                        for doc in chunk_data["sources"]
+                        if doc.metadata.get("status") == "published"
+                    )
                 elif chunk_data["type"] == "metadata":
                     metadata = chunk_data.get("metadata", {})
                     cache_hit = metadata.get("cache_hit", False)
