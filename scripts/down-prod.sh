@@ -1,6 +1,6 @@
 #!/bin/bash
-# Simple script to shutdown production services using docker-compose.prod.yml and docker-compose.override.yml
-# Also stops local RAG services (native embedding server, Ollama, Redis Stack) if running
+# Shutdown production: docker-compose.prod.yml (+ override if present).
+# Stops core stack, monitoring (Prometheus/Grafana), chat_tunnel, local-rag profile containers, and native embedding server if used.
 
 set -e
 
@@ -73,19 +73,15 @@ if [ -z "${GRAFANA_ADMIN_PASSWORD:-}" ]; then
   echo ""
 fi
 
-# Shutdown main production services (pass through any additional arguments like -v for volumes)
-$DOCKER_COMPOSE $COMPOSE_FILES down "$@"
-
-# Also stop local-rag profile services if they're running
-echo ""
-echo "🔍 Checking for local RAG services..."
-if docker ps --format '{{.Names}}' | grep -q "litecoin-ollama\|litecoin-redis-stack"; then
-    echo "   Stopping local RAG Docker services..."
-    $DOCKER_COMPOSE $COMPOSE_FILES --profile local-rag down "$@" 2>/dev/null || true
-    echo "   ✓ Local RAG Docker services stopped"
-else
-    echo "   No local RAG Docker services running"
-fi
+# Shutdown entire production project, including profile-only services:
+#   monitoring (Prometheus, Grafana), litecoin-integration (chat_tunnel), local-rag (Ollama, redis_stack, infinity)
+# One compose down avoids leaving the network up because monitoring/tunnel containers still hold it.
+echo "   Stopping core stack + monitoring + chat tunnel + local RAG profiles..."
+$DOCKER_COMPOSE $COMPOSE_FILES \
+  --profile monitoring \
+  --profile litecoin-integration \
+  --profile local-rag \
+  down "$@"
 
 echo ""
 echo "🧹 Cleaning up dangling images from previous builds..."
@@ -94,7 +90,7 @@ echo "   ✓ Cleaned up dangling images"
 echo ""
 
 echo "✅ All services shutdown complete!"
-echo "   (Production services + Local RAG services)"
+echo "   (Core stack + monitoring + chat tunnel + local RAG, if any were running)"
 echo ""
 echo "💡 Tip: To free up more disk space, run:"
 echo "   docker system prune -a        # Remove all unused images, containers, networks"

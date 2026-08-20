@@ -125,8 +125,8 @@ else
   fi
 fi
 
-# Build docker-compose down command
-DOWN_CMD="$DOCKER_COMPOSE $COMPOSE_FILES down"
+# Build docker-compose down command (include profile-only services)
+DOWN_CMD="$DOCKER_COMPOSE $COMPOSE_FILES --profile monitoring --profile litecoin-integration --profile local-rag down"
 
 if [ "$REMOVE_VOLUMES" = true ]; then
   echo "⚠️  Warning: Volumes will be removed!"

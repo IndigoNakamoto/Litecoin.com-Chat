@@ -4,11 +4,10 @@
 # which loads .env.docker.prod and .env.secrets
 #
 # Usage:
-#   ./scripts/run-prod.sh -d                    # Start production services (detached)
-#   ./scripts/run-prod.sh -d --local-rag        # Start production + local RAG services
-#   ./scripts/run-prod.sh -d --local-rag --pull # Also pull Ollama model
-#   ./scripts/run-prod.sh -d --chat-tunnel      # Start production + chat tunnel
-#   ./scripts/run-prod.sh -d --local-rag --chat-tunnel # Start all services
+#   ./scripts/run-prod.sh -d                    # Start production (detached): stack + monitoring + chat tunnel
+#   ./scripts/run-prod.sh -d --local-rag        # Also start local RAG services
+#   ./scripts/run-prod.sh -d --local-rag --pull # Local RAG + pull Ollama model
+#   ./scripts/run-prod.sh -d --chat-tunnel      # No-op (deprecated); chat tunnel always starts
 
 set -e
 
@@ -17,7 +16,6 @@ set -e
 # =============================================================================
 START_LOCAL_RAG=false
 PULL_OLLAMA_MODEL=false
-START_CHAT_TUNNEL=false
 DOCKER_ARGS=()
 
 for arg in "$@"; do
@@ -29,7 +27,7 @@ for arg in "$@"; do
             PULL_OLLAMA_MODEL=true
             ;;
         --chat-tunnel)
-            START_CHAT_TUNNEL=true
+            echo "ℹ️  Note: --chat-tunnel is deprecated; chat_tunnel starts with every run-prod.sh." >&2
             ;;
         *)
             DOCKER_ARGS+=("$arg")
@@ -97,6 +95,14 @@ else
     exit 1
   fi
   echo "   ✓ GRAFANA_ADMIN_PASSWORD is set (length: ${#GRAFANA_ADMIN_PASSWORD} chars)"
+
+  if [ -z "${CLOUDFLARE_CHAT_TUNNEL_TOKEN:-}" ]; then
+    echo "❌ Error: CLOUDFLARE_CHAT_TUNNEL_TOKEN is not set in .env.docker.prod"
+    echo "   The production stack always starts chat_tunnel (litecoin.com/chat integration)."
+    echo "   Add: CLOUDFLARE_CHAT_TUNNEL_TOKEN=<your Cloudflare tunnel token>"
+    exit 1
+  fi
+  echo "   ✓ CLOUDFLARE_CHAT_TUNNEL_TOKEN is set (length: ${#CLOUDFLARE_CHAT_TUNNEL_TOKEN} chars)"
 fi
 
 # Check if .env.secrets exists (required for database authentication)
@@ -227,19 +233,15 @@ fi
 # Change to project root
 cd "$PROJECT_ROOT"
 
-# Check for existing containers that might conflict
+# Check for existing containers for THIS compose project only (ignore other repos' litecoin-* names)
 echo "🔍 Checking for existing containers..."
-EXISTING_CONTAINERS=$(docker ps -a --filter "name=litecoin-" --format "{{.Names}}" 2>/dev/null | grep -v "prod-local\|dev" || true)
+EXISTING_CONTAINERS=$($DOCKER_COMPOSE $COMPOSE_FILES ps -a --format "{{.Name}}" 2>/dev/null | grep -v '^[[:space:]]*$' || true)
 if [ -n "$EXISTING_CONTAINERS" ]; then
-  echo "⚠️  Warning: Found existing production containers that may conflict:"
+  echo "⚠️  Warning: This compose project already has containers (may conflict on ports or names):"
   echo "$EXISTING_CONTAINERS" | sed 's/^/   - /'
   echo ""
-  echo "💡 Tip: Stop existing containers first with:"
-  if [ -f "$OVERRIDE_COMPOSE_FILE" ]; then
-    echo "   $DOCKER_COMPOSE -f docker-compose.prod.yml -f docker-compose.override.yml down"
-  else
-    echo "   $DOCKER_COMPOSE -f docker-compose.prod.yml down"
-  fi
+  echo "💡 Tip: Stop this stack first with:"
+  echo "   ./scripts/down-prod.sh"
   echo ""
   read -p "Continue anyway? (y/N) " -n 1 -r
   echo
@@ -317,9 +319,7 @@ echo "   Payload CMS: http://localhost:3001 (via Cloudflare)"
 echo "   Grafana: http://localhost:3002 (local only)"
 echo "   Admin Frontend: http://localhost:3003 (local only, not via Cloudflare)"
 echo "   Prometheus: http://localhost:9090 (local only)"
-if $START_CHAT_TUNNEL; then
 echo "   Chat Tunnel: Running (connects to litecoin.com/chat)"
-fi
 if $START_LOCAL_RAG; then
 echo "   ---"
 echo "   Embedding Server: http://localhost:7997 (local RAG)"
@@ -351,9 +351,16 @@ if $START_LOCAL_RAG; then
     echo ""
 fi
 
+# Require chat tunnel token (set via .env.docker.prod when that file exists; else export in shell)
+if [ -z "${CLOUDFLARE_CHAT_TUNNEL_TOKEN:-}" ]; then
+  echo "❌ Error: CLOUDFLARE_CHAT_TUNNEL_TOKEN is not set"
+  echo "   run-prod.sh always starts chat_tunnel. Set the token in .env.docker.prod or your environment."
+  exit 1
+fi
+
 # Start main production services (pass through filtered arguments like -d for detached mode)
-# Include --profile monitoring to start Prometheus and Grafana
-$DOCKER_COMPOSE $COMPOSE_FILES --profile monitoring up "${DOCKER_ARGS[@]}"
+# monitoring: Prometheus + Grafana; litecoin-integration: guest chat tunnel for litecoin.com/chat
+$DOCKER_COMPOSE $COMPOSE_FILES --profile monitoring --profile litecoin-integration up "${DOCKER_ARGS[@]}"
 
 # =============================================================================
 # Start Local RAG Services (if --local-rag flag is set)
@@ -487,31 +494,3 @@ if $START_LOCAL_RAG; then
     echo "   USE_INFINITY_EMBEDDINGS=true"
     echo "   USE_REDIS_CACHE=true"
 fi
-
-# =============================================================================
-# Start Chat Tunnel (if --chat-tunnel flag is set)
-# =============================================================================
-if $START_CHAT_TUNNEL; then
-    echo ""
-    echo "🌐 Starting Chat Tunnel service..."
-    echo ""
-    
-    # Verify CLOUDFLARE_CHAT_TUNNEL_TOKEN is set
-    if [ -z "${CLOUDFLARE_CHAT_TUNNEL_TOKEN:-}" ]; then
-        echo "❌ Error: CLOUDFLARE_CHAT_TUNNEL_TOKEN is not set in .env.docker.prod"
-        echo "   Please add: CLOUDFLARE_CHAT_TUNNEL_TOKEN=your-tunnel-token"
-        echo ""
-        echo "   This token is required for the chat tunnel to connect to Cloudflare."
-        exit 1
-    fi
-    
-    # Start chat_tunnel with litecoin-integration profile
-    echo "   Starting chat tunnel (profile: litecoin-integration)..."
-    $DOCKER_COMPOSE $COMPOSE_FILES --profile litecoin-integration up -d chat_tunnel
-    
-    echo "   ✓ Chat tunnel started"
-    echo ""
-    echo "💡 The chat tunnel connects the frontend to litecoin.com/chat"
-    echo "   It requires the frontend service to be healthy before starting."
-fi
-

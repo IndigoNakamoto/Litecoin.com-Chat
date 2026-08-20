@@ -171,7 +171,7 @@ def track_llm_metrics(
 def estimate_gemini_cost(
     input_tokens: int,
     output_tokens: int,
-    model: str = "gemini-2.0-flash-lite",
+    model: str = "gemini-3.1-flash-lite-preview",
 ) -> float:
     """
     Estimate cost for Gemini API calls.

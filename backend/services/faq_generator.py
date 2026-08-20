@@ -128,7 +128,7 @@ Questions:"""
                 return None
             
             return ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash-lite",  # Cheap for batch ingestion
+                model="gemini-3.1-flash-lite-preview",  # Cheap for batch ingestion
                 temperature=0.3,
                 google_api_key=google_api_key
             )

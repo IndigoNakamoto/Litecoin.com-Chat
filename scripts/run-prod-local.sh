@@ -45,16 +45,14 @@ fi
 # Change to project root
 cd "$PROJECT_ROOT"
 
-# Check for existing containers that might conflict
+# Check for existing containers for THIS compose project only (ignore other repos' litecoin-* names)
 echo "🔍 Checking for existing containers..."
-EXISTING_CONTAINERS=$(docker ps -a --filter "name=litecoin-" --format "{{.Names}}" 2>/dev/null || true)
+EXISTING_CONTAINERS=$($DOCKER_COMPOSE -f docker-compose.prod-local.yml ps -a --format "{{.Name}}" 2>/dev/null | grep -v '^[[:space:]]*$' || true)
 if [ -n "$EXISTING_CONTAINERS" ]; then
-    echo "⚠️  Warning: Found existing containers that may conflict:"
+    echo "⚠️  Warning: This compose project already has containers (may conflict on ports or names):"
     echo "$EXISTING_CONTAINERS" | sed 's/^/   - /'
     echo ""
-    echo "💡 Tip: Stop existing containers first with:"
-    echo "   $DOCKER_COMPOSE -f docker-compose.prod.yml down"
-    echo "   $DOCKER_COMPOSE -f docker-compose.dev.yml down"
+    echo "💡 Tip: Stop this stack first with:"
     echo "   $DOCKER_COMPOSE -f docker-compose.prod-local.yml down"
     echo ""
     read -p "Continue anyway? (y/N) " -n 1 -r

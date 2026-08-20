@@ -24,17 +24,18 @@ The operational layer that manages the "hands" of the system — container orche
 | `payload_cms/docker-compose.yml` | CMS standalone | Payload CMS + MongoDB |
 | `monitoring/docker-compose.monitoring.yml` | Observability | Prometheus, Grafana |
 
-### Production: tunnel + local RAG + chat tunnel
+### Production: tunnel + monitoring + chat tunnel (+ optional local RAG)
 
-Use this when bringing up the **full production stack** with the **main Cloudflare tunnel** (`cloudflared`), **monitoring** (`--profile monitoring` inside `run-prod.sh`), **local RAG** (`--local-rag`), and the **litecoin.com chat guest tunnel** (`--chat-tunnel` → `chat_tunnel`, profile `litecoin-integration`):
+`run-prod.sh` always brings up **monitoring** (`--profile monitoring`: Prometheus, Grafana) and the **litecoin.com chat guest tunnel** (`chat_tunnel`, profile `litecoin-integration`). Add **`--local-rag`** when you need local RAG (Ollama / Redis Stack / infinity). **`--chat-tunnel` is deprecated** (ignored with a note); the chat tunnel starts every time.
 
 ```bash
-./scripts/down-prod.sh && ./scripts/run-prod.sh -d --local-rag --chat-tunnel
+./scripts/down-prod.sh && ./scripts/run-prod.sh -d --local-rag
 ```
 
-- `run-prod.sh` loads `.env.docker.prod` and `.env.secrets`, URL-encodes Mongo/Redis for `docker-compose.override.yml`, builds with `--no-cache`, then runs `docker compose … --profile monitoring up …`.
+- `run-prod.sh` loads `.env.docker.prod` and `.env.secrets`, URL-encodes Mongo/Redis for `docker-compose.override.yml`, builds with `--no-cache`, then runs `docker compose … --profile monitoring --profile litecoin-integration up …`.
+- `down-prod.sh` / `shutdown-prod.sh` use the same profiles on `down` so monitoring and `chat_tunnel` are removed with the core stack (and `local-rag` services if present).
 - Main tunnel: set `CLOUDFLARE_TUNNEL_TOKEN` in `.env.docker.prod` (service `cloudflared` in `docker-compose.prod.yml`).
-- Chat tunnel: `CLOUDFLARE_CHAT_TUNNEL_TOKEN` required when using `--chat-tunnel`.
+- Chat tunnel: `CLOUDFLARE_CHAT_TUNNEL_TOKEN` is **required** in `.env.docker.prod` (validated like `GRAFANA_ADMIN_PASSWORD`).
 - Lighter restarts (no full rebuild): use `docker compose` with the same compose files and profiles after env is exported, or the targeted `rebuild-*.sh` scripts.
 
 ### Service Ports (dev)
@@ -52,7 +53,7 @@ Use this when bringing up the **full production stack** with the **main Cloudfla
 
 ### Lifecycle
 
-- `run-dev.sh` / `run-prod.sh` / `run-prod-local.sh` — start stacks (`run-prod.sh` flags: `--local-rag`, `--chat-tunnel`, `--pull` for Ollama model)
+- `run-dev.sh` / `run-prod.sh` / `run-prod-local.sh` — start stacks (`run-prod.sh` flags: `--local-rag`, `--pull` for Ollama model; `--chat-tunnel` deprecated/no-op)
 - `down-prod.sh` / `shutdown-prod.sh` — stop stacks
 - `rebuild-backend.sh` / `rebuild-frontend.sh` / `rebuild-admin-frontend.sh` — targeted rebuilds
 
