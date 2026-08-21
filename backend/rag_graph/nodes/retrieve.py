@@ -57,10 +57,11 @@ def make_retrieve_node(pipeline: Any):
         is_short_query: bool,
         use_infinity: bool,
         logger: logging.Logger,
-    ) -> Tuple[List[Document], bool]:
-        """Run retrieval for a single query. Returns (docs, retrieval_failed)."""
+    ) -> Tuple[List[Document], bool, Optional[float]]:
+        """Run retrieval for a single query. Returns (docs, retrieval_failed, top_faiss_l2)."""
         context_docs: List[Document] = []
         retrieval_failed = False
+        top_vector_distance: Optional[float] = None
 
         if use_infinity and query_vector is not None and getattr(pipeline, "vector_store_manager", None):
             infinity = pipeline.get_infinity_embeddings() if hasattr(pipeline, "get_infinity_embeddings") else None
@@ -115,7 +116,6 @@ def make_retrieve_node(pipeline: Any):
                     seen.add(key)
                     candidate_docs.append(doc)
 
-            top_vector_distance: Optional[float] = None
             if vector_results:
                 try:
                     top_vector_distance = float(vector_results[0][1])
@@ -183,7 +183,7 @@ def make_retrieve_node(pipeline: Any):
                 retrieval_failed = True
                 context_docs = []
 
-        return context_docs, retrieval_failed
+        return context_docs, retrieval_failed, top_vector_distance
 
     async def retrieve(state: RAGState) -> RAGState:
         """
@@ -255,7 +255,7 @@ def make_retrieve_node(pipeline: Any):
 
             per_query_k = retriever_k if not is_multi_query else max(retriever_k // len(retrieval_queries) + 2, 6)
 
-            docs, failed = await _retrieve_single_query(
+            docs, failed, top_distance = await _retrieve_single_query(
                 query_text=sub_query,
                 query_vector=q_vector,
                 query_sparse=q_sparse,
@@ -269,15 +269,18 @@ def make_retrieve_node(pipeline: Any):
                 "Retrieve sub-query %d/%d: query='%s', docs=%d, failed=%s",
                 idx + 1, len(retrieval_queries), sub_query[:80], len(docs), failed,
             )
-            return idx, docs, failed
+            return idx, docs, failed, top_distance
 
         gathered = await asyncio.gather(
             *[_prepare_and_retrieve(idx, sub_query) for idx, sub_query in enumerate(retrieval_queries)]
         )
-        for _idx, docs, failed in gathered:
+        single_query_top_distance: Optional[float] = None
+        for _idx, docs, failed, top_distance in gathered:
             all_docs.extend(docs)
             if failed:
                 any_failed = True
+            if _idx == 0:
+                single_query_top_distance = top_distance
 
         if is_multi_query:
             seen = set()
@@ -295,8 +298,26 @@ def make_retrieve_node(pipeline: Any):
         else:
             context_docs = all_docs
 
-        # Cross-encoder re-ranking
-        if USE_CROSS_ENCODER_RERANK and context_docs and primary_query:
+        # Cross-encoder: skip on a clear FAISS L2 hit (smaller is better, inclusive <=).
+        # Single-query only; multi-query stays the slow/accurate path.
+        ce_skip_distance = float(os.getenv("CROSS_ENCODER_SKIP_DISTANCE", "0.15") or 0)
+        skip_ce = (
+            not is_multi_query
+            and ce_skip_distance > 0
+            and single_query_top_distance is not None
+            and single_query_top_distance <= ce_skip_distance
+        )
+        if single_query_top_distance is not None:
+            metadata["faiss_top_distance"] = single_query_top_distance
+        metadata["cross_encoder_skipped"] = bool(skip_ce)
+        if skip_ce:
+            logger.info(
+                "Skipping cross-encoder; faiss_top_distance=%.4f <= %.4f",
+                single_query_top_distance,
+                ce_skip_distance,
+            )
+
+        if USE_CROSS_ENCODER_RERANK and context_docs and primary_query and not skip_ce:
             try:
                 from backend.services.cross_encoder_reranker import CrossEncoderReranker
 
@@ -332,6 +353,12 @@ def make_retrieve_node(pipeline: Any):
         unpublished_count = len(context_docs) - len(published_sources)
         if unpublished_count > 0:
             logger.debug("Retrieve: filtered %d unpublished docs from %d total", unpublished_count, len(context_docs))
+
+        from backend.rag.timing import ms_since_t0
+
+        t_retrieve = ms_since_t0()
+        if t_retrieve is not None:
+            metadata["t_retrieve_end_ms"] = t_retrieve
 
         state.update(
             {

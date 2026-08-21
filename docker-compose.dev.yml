@@ -55,6 +55,10 @@ services:
       - PAYLOAD_PUBLIC_SERVER_URL=http://payload_cms:3000
       # Redis connection URL using Docker service name
       - REDIS_URL=redis://redis:6379/0
+      # Local TTFT: ungrounded generate. Recreate backend after this change:
+      # docker compose -f docker-compose.dev.yml up -d --force-recreate backend worker
+      - USE_SEARCH_GROUNDING=false
+      - HF_HOME=/root/.cache/huggingface
     depends_on:
       mongodb:
         condition: service_healthy
@@ -67,6 +71,8 @@ services:
       - ./backend/monitoring/data:/app/backend/monitoring/data
       # Preserve Python cache in named volume to avoid conflicts
       - backend_pycache:/app/backend/__pycache__
+      # Persist MiniLM / embedding weights across recreate
+      - huggingface_cache:/root/.cache/huggingface
     command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/backend
     restart: unless-stopped
 
@@ -82,6 +88,8 @@ services:
       - NODE_ENV=development
       - REDIS_URL=redis://redis:6379/0
       - PAYLOAD_PUBLIC_SERVER_URL=http://payload_cms:3000
+      - USE_SEARCH_GROUNDING=false
+      - HF_HOME=/root/.cache/huggingface
     command: ["arq", "backend.jobs.worker.WorkerSettings"]
     depends_on:
       mongodb:
@@ -90,6 +98,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app/backend
+      - huggingface_cache:/root/.cache/huggingface
     restart: unless-stopped
 
   redis:
@@ -192,6 +201,7 @@ services:
 volumes:
   mongodb_dev_data:
   backend_pycache:
+  huggingface_cache:
   frontend_node_modules:
   payload_cms_node_modules:
   admin_frontend_node_modules:

@@ -7,10 +7,15 @@ from backend.rag_graph.nodes.retrieve import make_retrieve_node
 
 
 class _DummyLLM:
+    def __init__(self, content: str = "What is XYZ in the Litecoin knowledge base?"):
+        self.calls = 0
+        self.content = content
+
     async def ainvoke(self, messages):
-        # Return an object with a `.content` attribute (LangChain-style)
+        self.calls += 1
+
         class _R:
-            content = "What is MWEB (MimbleWimble Extension Blocks)?"
+            content = self.content
 
         return _R()
 
@@ -51,21 +56,44 @@ class _FakePipeline:
 
 
 @pytest.mark.asyncio
-async def test_prechecks_short_query_expands_and_sets_retrieval_query():
+async def test_prechecks_short_query_expands_via_vocab_without_llm():
     pipeline = _FakePipeline()
     node = make_prechecks_node(pipeline)
 
     state = await node({"raw_query": "MWEB", "metadata": {}, "effective_history_pairs": [], "is_dependent": False})
 
+    assert pipeline.llm.calls == 0
     assert state["metadata"].get("short_query_expanded") is True
+    assert state["metadata"].get("short_query_expand_source") == "vocab"
     assert state["metadata"].get("short_query_original") == "MWEB"
-    assert "short_query_expanded_query" in state["metadata"]
-
     rewritten = (state.get("rewritten_query") or "").lower()
-    # Expansion should include the entity and its appended synonyms from litecoin_vocabulary
     assert "mweb" in rewritten
     assert "mimblewimble" in rewritten
     assert state.get("retrieval_query") == state.get("rewritten_query")
+
+
+@pytest.mark.asyncio
+async def test_prechecks_unknown_short_query_calls_expand_llm():
+    pipeline = _FakePipeline()
+    pipeline.llm = _DummyLLM("What is xyzzy on the Litecoin network?")
+    node = make_prechecks_node(pipeline)
+
+    state = await node({"raw_query": "xyzzy", "metadata": {}, "effective_history_pairs": [], "is_dependent": False})
+
+    assert pipeline.llm.calls == 1
+    assert state["metadata"].get("short_query_expand_source") == "llm"
+    assert "xyzzy" in (state.get("rewritten_query") or "").lower() or "litecoin" in (
+        state.get("rewritten_query") or ""
+    ).lower()
+
+
+def test_expand_ltc_entities_is_idempotent():
+    from backend.utils.litecoin_vocabulary import expand_ltc_entities
+
+    once = expand_ltc_entities("charlie")
+    twice = expand_ltc_entities(once)
+    assert once == twice
+    assert "lee" in once.lower() or "creator" in once.lower()
 
 
 @pytest.mark.asyncio

@@ -129,104 +129,115 @@ def make_prechecks_node(pipeline: Any):
 
         # 3) Set rewritten query defaults for downstream nodes
         effective_query = state.get("effective_query") or query_text
-
-        # 3a) Short-query expansion (optional): mitigate semantic sparsity for 1–3 word queries.
-        # This runs after intent/exact cache checks so greetings/thanks can still early-return cheaply.
         expanded_query = effective_query
+
+        from backend.utils.litecoin_vocabulary import expand_ltc_entities, normalize_ltc_keywords
+
+        def _vocab_expand(text: str) -> str:
+            try:
+                return expand_ltc_entities(normalize_ltc_keywords(text or "")).strip()
+            except Exception:
+                return (text or "").strip()
+
+        vocab_expanded = _vocab_expand(effective_query)
+        vocab_changed = vocab_expanded.lower() != (effective_query or "").strip().lower()
+
+        # 3a) Short-query expansion: vocab first. LLM only if vocab did not change the query
+        # (not a string-length check — normalize can canonicalize without growing).
         if (
             getattr(pipeline, "use_short_query_expansion", False)
             and not is_dependent
             and effective_query
-            and getattr(pipeline, "llm", None) is not None
         ):
             try:
                 import re
                 from collections import OrderedDict
                 from langchain_core.messages import HumanMessage, SystemMessage
 
-                # Tokenize conservatively; treat acronyms like "MWEB" as a single token.
                 tokens = re.findall(r"[a-z0-9']+", effective_query.lower())
                 short_threshold = int(getattr(pipeline, "short_query_word_threshold", 3) or 3)
 
-                logger.debug(f"Short query expansion check: query='{effective_query}', tokens={len(tokens)}, threshold={short_threshold}")
-
                 if 0 < len(tokens) <= short_threshold:
-                    logger.info(f"Short query detected (≤{short_threshold} tokens): '{effective_query}'")
-                    cache_key = effective_query.strip().lower()
-                    cache_max = int(getattr(pipeline, "short_query_expansion_cache_max", 512) or 512)
-                    max_words = int(getattr(pipeline, "short_query_expansion_max_words", 12) or 12)
-
-                    # Lazy init a tiny in-memory LRU cache on the pipeline.
-                    if getattr(pipeline, "short_query_expansion_cache", None) is None:
-                        pipeline.short_query_expansion_cache = OrderedDict()  # type: ignore[attr-defined]
-                    cache = pipeline.short_query_expansion_cache  # type: ignore[attr-defined]
-
-                    if isinstance(cache, OrderedDict) and cache_key in cache:
-                        expanded_query = cache[cache_key]
-                        cache.move_to_end(cache_key)
-                        logger.info(f"Short query expansion (cache hit): '{effective_query}' -> '{expanded_query}'")
-                    else:
-                        # Ask the LLM to expand the short query into a concise retrieval-friendly question.
-                        llm = getattr(pipeline, "llm", None)
-                        sys = (
-                            "You expand very short user queries for retrieval in a Litecoin knowledge base.\n"
-                            "Return ONLY the expanded query text (no quotes, no markdown). "
-                            "Keep it concise and specific to Litecoin."
+                    logger.info("Short query detected (≤%s tokens): %r", short_threshold, effective_query)
+                    if vocab_changed:
+                        expanded_query = vocab_expanded
+                        metadata.update(
+                            {
+                                "short_query_expanded": True,
+                                "short_query_original": effective_query,
+                                "short_query_expanded_query": expanded_query,
+                                "short_query_expand_source": "vocab",
+                            }
                         )
-                        human = (
-                            f"Short query: {effective_query}\n\n"
-                            "Expand it into a concise standalone question (5–12 words). "
-                            "If the query is an acronym or term (e.g., MWEB, LitVM, halving), expand it."
+                        logger.info(
+                            "Short query expanded via vocab (no LLM): %r -> %r",
+                            effective_query,
+                            expanded_query,
                         )
+                    elif getattr(pipeline, "llm", None) is not None:
+                        cache_key = effective_query.strip().lower()
+                        cache_max = int(getattr(pipeline, "short_query_expansion_cache_max", 512) or 512)
+                        max_words = int(getattr(pipeline, "short_query_expansion_max_words", 12) or 12)
 
-                        logger.info(f"Expanding short query via LLM: '{effective_query}'")
-                        result = await llm.ainvoke([SystemMessage(content=sys), HumanMessage(content=human)])
-                        candidate = getattr(result, "content", None) or str(result)
-                        candidate = candidate.strip().strip('"').strip("'")
-                        candidate = re.sub(r"\s+", " ", candidate).strip()
+                        if getattr(pipeline, "short_query_expansion_cache", None) is None:
+                            pipeline.short_query_expansion_cache = OrderedDict()  # type: ignore[attr-defined]
+                        cache = pipeline.short_query_expansion_cache  # type: ignore[attr-defined]
 
-                        if candidate:
-                            # Enforce max words to avoid prompt bloat.
-                            words = candidate.split()
-                            if len(words) > max_words:
-                                candidate = " ".join(words[:max_words]).strip()
-
-                            # Use only if it meaningfully changed the query.
-                            if candidate and candidate.lower() != effective_query.strip().lower():
-                                expanded_query = candidate
-                                logger.info(f"Short query expanded: '{effective_query}' -> '{expanded_query}'")
-
-                                # Update LRU.
-                                if isinstance(cache, OrderedDict):
-                                    cache[cache_key] = expanded_query
-                                    cache.move_to_end(cache_key)
-                                    while len(cache) > cache_max:
-                                        cache.popitem(last=False)
-
-                                metadata.update(
-                                    {
-                                        "short_query_expanded": True,
-                                        "short_query_original": effective_query,
-                                        "short_query_expanded_query": expanded_query,
-                                    }
-                                )
-                            else:
-                                logger.debug(f"Short query expansion resulted in no meaningful change (candidate same as original): '{candidate}'")
+                        if isinstance(cache, OrderedDict) and cache_key in cache:
+                            expanded_query = cache[cache_key]
+                            cache.move_to_end(cache_key)
+                            logger.info(
+                                "Short query expansion (cache hit): %r -> %r",
+                                effective_query,
+                                expanded_query,
+                            )
                         else:
-                            logger.warning(f"Short query expansion returned empty result for: '{effective_query}'")
+                            llm = pipeline.llm
+                            sys = (
+                                "You expand very short user queries for retrieval in a Litecoin knowledge base.\n"
+                                "Return ONLY the expanded query text (no quotes, no markdown). "
+                                "Keep it concise and specific to Litecoin."
+                            )
+                            human = (
+                                f"Short query: {effective_query}\n\n"
+                                "Expand it into a concise standalone question (5–12 words). "
+                                "If the query is an acronym or term (e.g., MWEB, LitVM, halving), expand it."
+                            )
+                            logger.info("Expanding short query via LLM: %r", effective_query)
+                            result = await llm.ainvoke(
+                                [SystemMessage(content=sys), HumanMessage(content=human)]
+                            )
+                            candidate = getattr(result, "content", None) or str(result)
+                            candidate = candidate.strip().strip('"').strip("'")
+                            candidate = re.sub(r"\s+", " ", candidate).strip()
+                            if candidate:
+                                words = candidate.split()
+                                if len(words) > max_words:
+                                    candidate = " ".join(words[:max_words]).strip()
+                                if candidate and candidate.lower() != effective_query.strip().lower():
+                                    expanded_query = candidate
+                                    if isinstance(cache, OrderedDict):
+                                        cache[cache_key] = expanded_query
+                                        cache.move_to_end(cache_key)
+                                        while len(cache) > cache_max:
+                                            cache.popitem(last=False)
+                                    metadata.update(
+                                        {
+                                            "short_query_expanded": True,
+                                            "short_query_original": effective_query,
+                                            "short_query_expanded_query": expanded_query,
+                                            "short_query_expand_source": "llm",
+                                        }
+                                    )
+                                    logger.info(
+                                        "Short query expanded via LLM: %r -> %r",
+                                        effective_query,
+                                        expanded_query,
+                                    )
             except Exception as e:
-                # Best-effort only; fall through to deterministic normalization/expansion.
-                logger.warning(f"Short query expansion failed: {e}", exc_info=True)
+                logger.warning("Short query expansion failed: %s", e, exc_info=True)
 
-        # Post-rewrite normalization + entity expansion for retrieval recall
-        try:
-            from backend.utils.litecoin_vocabulary import expand_ltc_entities, normalize_ltc_keywords
-
-            rewritten_normalized = normalize_ltc_keywords(expanded_query)
-            rewritten_expanded = expand_ltc_entities(rewritten_normalized).strip()
-        except Exception:
-            rewritten_expanded = expanded_query
-
+        rewritten_expanded = _vocab_expand(expanded_query)
         state["rewritten_query"] = rewritten_expanded
         state["rewritten_query_for_cache"] = rewritten_expanded
         state["retrieval_query"] = rewritten_expanded
