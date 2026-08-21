@@ -40,12 +40,12 @@ PUBLIC FRONTEND (chat.lite.space/chat)     ADMIN FRONTEND (admin.lite.space)
            v                                          v
     ┌─────────────────── FASTAPI BACKEND (:8000) ──────────────────┐
     │                                                               │
-    │  LangGraph RAG State Machine (9 nodes, 4 conditional exits)  │
+    │  LangGraph RAG State Machine (10 nodes, 3 conditional exits) │
     │  sanitize → route → prechecks → blockchain_lookup (live API) │
     │              → semantic_cache → decompose → retrieve         │
-    │              → resolve_parents → spend_limit                 │
+    │              → resolve_parents → spend_limit → generate      │
     │                            |                                  │
-    │  RAG Pipeline (LLM generation + search grounding fallback)   │
+    │  RAG Pipeline (streaming + search grounding fallback)        │
     │                                                               │
     └──────────┬──────────────┬──────────────────┬─────────────────┘
                |              |                  |
@@ -58,7 +58,7 @@ PUBLIC FRONTEND (chat.lite.space/chat)     ADMIN FRONTEND (admin.lite.space)
 
 ### Test Suite
 
-- **Location:** `backend/tests/` (32 test files)
+- **Location:** `backend/tests/` (36+ test files; eval harness is opt-in via `pytest -m eval`)
 - **Last known state:** 121+ passing, 36 skipped, 30 non-blocking warnings
 - **Run:** `pytest backend/tests/ -v`
 
@@ -88,7 +88,8 @@ Per `docs/testing/TEST_SUITE_IMPLEMENTATION_PLAN.md`: target 80-90% coverage, 85
 
 | File | Lines | Role |
 |------|-------|------|
-| `backend/rag_pipeline.py` | ~1680 | RAG orchestration — the brain |
+| `backend/rag_pipeline.py` | ~1600 | RAG orchestration — the brain (streaming + graph invoke) |
+| `backend/rag/generate.py` | ~170 | Non-stream generation (chain, grounding, cache write-back) |
 | `backend/rag_context_format.py` | ~55 | Metadata SOURCE headers for LLM context (`format_docs`) |
 | `backend/rag_graph/state.py` | ~65 | Graph state definition (TypedDict) |
 | `backend/rag_graph/graph.py` | ~80 | Graph wiring and conditional edges |
@@ -103,6 +104,7 @@ Per `docs/testing/TEST_SUITE_IMPLEMENTATION_PLAN.md`: target 80-90% coverage, 85
 
 | Date | Change | Milestone | Status |
 |------|--------|-----------|--------|
+| 2026-08-21 | **Strangle C first slice:** parallel multi-query retrieve (`asyncio.gather`); persist Infinity `sparse_embedding` at ingest and reuse at retrieve; thin `generate` graph node (`backend/rag/generate.py`, streaming stays in `astream_query`); eval scaffold (`pytest -m eval`, `backend/tests/eval/golden_questions.yaml`). CI default is `-m "not eval"`. | M3 / M7 | In Progress |
 | 2026-08-21 | **Strangle A+B (build machine):** dependency-class health (`/health/ready` 503 on Redis/Mongo fail; `/health/detailed` auth; compose `/health/live`); `justfile` + `scripts/preflight.sh`; cache-by-default rebuilds; diagnose matrix; GitHub Actions CI; ARQ worker + admin job enqueue; CMS pull script `scripts/pull-cms-from-prod.sh`. Tests: `pytest backend/tests/test_health.py backend/tests/test_jobs_enqueue.py` — 10 passed. Full suite not run here (no Docker / HuggingFace in this environment). Set `GOOGLE_API_KEY` in `backend/.env` then `just up dev` and `./scripts/pull-cms-from-prod.sh`. | M7 | In Progress |
 | 2026-03-30 | Chat: user replies omit citations — `SYSTEM_INSTRUCTION*` in [`backend/rag_pipeline.py`](backend/rag_pipeline.py) no longer ask for markdown links, `## Sources`, or “Based on public sources:”; KB grounding stays internal via SOURCE headers. [`backend/main.py`](backend/main.py) no longer forwards SSE `status: "sources"` (still counts published docs for logging / follow-ups). Tests: [`backend/tests/test_chat_stream_follow_ups.py`](backend/tests/test_chat_stream_follow_ups.py) updated; `.cursor/rules/rag-synthesis-specialist.mdc` aligned. Full `pytest backend/tests/` not green in this environment (Mongo at `test:27017`, Infinity/Redis integration expectations); `test_chat_stream_follow_ups`, `test_astream_query`, `test_rag_pipeline` slice passed. | M8 | Completed |
 | 2026-03-24 | Ops: `run-prod.sh --local-rag` now exports `INFINITY_URL` / `OLLAMA_URL` **before** main `docker compose up` so the backend container gets `http://infinity:7997` on x86 (was defaulting to `host.docker.internal`). `docker-compose.prod.yml` backend: `extra_hosts: host.docker.internal:host-gateway` for Linux + native Infinity. Fixes “Infinity connection error: All connection attempts failed” when flags are on but URL was wrong. **Recreate backend** after pull: `docker compose … up -d --force-recreate backend`. | M7 | Completed |

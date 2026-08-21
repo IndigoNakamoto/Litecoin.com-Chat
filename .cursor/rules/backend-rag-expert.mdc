@@ -10,10 +10,10 @@ alwaysApply: false
 
 The backend has two layers:
 
-1. **LangGraph State Machine** (`rag_graph/`): Handles everything *before* answer generation — sanitization, routing, caching, decomposition, retrieval, parent resolution, spend gating.
-2. **RAG Pipeline** (`rag_pipeline.py`): The orchestration layer that owns the LLM, prompt chains, and cache write-back. It calls `graph.ainvoke()` then performs generation. Context strings for the generator use `backend/rag_context_format.py` (`format_docs`) so chunk metadata reaches the model.
+1. **LangGraph State Machine** (`rag_graph/`): Sanitization, routing, caching, decomposition, retrieval, parent resolution, spend gating, and a thin `generate` node.
+2. **RAG Pipeline** (`rag_pipeline.py`): Orchestration, prompt chains, and streaming. Non-stream generation **logic** lives in `backend/rag/generate.py`; the graph node calls that helper. Context strings use `backend/rag_context_format.py` (`format_docs`).
 
-Never duplicate retrieval logic outside the graph. Never put generation logic inside the graph.
+Never duplicate retrieval logic outside the graph. Never put generation logic inside retrieve. A thin graph node may call `rag/generate.py`. Streaming stays in `astream_query`.
 
 ## RAG Graph Internals
 
@@ -21,7 +21,7 @@ Never duplicate retrieval logic outside the graph. Never put generation logic in
 
 `RAGState` is defined as `TypedDict(total=False)` in `rag_graph/state.py`. All keys are optional. Never add required keys — it will break every node that returns a partial state update.
 
-### Nodes (8 total, in execution order)
+### Nodes (10 total, in execution order)
 
 | Node | File | Responsibility |
 |------|------|----------------|
@@ -33,6 +33,8 @@ Never duplicate retrieval logic outside the graph. Never put generation logic in
 | retrieve | `nodes/retrieve.py` | Hybrid vector + BM25 retrieval, reranking |
 | resolve_parents | `nodes/resolve_parents.py` | Parent-document pattern for FAQ chunks |
 | spend_limit | `nodes/spend_limit.py` | Cost estimation, budget enforcement |
+| generate | `nodes/generate.py` | Thin wrapper around `backend/rag/generate.py` (non-stream) |
+| blockchain_lookup | `nodes/blockchain_lookup.py` | Live Litecoin Space API (fees, price, pools) |
 
 ### Conditional Exits
 

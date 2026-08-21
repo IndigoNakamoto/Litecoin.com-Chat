@@ -36,4 +36,4 @@ jobs:
           ADMIN_TOKEN: test-admin-token
           WEBHOOK_SECRET: test-webhook-secret-key
         working-directory: .
-        run: pytest backend/tests/ -v --tb=short -q
+        run: pytest backend/tests/ -v --tb=short -q -m "not eval"

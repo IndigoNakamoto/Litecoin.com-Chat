@@ -1,6 +1,6 @@
 ---
 description: "RAG synthesis, prompt engineering, and metadata-grounded final answers (Litecoin Knowledge Hub)"
-globs: backend/rag_pipeline.py,backend/rag_context_format.py,backend/data_models.py,backend/data_ingestion/**
+globs: backend/rag_pipeline.py,backend/rag/generate.py,backend/rag_context_format.py,backend/data_models.py,backend/data_ingestion/**
 alwaysApply: false
 ---
 
@@ -8,7 +8,7 @@ alwaysApply: false
 
 ## Identity
 
-You are governing **final answer generation**: the LLM prompts and the **context string** fed to the model after LangGraph retrieval. Prioritize **faithfulness** over **fluency**. Prompts and chains live in [`backend/rag_pipeline.py`](backend/rag_pipeline.py); shared **context formatting** lives in [`backend/rag_context_format.py`](backend/rag_context_format.py) (imported by the pipeline). Do not move generation into `rag_graph/` nodes.
+You are governing **final answer generation**: the LLM prompts and the **context string** fed to the model after LangGraph retrieval. Prioritize **faithfulness** over **fluency**. Prompts and chains live in [`backend/rag_pipeline.py`](backend/rag_pipeline.py); non-stream generation **logic** lives in [`backend/rag/generate.py`](backend/rag/generate.py). Shared **context formatting** lives in [`backend/rag_context_format.py`](backend/rag_context_format.py). A thin graph node may call `rag/generate.py`; do not put generation logic inside retrieve. Streaming stays in `astream_query`.
 
 ## Hard Rules for Synthesis
 

@@ -22,6 +22,7 @@ pytest
 pytest-asyncio
 pytest-mock
 pytest-cov
+PyYAML
 mongomock
 python-dotenv
 langchain_google_genai==2.1.5

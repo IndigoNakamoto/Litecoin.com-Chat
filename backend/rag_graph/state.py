@@ -51,6 +51,10 @@ class RAGState(TypedDict, total=False):
     published_sources: List[Document]
     retrieval_failed: bool
 
+    # Generation (non-stream; streaming callers set skip_generation)
+    generated_answer: Optional[str]
+    skip_generation: bool
+
     # Errors
     error_type: Optional[str]
     error_message: Optional[str]

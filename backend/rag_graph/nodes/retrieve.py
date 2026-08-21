@@ -13,6 +13,39 @@ from ..state import RAGState
 USE_CROSS_ENCODER_RERANK = os.getenv("USE_CROSS_ENCODER_RERANK", "true").lower() == "true"
 
 
+def _stored_sparse(doc: Document) -> Optional[Dict[str, float]]:
+    """Return a persisted sparse embedding from chunk metadata, if present."""
+    raw = (doc.metadata or {}).get("sparse_embedding")
+    if isinstance(raw, dict) and raw:
+        return raw
+    return None
+
+
+async def _resolve_doc_sparse(
+    infinity: Any,
+    candidates: List[Document],
+    logger: logging.Logger,
+) -> List[Optional[Dict[str, float]]]:
+    """Use stored sparse vectors; embed only chunks that are missing the field."""
+    resolved: List[Optional[Dict[str, float]]] = [_stored_sparse(doc) for doc in candidates]
+    missing_indices = [i for i, sparse in enumerate(resolved) if not sparse]
+    if not missing_indices:
+        return resolved
+
+    missing_texts = [candidates[i].page_content[:8000] for i in missing_indices]
+    _, fallback = await infinity.embed_documents(missing_texts)
+    fallback = fallback or []
+    for offset, idx in enumerate(missing_indices):
+        resolved[idx] = fallback[offset] if offset < len(fallback) else None
+    logger.debug(
+        "Sparse rerank used stored vectors for %d/%d candidates; embedded %d missing",
+        len(candidates) - len(missing_indices),
+        len(candidates),
+        len(missing_indices),
+    )
+    return resolved
+
+
 def make_retrieve_node(pipeline: Any):
 
     async def _retrieve_single_query(
@@ -33,6 +66,7 @@ def make_retrieve_node(pipeline: Any):
             infinity = pipeline.get_infinity_embeddings() if hasattr(pipeline, "get_infinity_embeddings") else None
             vector_docs: List[Document] = []
             bm25_docs: List[Document] = []
+            vector_results: List[Tuple[Document, float]] = []
 
             try:
                 def run_vector_search():
@@ -81,11 +115,33 @@ def make_retrieve_node(pipeline: Any):
                     seen.add(key)
                     candidate_docs.append(doc)
 
-            if query_sparse and infinity and candidate_docs:
+            top_vector_distance: Optional[float] = None
+            if vector_results:
+                try:
+                    top_vector_distance = float(vector_results[0][1])
+                except (TypeError, ValueError, IndexError):
+                    top_vector_distance = None
+
+            skip_sparse = False
+            skip_distance = float(os.getenv("SPARSE_RERANK_SKIP_DISTANCE", "0") or 0)
+            if (
+                skip_distance > 0
+                and top_vector_distance is not None
+                and top_vector_distance <= skip_distance
+            ):
+                skip_sparse = True
+                logger.debug(
+                    "Skipping sparse rerank; top FAISS distance %.4f <= %.4f",
+                    top_vector_distance,
+                    skip_distance,
+                )
+
+            if query_sparse and infinity and candidate_docs and not skip_sparse:
                 try:
                     candidates_for_rerank = candidate_docs[:sparse_rerank_limit]
-                    doc_texts = [d.page_content[:8000] for d in candidates_for_rerank]
-                    _, doc_sparse_list = await infinity.embed_documents(doc_texts)
+                    doc_sparse_list = await _resolve_doc_sparse(
+                        infinity, candidates_for_rerank, logger
+                    )
 
                     doc_scores = []
                     for i, (doc, doc_sparse) in enumerate(zip(candidates_for_rerank, doc_sparse_list)):
@@ -175,7 +231,7 @@ def make_retrieve_node(pipeline: Any):
         all_docs: List[Document] = []
         any_failed = False
 
-        for idx, sub_query in enumerate(retrieval_queries):
+        async def _prepare_and_retrieve(idx: int, sub_query: str) -> Tuple[int, List[Document], bool]:
             try:
                 short_threshold = int(getattr(pipeline, "short_query_word_threshold", 3) or 3)
                 _tokens = re.findall(r"[a-z0-9']+", (sub_query or "").lower())
@@ -209,14 +265,19 @@ def make_retrieve_node(pipeline: Any):
                 use_infinity=use_infinity,
                 logger=logger,
             )
-            all_docs.extend(docs)
-            if failed:
-                any_failed = True
-
             logger.debug(
                 "Retrieve sub-query %d/%d: query='%s', docs=%d, failed=%s",
                 idx + 1, len(retrieval_queries), sub_query[:80], len(docs), failed,
             )
+            return idx, docs, failed
+
+        gathered = await asyncio.gather(
+            *[_prepare_and_retrieve(idx, sub_query) for idx, sub_query in enumerate(retrieval_queries)]
+        )
+        for _idx, docs, failed in gathered:
+            all_docs.extend(docs)
+            if failed:
+                any_failed = True
 
         if is_multi_query:
             seen = set()
