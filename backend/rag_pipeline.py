@@ -27,6 +27,7 @@ from langchain_google_genai import HarmCategory, HarmBlockThreshold
 from backend.rag_graph.graph import build_rag_graph
 from backend.rag_graph.nodes.factory import build_nodes
 from backend.rag_context_format import format_docs
+from backend.rag.history_dependency import STRONG_AMBIGUOUS_TOKENS, STRONG_PREFIXES
 
 # --- Local RAG Feature Flags ---
 # Enable local-first processing with cloud spillover
@@ -60,26 +61,8 @@ GENERIC_USER_ERROR_MESSAGE = (
     "I encountered an error while processing your query. Please try again or rephrase your question."
 )
 
-# --- Conversation / history routing (Hybrid: Fast Path + LLM Router) ---
-# Fast path: Only catch OBVIOUS cases to save latency
-# LLM Router: Handle ambiguous cases with semantic understanding
-
-# Strict list of pronouns that GUARANTEE history dependency
-# Excludes ambiguous words like "IT" (Information Technology) to reduce false positives
-_STRONG_AMBIGUOUS_TOKENS = {
-    "it", "this", "that", "these", "those",
-    "they", "them", "their", "its",
-    "he", "she", "him", "her",
-    "former", "latter", "previous", "following",
-}
-
-# Only prefixes that GUARANTEE a dependency on history
-_STRONG_PREFIXES = (
-    "and ", "also ", "but ", "so ",
-    "what about", "how about", "why is that",
-    "can you elaborate", "continue", "go on",
-    "explain that", "expand on that",
-)
+_STRONG_AMBIGUOUS_TOKENS = STRONG_AMBIGUOUS_TOKENS
+_STRONG_PREFIXES = STRONG_PREFIXES
 
 # Structured output model for the semantic router (Canonical Intent Generator)
 class QueryRouting(BaseModel):
@@ -1410,6 +1393,7 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     )
                     logger.info("Context coverage gap → prompting search for: %s", missing)
 
+            logged_first_token = False
             async for chunk in active_chain.astream(
                 {"input": sanitized_query, "context": context_text,
                  "context_coverage_note": coverage_note, "chat_history": converted_history}
@@ -1426,6 +1410,18 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     if chunk_count == 1:
                         logger.info("Streaming chunk type: str (StrOutputParser may still be active)")
                 if content:
+                    if not logged_first_token:
+                        from backend.rag.timing import ms_since_t0
+
+                        t_first = ms_since_t0()
+                        logger.info(
+                            "chat_ttft_ms t_route_end=%.0f t_retrieve_end=%.0f t_first_token=%.0f query=%r",
+                            metadata.get("t_route_end_ms") or -1,
+                            metadata.get("t_retrieve_end_ms") or -1,
+                            t_first if t_first is not None else -1,
+                            (sanitized_query or "")[:80],
+                        )
+                        logged_first_token = True
                     full_answer += content
                     yield {"type": "chunk", "content": content}
 

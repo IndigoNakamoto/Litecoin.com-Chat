@@ -412,6 +412,19 @@ async def lifespan(app: FastAPI):
     
     cache_refresh_task = asyncio.create_task(refresh_cache_background())
     logger.info("Started background suggested question cache refresh task")
+
+    async def warmup_cross_encoder():
+        # Fail-soft. Bar is a warm process, not first request after recreate.
+        # One load per process (dev: one uvicorn worker).
+        try:
+            from backend.services.cross_encoder_reranker import CrossEncoderReranker
+
+            logger.info("Warming cross-encoder in background (HF cache volume recommended)")
+            await asyncio.to_thread(CrossEncoderReranker.get_instance().warmup)
+        except Exception as e:
+            logger.warning("Cross-encoder warmup task failed: %s", e, exc_info=True)
+
+    asyncio.create_task(warmup_cross_encoder())
     
     yield
     # Shutdown: Cancel the background task
@@ -1149,6 +1162,9 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
             i += 1
 
     async def generate_stream():
+        from backend.rag.timing import mark_request_start, ms_since_t0
+
+        mark_request_start()
         # Variables to collect response data for logging
         full_answer = ""
         metadata = None
@@ -1188,12 +1204,16 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
             
-            # Send initial status
+            # First SSE event (same envelope). X-Accel-Buffering: no on the
+            # response so this is not held until the answer.
             payload = {
                 "status": "thinking",
                 "chunk": "",
                 "isComplete": False
             }
+            t_sse = ms_since_t0()
+            if t_sse is not None:
+                logger.info("chat_ttft_ms t_sse=%.0f", t_sse)
             yield f"data: {json.dumps(payload)}\n\n"
 
             # Check Suggested Question Cache FIRST (for empty chat history)
@@ -1425,7 +1445,7 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            # CORS headers handled by middleware - removed hardcoded wildcards
+            "X-Accel-Buffering": "no",
         }
     )
 

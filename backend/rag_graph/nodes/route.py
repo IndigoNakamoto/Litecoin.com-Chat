@@ -6,6 +6,7 @@ from typing import Any, List, Tuple
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
+from backend.rag.history_dependency import is_obviously_dependent
 from backend.utils.litecoin_vocabulary import expand_ltc_entities
 
 from ..state import RAGState
@@ -68,10 +69,15 @@ def make_route_node(pipeline: Any):
                 }
             )
             metadata["complexity_route"] = complexity_route
+            from backend.rag.timing import ms_since_t0
+
+            t_route = ms_since_t0()
+            if t_route is not None:
+                metadata["t_route_end_ms"] = t_route
             state["metadata"] = metadata
             return state
 
-        # Deterministic pronoun anchoring (anti-topic-drift), then entity expansion (topic reinforcement)
+        # Deterministic pronoun anchoring (anti-topic-drift), then entity expansion.
         router_input = (
             pipeline._anchor_pronouns_to_last_entity(normalized_query, truncated_history)  # type: ignore[attr-defined]
             if hasattr(pipeline, "_anchor_pronouns_to_last_entity")
@@ -79,34 +85,30 @@ def make_route_node(pipeline: Any):
         )
         router_input = expand_ltc_entities(router_input)
 
-        # Fast path: obvious dependency via tokens/prefixes if pipeline exposes the lists; otherwise fall back to router.
-        tokens = re.findall(r"[a-z0-9']+", router_input.lower())
-        strong_tokens = getattr(pipeline, "strong_ambiguous_tokens", None)
-        strong_prefixes = getattr(pipeline, "strong_prefixes", None)
-        has_obvious_pronouns = bool(strong_tokens) and any(t in strong_tokens for t in tokens)
-        has_obvious_prefix = bool(strong_prefixes) and any(router_input.lower().startswith(p) for p in strong_prefixes)
+        # is_dependent === frozen tokens/prefixes. History is passed to generation
+        # only then. _semantic_history_check only then. Do not add a Gemini
+        # "just in case" rewrite. Known miss this slice: standalone-looking
+        # follow-ups ("the second one") skip rewrite and drop history.
+        is_dependent = is_obviously_dependent(router_input)
 
-        # Convert full truncated history to messages for router
         converted_full_history: List[BaseMessage] = []
         for human_msg, ai_msg in truncated_history:
             converted_full_history.append(HumanMessage(content=human_msg))
             if ai_msg:
                 converted_full_history.append(AIMessage(content=ai_msg))
 
-        if has_obvious_pronouns or has_obvious_prefix:
-            is_dependent = True
+        if is_dependent:
             effective_history_pairs = truncated_history
             if hasattr(pipeline, "_semantic_history_check"):
-                effective_query, _ = await pipeline._semantic_history_check(router_input, converted_full_history)  # type: ignore[attr-defined]
+                effective_query, _ = await pipeline._semantic_history_check(
+                    router_input, converted_full_history
+                )
             else:
                 effective_query = router_input
         else:
-            if hasattr(pipeline, "_semantic_history_check"):
-                effective_query, is_dependent = await pipeline._semantic_history_check(router_input, converted_full_history)  # type: ignore[attr-defined]
-            else:
-                effective_query, is_dependent = router_input, False
-
-            effective_history_pairs = truncated_history if is_dependent else []
+            effective_query = router_input
+            effective_history_pairs = []
+            metadata["history_rewrite_skipped"] = True
 
         # Convert effective history to messages for downstream generation
         converted_effective_history: List[BaseMessage] = []
@@ -125,6 +127,11 @@ def make_route_node(pipeline: Any):
             }
         )
         metadata["complexity_route"] = complexity_route
+        from backend.rag.timing import ms_since_t0
+
+        t_route = ms_since_t0()
+        if t_route is not None:
+            metadata["t_route_end_ms"] = t_route
         state["metadata"] = metadata
         return state
 

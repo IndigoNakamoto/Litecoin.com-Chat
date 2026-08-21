@@ -164,6 +164,12 @@ LTC_ENTITY_EXPANSIONS: Dict[str, str] = {
     "difficulty": "mining difficulty retarget adjustment hashrate security",
     "litecoin core": "reference client full node daemon wallet software",
     "electrum-ltc": "spv wallet lightweight client deterministic seed",
+
+    # --- Leadership (TTFT: vocab-first short-query / rewrite-skip smoke) ---
+    "charlie": "charlie lee creator founder coblee",
+    "charlie lee": "creator founder coblee",
+    "foundation": "litecoin foundation lf",
+    "litecoin foundation": "lf foundation",
 }
 
 # 2. Pre-compile the regex for O(1) invocation performance

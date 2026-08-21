@@ -35,6 +35,15 @@ class CrossEncoderReranker:
                     cls._instance = cls()
         return cls._instance
 
+    def warmup(self) -> bool:
+        """Load weights; fail-soft. One load per process (dev: one uvicorn worker)."""
+        try:
+            self._load_model()
+            return True
+        except Exception:
+            logger.warning("Cross-encoder warmup failed; first rerank may be slow", exc_info=True)
+            return False
+
     def _load_model(self):
         if self._model is not None:
             return
