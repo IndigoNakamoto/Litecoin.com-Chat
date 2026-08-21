@@ -23,6 +23,8 @@ jobs:
           pip install ruff mypy
       - name: Compose config
         working-directory: .
+        env:
+          GRAFANA_ADMIN_PASSWORD: ci-compose-check
         run: docker compose -f docker-compose.prod.yml config
       - name: Ruff
         run: ruff check .
