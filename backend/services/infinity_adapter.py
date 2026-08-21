@@ -146,7 +146,18 @@ class InfinityEmbeddings:
         """
         if not texts:
             return []
-        
+
+        from backend.services.circuit_breaker import CircuitOpen, infinity_breaker
+
+        async def _do():
+            return await self._embed_documents_inner(texts)
+
+        try:
+            return await infinity_breaker.call(_do)
+        except CircuitOpen as e:
+            raise httpx.ConnectError(str(e)) from e
+
+    async def _embed_documents_inner(self, texts: List[str]) -> Tuple[List[List[float]], List[Optional[Dict[str, float]]]]:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 response = await client.post(
@@ -262,13 +273,20 @@ class InfinityEmbeddings:
         Returns:
             True if healthy, False otherwise
         """
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            try:
+        from backend.services.circuit_breaker import CircuitOpen, infinity_breaker
+
+        async def _do() -> bool:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(f"{self.infinity_url}/health")
                 return response.status_code == 200
-            except Exception as e:
-                logger.warning(f"Infinity health check failed: {e}")
-                return False
+
+        try:
+            return await infinity_breaker.call(_do)
+        except CircuitOpen:
+            return False
+        except Exception as e:
+            logger.warning(f"Infinity health check failed: {e}")
+            return False
 
 
 class InfinityEmbeddingsLangChain:

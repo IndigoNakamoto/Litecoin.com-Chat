@@ -70,6 +70,28 @@ services:
     command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/backend
     restart: unless-stopped
 
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: litecoin-worker-dev
+    env_file:
+      - ./.env.docker.dev
+      - ./backend/.env
+    environment:
+      - NODE_ENV=development
+      - REDIS_URL=redis://redis:6379/0
+      - PAYLOAD_PUBLIC_SERVER_URL=http://payload_cms:3000
+    command: ["arq", "backend.jobs.worker.WorkerSettings"]
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     container_name: litecoin-redis-dev
@@ -104,6 +126,8 @@ services:
     environment:
       # Development-specific overrides
       - NODE_ENV=development
+      # Next.js rewrites run inside this container; localhost:8000 is not the backend
+      - BACKEND_INTERNAL_URL=http://backend:8000
     volumes:
       # Mount frontend code for hot reload
       - ./frontend:/app

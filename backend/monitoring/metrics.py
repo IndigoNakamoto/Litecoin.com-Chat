@@ -210,6 +210,12 @@ vector_store_health = Gauge(
     "Vector store health status (1 = healthy, 0 = unhealthy)",
 )
 
+dependency_health = Gauge(
+    "dependency_health",
+    "Dependency probe status (1 = healthy, 0 = not healthy)",
+    ["name", "dep_class"],
+)
+
 # Webhook Processing Metrics
 webhook_processing_total = Counter(
     "webhook_processing_total",

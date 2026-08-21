@@ -34,6 +34,7 @@ from backend.api.v1.admin.settings import router as admin_settings_router
 from backend.api.v1.admin.cache import router as admin_cache_router
 from backend.api.v1.admin.users import router as admin_users_router
 from backend.api.v1.admin.knowledge_candidates import router as admin_knowledge_candidates_router
+from backend.api.v1.admin.jobs import router as admin_jobs_router
 from backend.dependencies import get_user_questions_collection, get_llm_request_logs_collection
 from bson import ObjectId
 from fastapi.encoders import jsonable_encoder # Import jsonable_encoder
@@ -130,7 +131,8 @@ async def update_metrics_periodically():
     while True:
         try:
             # Update vector store metrics every 60 seconds
-            _health_checker.check_vector_store()
+            if _health_checker is not None:
+                _health_checker.check_vector_store()
             # Update question metrics from MongoDB every 60 seconds
             await update_question_metrics_from_db()
             
@@ -595,6 +597,7 @@ app.include_router(admin_settings_router, prefix="/api/v1/admin/settings", tags=
 app.include_router(admin_cache_router, prefix="/api/v1/admin/cache", tags=["Admin"])
 app.include_router(admin_users_router, prefix="/api/v1/admin/users", tags=["Admin"])
 app.include_router(admin_knowledge_candidates_router, prefix="/api/v1/admin", tags=["Admin"])
+app.include_router(admin_jobs_router, prefix="/api/v1/admin", tags=["Admin"])
 
 # Import cache utilities and suggested questions utility
 from backend.cache_utils import suggested_question_cache
@@ -747,6 +750,11 @@ async def metrics_endpoint(format: str = "prometheus"):
     metrics_bytes, content_type = generate_metrics_response(format=format)
     return Response(content=metrics_bytes, media_type=content_type)
 
+def _is_localhost_request(request: Request) -> bool:
+    host = request.client.host if request.client else ""
+    return host in {"127.0.0.1", "::1", "localhost"}
+
+
 @app.get("/health")
 async def health_endpoint():
     """
@@ -755,17 +763,18 @@ async def health_endpoint():
     No rate limiting.
     """
     from backend.monitoring.health import _get_health_checker
-    return _get_health_checker().get_public_health()
+    return await _get_health_checker().get_public_health()
 
 @app.get("/health/detailed")
-async def detailed_health_endpoint():
+async def detailed_health_endpoint(request: Request):
     """
     Detailed health check for internal monitoring (Grafana, etc.).
-    Returns full health information including document counts and cache stats.
-    No rate limiting.
+    Admin token or localhost only.
     """
-    # TODO: Consider adding authentication or IP allowlisting for extra security
-    return get_health_status()
+    auth = request.headers.get("authorization")
+    if not _is_localhost_request(request) and not verify_admin_token(auth):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return await get_health_status()
 
 @app.get("/health/live")
 async def liveness_endpoint():
@@ -778,11 +787,12 @@ async def liveness_endpoint():
 @app.get("/health/ready")
 async def readiness_endpoint():
     """
-    Kubernetes readiness probe endpoint.
-    Returns sanitized response. No rate limiting.
+    Readiness probe. HTTP 503 when critical deps (Mongo, Redis) fail.
     """
     from backend.monitoring.health import _get_health_checker
-    return _get_health_checker().get_public_readiness()
+    body = await _get_health_checker().get_public_readiness()
+    status_code = 200 if body.get("ready") else 503
+    return JSONResponse(content=body, status_code=status_code)
 
 def _extract_challenge_from_fingerprint(fingerprint: str) -> Tuple[Optional[str], str]:
     """

@@ -69,10 +69,54 @@ echo ""
 
 echo "5️⃣ Local connectivity"
 echo "----------------------"
-if curl -sf --connect-timeout 3 http://localhost:8000/ &>/dev/null; then
-  echo "   http://localhost:8000/ → OK"
+if curl -sf --connect-timeout 3 http://localhost:8000/health/live &>/dev/null; then
+  echo "   http://localhost:8000/health/live → OK"
 else
-  echo "   http://localhost:8000/ → FAIL (backend not responding locally)"
+  echo "   http://localhost:8000/health/live → FAIL (backend not responding locally)"
+fi
+echo ""
+
+echo "6️⃣ Dependency matrix"
+echo "---------------------"
+READY_CODE=$(curl -s -o /tmp/lkh_ready.json -w "%{http_code}" --connect-timeout 3 http://localhost:8000/health/ready || echo "000")
+if [ "$READY_CODE" = "200" ]; then
+  echo "   /health/ready → 200 (critical deps up)"
+elif [ "$READY_CODE" = "503" ]; then
+  echo "   /health/ready → 503 (critical dep down — do not take chat traffic)"
+else
+  echo "   /health/ready → FAIL (http $READY_CODE)"
+fi
+if [ -n "${ADMIN_TOKEN:-}" ]; then
+  DETAIL=$(curl -s --connect-timeout 3 -H "Authorization: Bearer $ADMIN_TOKEN" http://localhost:8000/health/detailed || true)
+  if command -v python3 &>/dev/null && [ -n "$DETAIL" ]; then
+    python3 - <<'PY'
+import json, os, sys
+raw = os.popen("curl -s --connect-timeout 3 -H \"Authorization: Bearer $ADMIN_TOKEN\" http://localhost:8000/health/detailed").read()
+try:
+    data = json.loads(raw)
+except Exception:
+    print("   /health/detailed → could not parse")
+    sys.exit(0)
+print(f"   overall: {data.get('status')} ready={data.get('ready')}")
+for cls in ("critical", "degraded"):
+    block = data.get(cls) or {}
+    print(f"   [{cls}]")
+    for name, info in block.items():
+        if isinstance(info, dict):
+            print(f"     - {name}: {info.get('status')}" + (f" ({info.get('error')})" if info.get("error") else ""))
+info = data.get("info") or {}
+print("   [info]")
+for name, val in info.items():
+    if isinstance(val, dict):
+        print(f"     - {name}: {val.get('status')}")
+    else:
+        print(f"     - {name}: {val}")
+PY
+  else
+    echo "   /health/detailed → fetched (set ADMIN_TOKEN + python3 for a matrix)"
+  fi
+else
+  echo "   /health/detailed skipped (set ADMIN_TOKEN to print degraded/info rows)"
 fi
 echo ""
 

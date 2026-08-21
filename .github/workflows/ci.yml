@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff mypy
+      - name: Compose config
+        working-directory: .
+        env:
+          GRAFANA_ADMIN_PASSWORD: ci-compose-check
+        run: docker compose -f docker-compose.prod.yml config
+      - name: Ruff
+        run: ruff check .
+      - name: Mypy
+        run: mypy --ignore-missing-imports backend || mypy --ignore-missing-imports .
+        continue-on-error: true
+      - name: Pytest
+        env:
+          GOOGLE_API_KEY: test-key
+          MONGO_URI: mongodb://test
+          ADMIN_TOKEN: test-admin-token
+          WEBHOOK_SECRET: test-webhook-secret-key
+        working-directory: .
+        run: pytest backend/tests/ -v --tb=short -q
