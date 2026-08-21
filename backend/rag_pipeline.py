@@ -1241,7 +1241,7 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             return query_text, False
 
     async def aquery(self, query_text: str, chat_history: List[Tuple[str, str]]) -> Tuple[str, List[Document], Dict[str, Any]]:
-        """Async query endpoint (non-stream). LangGraph handles routing/caching/retrieval; this handles generation + cache write-back."""
+        """Async query endpoint (non-stream). LangGraph handles routing/caching/retrieval and non-stream generation."""
         start_time = time.time()
         try:
             graph = self._get_rag_graph()
@@ -1256,6 +1256,20 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             context_docs: List[Document] = state.get("context_docs") or []
             published_sources: List[Document] = state.get("published_sources") or []
             retrieval_failed = bool(state.get("retrieval_failed", False))
+
+            if state.get("generated_answer") is None and published_sources:
+                from backend.rag.generate import generate_answer
+
+                state = await generate_answer(self, state)
+                metadata = state.get("metadata") or metadata
+
+            if state.get("generated_answer") is not None:
+                metadata.setdefault("duration_seconds", time.time() - start_time)
+                return (
+                    state.get("generated_answer") or "",
+                    state.get("published_sources") or published_sources,
+                    metadata,
+                )
 
             if not published_sources:
                 metadata.update(
@@ -1277,101 +1291,8 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                 )
                 return response_message, [], metadata
 
-            converted_history: List[BaseMessage] = state.get("converted_history_messages") or []
-            sanitized_query = state.get("sanitized_query") or query_text
-            active_chain, response_profile, active_instruction = self._select_document_chain(state)
-            metadata["response_profile"] = response_profile
-
-            llm_start = time.time()
-            context_text = format_docs(context_docs)
-
-            coverage_note = ""
-            missing: List[str] = []
-            if self.search_grounding_enabled:
-                missing = self._find_missing_query_terms(sanitized_query, published_sources)
-                if missing:
-                    coverage_note = (
-                        f"IMPORTANT: The provided context does NOT contain information about: "
-                        f"{', '.join(missing)}. You MUST use Google Search for these topics."
-                    )
-
-            answer_result = await active_chain.ainvoke(
-                {"input": sanitized_query, "context": context_text,
-                 "context_coverage_note": coverage_note, "chat_history": converted_history}
-            )
-            answer = answer_result.content if hasattr(answer_result, "content") else str(answer_result)
-            llm_duration = time.time() - llm_start
-
-            grounding_meta = self._extract_grounding_metadata(answer_result)
-            is_grounded = grounding_meta is not None and bool(grounding_meta.get("grounding_chunks"))
-
-            if not is_grounded and coverage_note and answer:
-                missing_in_answer = [t for t in missing if t in answer.lower()]
-                if missing_in_answer:
-                    is_grounded = True
-                    logger.info("Coverage-gap fallback (aquery): missing terms %s in answer → grounded", missing_in_answer)
-
-            # Token usage + cost
-            input_tokens, output_tokens = 0, 0
-            cost_usd = 0.0
-            if self.monitoring_enabled:
-                input_tokens, output_tokens = self._extract_token_usage_from_llm_response(answer_result)
-                if input_tokens == 0 and output_tokens == 0:
-                    prompt_text = self._build_prompt_text_with_history(
-                        sanitized_query,
-                        context_text,
-                        converted_history,
-                        system_instruction=active_instruction,
-                    )
-                    input_tokens, output_tokens = self._estimate_token_usage(prompt_text, answer)
-                cost_usd = self.estimate_gemini_cost(input_tokens, output_tokens, self.model_name)
-                self.track_llm_metrics(
-                    model=self.model_name,
-                    operation="generate",
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cost_usd=cost_usd,
-                    duration_seconds=llm_duration,
-                    status="success",
-                )
-                try:
-                    await self.record_spend(cost_usd, input_tokens, output_tokens, self.model_name)
-                except Exception as e:
-                    logger.warning("Error recording spend: %s", e, exc_info=True)
-
-            # Cache write-back
-            effective_history = state.get("effective_history_pairs") or []
-            self.query_cache.set(query_text, effective_history, answer, published_sources)
-
-            query_vector = state.get("query_vector")
-            rewritten_query = state.get("rewritten_query_for_cache") or state.get("rewritten_query") or ""
-            if self.use_redis_cache and query_vector:
-                redis_cache = self.get_redis_vector_cache()
-                if redis_cache:
-                    try:
-                        sources_data = [{"page_content": d.page_content, "metadata": d.metadata} for d in published_sources]
-                        await redis_cache.set(query_vector, rewritten_query, answer, sources_data)
-                    except Exception as e:
-                        logger.warning("Redis cache storage failed: %s", e)
-            if self.semantic_cache and not self.use_redis_cache:
-                self.semantic_cache.set(rewritten_query, [], answer, published_sources)
-
-            metadata.update(
-                {
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "cost_usd": cost_usd,
-                    "duration_seconds": time.time() - start_time,
-                    "cache_hit": False,
-                    "cache_type": None,
-                    "rewritten_query": rewritten_query if rewritten_query and rewritten_query != query_text else None,
-                    "response_profile": response_profile,
-                    "complexity_route": state.get("complexity_route"),
-                    "grounding_metadata": grounding_meta,
-                    "is_grounded": is_grounded,
-                }
-            )
-            return answer, published_sources, metadata
+            metadata.setdefault("duration_seconds", time.time() - start_time)
+            return self.generic_user_error_message, [], metadata
         except HTTPException:
             raise
         except Exception as e:
@@ -1400,7 +1321,14 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
         start_time = time.time()
         try:
             graph = self._get_rag_graph()
-            state = await graph.ainvoke({"raw_query": query_text, "chat_history_pairs": chat_history, "metadata": {}})
+            state = await graph.ainvoke(
+                {
+                    "raw_query": query_text,
+                    "chat_history_pairs": chat_history,
+                    "metadata": {},
+                    "skip_generation": True,
+                }
+            )
             metadata: Dict[str, Any] = state.get("metadata") or {}
 
             # Early returns (intent/static or cache hits)

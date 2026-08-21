@@ -15,6 +15,46 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+
+def sparse_embedding_from_infinity_item(item: Dict[str, Any]) -> Optional[Dict[str, float]]:
+    """Normalize an Infinity response item's sparse_embedding, if present."""
+    raw = (item or {}).get("sparse_embedding")
+    if not isinstance(raw, dict) or not raw:
+        return None
+    try:
+        return {str(k): float(v) for k, v in raw.items()}
+    except (TypeError, ValueError):
+        return None
+
+
+def metadata_with_sparse(
+    metadata: Optional[Dict[str, Any]],
+    sparse: Optional[Dict[str, float]],
+) -> Dict[str, Any]:
+    """Copy metadata and stamp sparse_embedding so FAISS-retrieved docs carry it."""
+    md = dict(metadata or {})
+    if sparse:
+        md["sparse_embedding"] = sparse
+    return md
+
+
+def mongo_chunk_document(
+    text: str,
+    metadata: Dict[str, Any],
+    embedding: List[float],
+    sparse_embedding: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    """Build a Mongo chunk doc. Sparse is stored top-level and in metadata (Infinity only)."""
+    md = metadata_with_sparse(metadata, sparse_embedding)
+    doc: Dict[str, Any] = {
+        "text": text,
+        "metadata": md,
+        "embedding": embedding,
+    }
+    if sparse_embedding:
+        doc["sparse_embedding"] = sparse_embedding
+    return doc
+
 # Import Google embeddings if available
 try:
     from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -401,6 +441,9 @@ class VectorStoreManager:
                 if not text:
                     continue
                 metadata = doc.get("metadata", {}) or {}
+                sparse = doc.get("sparse_embedding") or metadata.get("sparse_embedding")
+                if sparse:
+                    metadata = metadata_with_sparse(metadata, sparse)
                 emb = doc.get("embedding")
                 if isinstance(emb, list) and emb:
                     texts.append(text)
@@ -466,7 +509,9 @@ class VectorStoreManager:
                             )
                             response.raise_for_status()
                             result = response.json()
-                            batch_embeddings = [item["embedding"] for item in result.get("data", [])]
+                            sorted_data = sorted(result.get("data", []), key=lambda x: x.get("index", 0))
+                            batch_embeddings = [item["embedding"] for item in sorted_data]
+                            batch_sparse = [sparse_embedding_from_infinity_item(item) for item in sorted_data]
 
                             if len(batch_embeddings) != len(batch_texts):
                                 raise ValueError(
@@ -474,21 +519,25 @@ class VectorStoreManager:
                                 )
 
                             embedding_dim = len(batch_embeddings[0]) if batch_embeddings else 0
-                            for doc_row, emb in zip(batch_missing, batch_embeddings):
+                            for doc_row, emb, sparse in zip(batch_missing, batch_embeddings, batch_sparse):
                                 md = dict(doc_row.get("metadata") or {})
                                 md.setdefault("embedding_model", model_id)
                                 if embedding_dim:
                                     md.setdefault("embedding_dim", embedding_dim)
+                                md = metadata_with_sparse(md, sparse)
 
                                 texts.append(doc_row["text"])
                                 metadatas.append(md)
                                 embeddings.append(emb)
 
                                 if allow_backfill and doc_row.get("_id") is not None:
+                                    set_fields: Dict[str, Any] = {"embedding": emb, "metadata": md}
+                                    if sparse:
+                                        set_fields["sparse_embedding"] = sparse
                                     updates.append(
                                         UpdateOne(
                                             {"_id": doc_row["_id"]},
-                                            {"$set": {"embedding": emb, "metadata": md}},
+                                            {"$set": set_fields},
                                         )
                                     )
                 else:
@@ -635,13 +684,7 @@ class VectorStoreManager:
                 if self.mongodb_available:
                     mongo_docs = []
                     for text, metadata, emb in zip(texts, metadatas, embeddings):
-                        mongo_docs.append(
-                            {
-                                "text": text,
-                                "metadata": metadata,
-                                "embedding": emb,
-                            }
-                        )
+                        mongo_docs.append(mongo_chunk_document(text, metadata, emb))
                     if mongo_docs:
                         self.collection.insert_many(mongo_docs, ordered=False)
 
@@ -713,35 +756,36 @@ class VectorStoreManager:
                     if result is None:
                         raise ValueError("Failed to get embeddings after retries")
                     
-                    # Extract dense embeddings
-                    dense_embeddings = [item["embedding"] for item in result.get("data", [])]
+                    # Extract dense + sparse embeddings (Infinity may return sparse for BGE-M3)
+                    sorted_data = sorted(result.get("data", []), key=lambda x: x.get("index", 0))
+                    dense_embeddings = [item["embedding"] for item in sorted_data]
+                    sparse_embeddings = [sparse_embedding_from_infinity_item(item) for item in sorted_data]
                     
                     if len(dense_embeddings) != len(texts):
                         raise ValueError(f"Embedding count mismatch: got {len(dense_embeddings)}, expected {len(texts)}")
                     
+                    embedding_dim = len(dense_embeddings[0]) if dense_embeddings else 0
+                    faiss_metadatas: List[Dict[str, Any]] = []
+                    for metadata, sparse in zip(metadatas, sparse_embeddings):
+                        md = dict(metadata or {})
+                        md.setdefault("embedding_model", model_id)
+                        if embedding_dim:
+                            md.setdefault("embedding_dim", embedding_dim)
+                        faiss_metadatas.append(metadata_with_sparse(md, sparse))
+
                     # Create text-embedding pairs for FAISS
                     text_embeddings = list(zip(texts, dense_embeddings))
                     
                     # Add to FAISS using add_embeddings (works with pre-computed vectors)
-                    self.vector_store.add_embeddings(text_embeddings, metadatas=metadatas)
+                    self.vector_store.add_embeddings(text_embeddings, metadatas=faiss_metadatas)
                     
-                    # Store in MongoDB if available
+                    # Store in MongoDB if available (persist sparse for retrieve-time reuse)
                     if self.mongodb_available:
-                        embedding_dim = len(dense_embeddings[0]) if dense_embeddings else 0
-
                         mongo_docs = []
-                        for text, metadata, emb in zip(texts, metadatas, dense_embeddings):
-                            md = dict(metadata or {})
-                            md.setdefault("embedding_model", model_id)
-                            if embedding_dim:
-                                md.setdefault("embedding_dim", embedding_dim)
-                            mongo_docs.append(
-                                {
-                                    "text": text,
-                                    "metadata": md,
-                                    "embedding": emb,
-                                }
-                            )
+                        for text, md, emb, sparse in zip(
+                            texts, faiss_metadatas, dense_embeddings, sparse_embeddings
+                        ):
+                            mongo_docs.append(mongo_chunk_document(text, md, emb, sparse))
                         if mongo_docs:
                             self.collection.insert_many(mongo_docs, ordered=False)
                     

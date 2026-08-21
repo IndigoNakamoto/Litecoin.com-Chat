@@ -25,6 +25,7 @@ class TestBlockchainGraphRouting:
             "retrieve": dummy_node,
             "resolve_parents": dummy_node,
             "spend_limit": dummy_node,
+            "generate": dummy_node,
             "blockchain_lookup": dummy_node,
         }
         graph = build_rag_graph(nodes)

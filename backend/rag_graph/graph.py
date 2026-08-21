@@ -25,6 +25,7 @@ def build_rag_graph(nodes: Dict[str, Callable[..., Any]]):
     graph.add_node("retrieve", nodes["retrieve"])
     graph.add_node("resolve_parents", nodes["resolve_parents"])
     graph.add_node("spend_limit", nodes["spend_limit"])
+    graph.add_node("generate", nodes["generate"])
     graph.add_node("blockchain_lookup", nodes["blockchain_lookup"])
 
     graph.set_entry_point("sanitize_normalize")
@@ -66,7 +67,8 @@ def build_rag_graph(nodes: Dict[str, Callable[..., Any]]):
     graph.add_conditional_edges("retrieve", _after_retrieve, {END: END, "resolve_parents": "resolve_parents"})
 
     graph.add_edge("resolve_parents", "spend_limit")
-    graph.add_edge("spend_limit", END)
+    graph.add_edge("spend_limit", "generate")
+    graph.add_edge("generate", END)
 
     return graph.compile()
 
