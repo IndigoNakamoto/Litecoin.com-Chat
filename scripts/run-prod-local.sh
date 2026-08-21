@@ -54,13 +54,11 @@ if [ -n "$EXISTING_CONTAINERS" ]; then
     echo ""
     echo "💡 Tip: Stop this stack first with:"
     echo "   $DOCKER_COMPOSE -f docker-compose.prod-local.yml down"
-    echo ""
-    read -p "Continue anyway? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "❌ Aborted. Please stop existing containers first."
-        exit 1
-    fi
+  echo ""
+  if [ "${FORCE:-}" != "1" ] && [ "${FORCE:-}" != "true" ]; then
+    echo "Aborted. Set FORCE=1 to continue, or stop existing containers first."
+    exit 1
+  fi
 fi
 
 # Export variables from .env.prod-local for build args
@@ -109,27 +107,25 @@ fi
 # Pass build args explicitly from .env.prod-local for frontend build
 # The exported variables will be available to docker-compose for build args
 #
-# Note: Production-local builds always use --no-cache to ensure clean, reproducible builds
-# that match production. This prevents issues from stale build cache and ensures
-# all dependencies are freshly installed.
+BUILD_FLAGS=()
+if [ "${NO_CACHE:-}" = "1" ] || [ "${NO_CACHE:-}" = "true" ]; then
+  BUILD_FLAGS+=(--no-cache)
+  echo "🔨 Building all services with --no-cache..."
+else
+  echo "🔨 Building all services (Docker cache enabled; set NO_CACHE=1 for a clean build)..."
+fi
 if [ -n "$NEXT_PUBLIC_BACKEND_URL" ] && [ -n "$NEXT_PUBLIC_PAYLOAD_URL" ]; then
   echo "🔧 Using build args from .env.prod-local:"
   echo "   NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL"
   echo "   NEXT_PUBLIC_PAYLOAD_URL=$NEXT_PUBLIC_PAYLOAD_URL"
   echo ""
-  echo "🔨 Building all services with --no-cache (clean build)..."
-  # Build all services with --no-cache, passing explicit build args for frontend
-  # Note: "$@" is intentionally excluded from build command to ensure --no-cache cannot be overridden
-  $DOCKER_COMPOSE -f docker-compose.prod-local.yml build --no-cache \
+  $DOCKER_COMPOSE -f docker-compose.prod-local.yml build "${BUILD_FLAGS[@]}" \
     --build-arg NEXT_PUBLIC_BACKEND_URL="$NEXT_PUBLIC_BACKEND_URL" \
     --build-arg NEXT_PUBLIC_PAYLOAD_URL="$NEXT_PUBLIC_PAYLOAD_URL"
   $DOCKER_COMPOSE -f docker-compose.prod-local.yml up "$@"
 else
   echo "⚠️  Warning: NEXT_PUBLIC_* variables not set, using defaults from docker-compose.prod-local.yml"
-  echo "🔨 Building all services with --no-cache (clean build)..."
-  # Build all services with --no-cache
-  # Note: "$@" is intentionally excluded from build command to ensure --no-cache cannot be overridden
-  $DOCKER_COMPOSE -f docker-compose.prod-local.yml build --no-cache
+  $DOCKER_COMPOSE -f docker-compose.prod-local.yml build "${BUILD_FLAGS[@]}"
   $DOCKER_COMPOSE -f docker-compose.prod-local.yml up "$@"
 fi
 

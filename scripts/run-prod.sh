@@ -16,6 +16,8 @@ set -e
 # =============================================================================
 START_LOCAL_RAG=false
 PULL_OLLAMA_MODEL=false
+NO_CACHE=false
+FORCE=false
 DOCKER_ARGS=()
 
 for arg in "$@"; do
@@ -25,6 +27,12 @@ for arg in "$@"; do
             ;;
         --pull)
             PULL_OLLAMA_MODEL=true
+            ;;
+        --no-cache)
+            NO_CACHE=true
+            ;;
+        --force)
+            FORCE=true
             ;;
         --chat-tunnel)
             echo "ℹ️  Note: --chat-tunnel is deprecated; chat_tunnel starts with every run-prod.sh." >&2
@@ -62,13 +70,8 @@ if [ ! -f "$ENV_PROD_FILE" ]; then
   echo "  cp .env.example .env.docker.prod"
   echo ""
   echo "See docs/setup/ENVIRONMENT_VARIABLES.md for details."
-  echo ""
-  read -p "Continue anyway? (y/N) " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "❌ Aborted. Please create .env.docker.prod first."
-    exit 1
-  fi
+  echo "Missing: .env.docker.prod"
+  exit 1
 else
   echo "📦 Loading environment variables from .env.docker.prod..."
   # Export all variables from .env file
@@ -122,13 +125,8 @@ if [ ! -f "$SECRETS_FILE" ]; then
   echo "   2. Create .env.secrets with the generated passwords"
   echo ""
   echo "See docs/fixes/DOCKER_DATABASE_SECURITY_HARDENING.md for details."
-  echo ""
-  read -p "Continue anyway? (y/N) " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "❌ Aborted. Please create .env.secrets first."
-    exit 1
-  fi
+  echo "Missing: .env.secrets"
+  exit 1
 else
   echo "🔐 Found .env.secrets file..."
   # Load secrets into shell environment for Docker Compose variable substitution
@@ -217,18 +215,15 @@ if [ ! -f "$OVERRIDE_COMPOSE_FILE" ]; then
   echo "Without it, databases may not have authentication enabled."
   echo ""
   echo "See docs/fixes/DOCKER_DATABASE_SECURITY_HARDENING.md for details."
-  echo ""
-  read -p "Continue without override file? (y/N) " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "❌ Aborted. Please create docker-compose.override.yml first."
-    exit 1
-  fi
+  echo "Missing: docker-compose.override.yml"
+  exit 1
   COMPOSE_FILES="-f docker-compose.prod.yml"
 else
   COMPOSE_FILES="-f docker-compose.prod.yml -f docker-compose.override.yml"
   echo "✅ Found docker-compose.override.yml (will use for database authentication)"
 fi
+
+"$PROJECT_ROOT/scripts/preflight.sh" prod
 
 # Change to project root
 cd "$PROJECT_ROOT"
@@ -243,15 +238,13 @@ if [ -n "$EXISTING_CONTAINERS" ]; then
   echo "💡 Tip: Stop this stack first with:"
   echo "   ./scripts/down-prod.sh"
   echo ""
-  read -p "Continue anyway? (y/N) " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "❌ Aborted. Please stop existing containers first."
+  if [ "$FORCE" != true ]; then
+    echo "Aborted. Pass --force to continue, or stop existing containers first."
     exit 1
   fi
 fi
 
-echo "🚀 Starting production build with --no-cache (clean rebuild)..."
+echo "🚀 Starting production build (cache by default; pass --no-cache for a clean rebuild)..."
 echo ""
 
 # Clean up dangling images from previous builds to save disk space
@@ -285,14 +278,17 @@ echo "   RETRIEVER_K=$RETRIEVER_K"
 echo "   SPARSE_RERANK_LIMIT=$SPARSE_RERANK_LIMIT"
 echo "   CROSS_ENCODER_TOP_K=$CROSS_ENCODER_TOP_K"
 echo ""
-echo "🔨 Building all services with --no-cache (clean rebuild)..."
-echo "   This ensures all dependencies are freshly installed and"
-echo "   NEXT_PUBLIC_* variables are correctly baked into the frontend builds."
+BUILD_FLAGS=()
+if [ "$NO_CACHE" = true ]; then
+  BUILD_FLAGS+=(--no-cache)
+  echo "🔨 Building all services with --no-cache..."
+else
+  echo "🔨 Building all services (Docker cache enabled)..."
+fi
+echo "   NEXT_PUBLIC_* variables are baked into the frontend builds."
 echo ""
 
-# Build all services with --no-cache, explicitly passing build args for frontend and admin-frontend
-# Note: "$@" is intentionally excluded from build command to ensure --no-cache cannot be overridden
-$DOCKER_COMPOSE $COMPOSE_FILES build --no-cache \
+$DOCKER_COMPOSE $COMPOSE_FILES build "${BUILD_FLAGS[@]}" \
   --build-arg NEXT_PUBLIC_BACKEND_URL="$PROD_BACKEND_URL" \
   --build-arg NEXT_PUBLIC_PAYLOAD_URL="$PROD_PAYLOAD_URL"
 

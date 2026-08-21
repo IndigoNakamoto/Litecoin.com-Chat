@@ -93,9 +93,12 @@ fi
 echo "🔨 Rebuilding backend service..."
 echo ""
 
-# Rebuild the backend service
-# Using --no-cache ensures a clean rebuild
-$DOCKER_COMPOSE $COMPOSE_FILES build --no-cache backend
+# Rebuild the backend service (cache by default; NO_CACHE=1 for a clean rebuild)
+BUILD_FLAGS=()
+if [ "${NO_CACHE:-}" = "1" ] || [ "${NO_CACHE:-}" = "true" ]; then
+  BUILD_FLAGS+=(--no-cache)
+fi
+$DOCKER_COMPOSE $COMPOSE_FILES build "${BUILD_FLAGS[@]}" backend
 
 echo ""
 echo "🔄 Restarting backend service..."

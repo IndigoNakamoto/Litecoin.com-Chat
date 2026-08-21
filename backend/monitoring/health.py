@@ -1,20 +1,28 @@
 """
-Health check module for monitoring service dependencies and status.
+Health checks as a dependency-class matrix.
+
+Critical failures make /health/ready return 503.
+Degraded failures keep the process ready but mark overall status degraded.
+Info probes never affect readiness.
 """
 
+from __future__ import annotations
+
+import asyncio
 import logging
+import os
 import time
-from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
+from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from backend.data_ingestion.vector_store_manager import VectorStoreManager
 
-# Import metrics to update them
 try:
     from backend.monitoring.metrics import (
         vector_store_documents_total,
         vector_store_health,
+        dependency_health,
     )
     MONITORING_ENABLED = True
 except ImportError:
@@ -22,265 +30,381 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+CRITICAL_PING_TIMEOUT = 0.2
+DEGRADED_PING_TIMEOUT = 1.5
+EXPENSIVE_PROBE_TTL_SECONDS = 60.0
+
 
 class HealthStatus(str, Enum):
-    """Health status enumeration."""
     HEALTHY = "healthy"
     UNHEALTHY = "unhealthy"
     DEGRADED = "degraded"
+    UNKNOWN = "unknown"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(dt: Optional[datetime] = None) -> str:
+    return (dt or _utcnow()).isoformat()
 
 
 class HealthChecker:
-    """
-    Comprehensive health checker for all service dependencies.
-    """
-    
+    """Dependency-class health checker. Never constructs a VectorStoreManager."""
+
     def __init__(self, vector_store_manager: Optional[VectorStoreManager] = None):
-        """
-        Initialize health checker.
-        
-        Args:
-            vector_store_manager: Optional VectorStoreManager instance to reuse.
-                                 If None, will create new instance (not recommended).
-        """
         self.vector_store_manager = vector_store_manager
-        self._last_check_time = None
-        self._last_check_result = None
-    
-    def check_vector_store(self) -> Dict[str, Any]:
-        """Check vector store health and return status."""
+        self._last_check_time: Optional[datetime] = None
+        self._last_check_result: Optional[Dict[str, Any]] = None
+        self._probe_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+
+    def set_vector_store_manager(self, vector_store_manager: VectorStoreManager) -> None:
+        self.vector_store_manager = vector_store_manager
+
+    async def _cached_probe(
+        self,
+        name: str,
+        factory: Callable[[], Awaitable[Dict[str, Any]]],
+        ttl: float = EXPENSIVE_PROBE_TTL_SECONDS,
+    ) -> Dict[str, Any]:
+        now = time.monotonic()
+        cached = self._probe_cache.get(name)
+        if cached and (now - cached[0]) < ttl:
+            result = dict(cached[1])
+            result["cached"] = True
+            return result
+        result = await factory()
+        self._probe_cache[name] = (now, result)
+        return result
+
+    async def ping_mongo(self, timeout: float = CRITICAL_PING_TIMEOUT) -> Dict[str, Any]:
+        start = time.monotonic()
         try:
-            # Use provided instance or create new one (fallback)
-            # Note: Creating new instance creates new connection pool - should be avoided
-            if self.vector_store_manager is None:
-                logger.warning("Health checker creating new VectorStoreManager instance (should use global instance)")
-                self.vector_store_manager = VectorStoreManager()
-            
+            from backend.dependencies import get_mongo_client
+
+            client = await asyncio.wait_for(get_mongo_client(), timeout=timeout)
+            await asyncio.wait_for(client.admin.command("ping"), timeout=timeout)
+            return {
+                "status": HealthStatus.HEALTHY,
+                "class": "critical",
+                "check_duration_seconds": time.monotonic() - start,
+            }
+        except Exception as e:
+            logger.warning("Mongo ping failed: %s", e)
+            return {
+                "status": HealthStatus.UNHEALTHY,
+                "class": "critical",
+                "error": str(e),
+                "check_duration_seconds": time.monotonic() - start,
+            }
+
+    async def ping_redis(self, timeout: float = CRITICAL_PING_TIMEOUT) -> Dict[str, Any]:
+        start = time.monotonic()
+        try:
+            from backend.redis_client import get_redis_client
+
+            client = await asyncio.wait_for(get_redis_client(), timeout=timeout)
+            pong = await asyncio.wait_for(client.ping(), timeout=timeout)
+            if not pong:
+                raise RuntimeError("Redis ping returned falsy")
+            return {
+                "status": HealthStatus.HEALTHY,
+                "class": "critical",
+                "check_duration_seconds": time.monotonic() - start,
+            }
+        except Exception as e:
+            logger.warning("Redis ping failed: %s", e)
+            return {
+                "status": HealthStatus.UNHEALTHY,
+                "class": "critical",
+                "error": str(e),
+                "check_duration_seconds": time.monotonic() - start,
+            }
+
+    async def check_payload(self) -> Dict[str, Any]:
+        url = os.getenv("PAYLOAD_PUBLIC_SERVER_URL") or os.getenv("PAYLOAD_URL")
+        if not url:
+            return {"status": HealthStatus.DEGRADED, "class": "degraded", "error": "PAYLOAD_PUBLIC_SERVER_URL not set"}
+        start = time.monotonic()
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=DEGRADED_PING_TIMEOUT) as client:
+                resp = await client.get(f"{url.rstrip('/')}/api/articles", params={"limit": 1})
+            ok = 200 <= resp.status_code < 500
+            return {
+                "status": HealthStatus.HEALTHY if ok else HealthStatus.DEGRADED,
+                "class": "degraded",
+                "http_status": resp.status_code,
+                "check_duration_seconds": time.monotonic() - start,
+            }
+        except Exception as e:
+            return {
+                "status": HealthStatus.DEGRADED,
+                "class": "degraded",
+                "error": str(e),
+                "check_duration_seconds": time.monotonic() - start,
+            }
+
+    async def check_litecoin_space(self) -> Dict[str, Any]:
+        base = os.getenv("LITECOIN_SPACE_API_URL", "https://litecoinspace.org/api").rstrip("/")
+        start = time.monotonic()
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=DEGRADED_PING_TIMEOUT) as client:
+                resp = await client.get(f"{base}/blocks/tip/height")
+            ok = resp.status_code == 200
+            return {
+                "status": HealthStatus.HEALTHY if ok else HealthStatus.DEGRADED,
+                "class": "degraded",
+                "http_status": resp.status_code,
+                "check_duration_seconds": time.monotonic() - start,
+            }
+        except Exception as e:
+            return {
+                "status": HealthStatus.DEGRADED,
+                "class": "degraded",
+                "error": str(e),
+                "check_duration_seconds": time.monotonic() - start,
+            }
+
+    async def check_gemini(self) -> Dict[str, Any]:
+        if not os.getenv("GOOGLE_API_KEY"):
+            return {
+                "status": HealthStatus.DEGRADED,
+                "class": "degraded",
+                "error": "GOOGLE_API_KEY not configured",
+            }
+        try:
+            from backend.services.rewriter import GeminiRewriter
+
+            rewriter = GeminiRewriter()
+            ok = await asyncio.wait_for(rewriter.health_check(), timeout=DEGRADED_PING_TIMEOUT)
+            return {
+                "status": HealthStatus.HEALTHY if ok else HealthStatus.DEGRADED,
+                "class": "degraded",
+                "api_key_configured": True,
+            }
+        except Exception as e:
+            return {
+                "status": HealthStatus.DEGRADED,
+                "class": "degraded",
+                "api_key_configured": True,
+                "error": str(e),
+            }
+
+    async def check_infinity(self) -> Dict[str, Any]:
+        if os.getenv("USE_INFINITY_EMBEDDINGS", "false").lower() != "true":
+            return {"status": HealthStatus.HEALTHY, "class": "degraded", "skipped": True}
+        try:
+            from backend.services.infinity_adapter import InfinityEmbeddings
+
+            ok = await asyncio.wait_for(InfinityEmbeddings().health_check(), timeout=DEGRADED_PING_TIMEOUT)
+            return {"status": HealthStatus.HEALTHY if ok else HealthStatus.DEGRADED, "class": "degraded"}
+        except Exception as e:
+            return {"status": HealthStatus.DEGRADED, "class": "degraded", "error": str(e)}
+
+    async def check_ollama(self) -> Dict[str, Any]:
+        if os.getenv("USE_LOCAL_REWRITER", "false").lower() != "true":
+            return {"status": HealthStatus.HEALTHY, "class": "degraded", "skipped": True}
+        try:
+            from backend.services.rewriter import LocalRewriter
+
+            ok = await asyncio.wait_for(LocalRewriter().health_check(), timeout=DEGRADED_PING_TIMEOUT)
+            return {"status": HealthStatus.HEALTHY if ok else HealthStatus.DEGRADED, "class": "degraded"}
+        except Exception as e:
+            return {"status": HealthStatus.DEGRADED, "class": "degraded", "error": str(e)}
+
+    async def check_redis_stack(self) -> Dict[str, Any]:
+        if os.getenv("USE_REDIS_CACHE", "false").lower() != "true":
+            return {"status": HealthStatus.HEALTHY, "class": "degraded", "skipped": True}
+        try:
+            from backend.services.redis_vector_cache import RedisVectorCache
+
+            ok = await asyncio.wait_for(RedisVectorCache().health_check(), timeout=DEGRADED_PING_TIMEOUT)
+            return {"status": HealthStatus.HEALTHY if ok else HealthStatus.DEGRADED, "class": "degraded"}
+        except Exception as e:
+            return {"status": HealthStatus.DEGRADED, "class": "degraded", "error": str(e)}
+
+    def check_vector_store(self) -> Dict[str, Any]:
+        """Info-only document counts. Never constructs a VectorStoreManager."""
+        if self.vector_store_manager is None:
+            logger.warning("Vector store metrics skipped: no shared VectorStoreManager")
+            return {
+                "status": HealthStatus.UNKNOWN,
+                "class": "info",
+                "error": "vector_store_manager not injected",
+            }
+        try:
             start_time = time.time()
             mongodb_available = self.vector_store_manager.mongodb_available
-            
-            # Get document counts
-            total_count = 0
-            published_count = 0
-            draft_count = 0
-            
+            total_count = published_count = draft_count = 0
             if mongodb_available:
                 total_count = self.vector_store_manager.collection.count_documents({})
-                published_count = self.vector_store_manager.collection.count_documents({
-                    "metadata.status": "published"
-                })
-                draft_count = self.vector_store_manager.collection.count_documents({
-                    "metadata.status": "draft"
-                })
-            
-            check_duration = time.time() - start_time
-            
-            # Update Prometheus metrics
+                published_count = self.vector_store_manager.collection.count_documents(
+                    {"metadata.status": "published"}
+                )
+                draft_count = self.vector_store_manager.collection.count_documents(
+                    {"metadata.status": "draft"}
+                )
             if MONITORING_ENABLED:
                 vector_store_documents_total.labels(status="total").set(total_count)
                 vector_store_documents_total.labels(status="published").set(published_count)
                 vector_store_documents_total.labels(status="draft").set(draft_count)
                 vector_store_health.set(1 if mongodb_available else 0)
-            
             return {
-                "status": HealthStatus.HEALTHY if mongodb_available else HealthStatus.UNHEALTHY,
+                "status": HealthStatus.HEALTHY if mongodb_available else HealthStatus.DEGRADED,
+                "class": "info",
                 "mongodb_available": mongodb_available,
                 "document_counts": {
                     "total": total_count,
                     "published": published_count,
                     "draft": draft_count,
                 },
-                "check_duration_seconds": check_duration,
+                "check_duration_seconds": time.time() - start_time,
             }
         except Exception as e:
-            logger.error(f"Vector store health check failed: {e}", exc_info=True)
-            return {
-                "status": HealthStatus.UNHEALTHY,
-                "error": str(e),
-                "mongodb_available": False,
-            }
-    
-    def check_llm_connection(self) -> Dict[str, Any]:
-        """Check LLM API connection health."""
-        try:
-            import os
-            google_api_key = os.getenv("GOOGLE_API_KEY")
-            
-            if not google_api_key:
-                return {
-                    "status": HealthStatus.UNHEALTHY,
-                    "error": "GOOGLE_API_KEY not configured",
-                }
-            
-            # Don't expose minimum length requirements or validation logic
-            # Just check if key exists
-            return {
-                "status": HealthStatus.HEALTHY,
-                "api_key_configured": True,
-            }
-        except Exception as e:
-            logger.error(f"LLM health check failed: {e}", exc_info=True)
-            return {
-                "status": HealthStatus.UNHEALTHY,
-                "error": str(e),
-            }
-    
+            logger.error("Vector store info check failed: %s", e, exc_info=True)
+            return {"status": HealthStatus.DEGRADED, "class": "info", "error": str(e)}
+
     def check_cache(self) -> Dict[str, Any]:
-        """Check cache health and statistics."""
         try:
             from backend.cache_utils import query_cache
-            
+
             cache_stats = query_cache.stats()
-            
+            max_size = cache_stats.get("max_size", 1000) or 1000
             return {
                 "status": HealthStatus.HEALTHY,
+                "class": "info",
                 "cache_size": cache_stats.get("size", 0),
-                "cache_max_size": cache_stats.get("max_size", 1000),
-                "cache_utilization": cache_stats.get("size", 0) / cache_stats.get("max_size", 1000),
+                "cache_max_size": max_size,
+                "cache_utilization": cache_stats.get("size", 0) / max_size,
             }
         except Exception as e:
-            logger.error(f"Cache health check failed: {e}", exc_info=True)
-            return {
-                "status": HealthStatus.DEGRADED,
-                "error": str(e),
-            }
-    
-    def get_comprehensive_health(self) -> Dict[str, Any]:
-        """
-        Perform comprehensive health check of all services.
-        
-        Returns:
-            Dictionary with health status of all components
-        """
-        start_time = time.time()
-        
-        vector_store_health = self.check_vector_store()
-        llm_health = self.check_llm_connection()
-        cache_health = self.check_cache()
-        
-        # Determine overall health status
-        all_healthy = all(
-            service["status"] == HealthStatus.HEALTHY
-            for service in [vector_store_health, llm_health]
-        )
-        
-        any_unhealthy = any(
-            service["status"] == HealthStatus.UNHEALTHY
-            for service in [vector_store_health, llm_health]
-        )
-        
-        if any_unhealthy:
-            overall_status = HealthStatus.UNHEALTHY
-        elif not all_healthy:
-            overall_status = HealthStatus.DEGRADED
-        else:
-            overall_status = HealthStatus.HEALTHY
-        
-        total_duration = time.time() - start_time
-        
-        result = {
-            "status": overall_status.value,
-            "timestamp": datetime.utcnow().isoformat(),
-            "check_duration_seconds": total_duration,
-            "services": {
-                "vector_store": vector_store_health,
-                "llm": llm_health,
-                "cache": cache_health,
-            },
-        }
-        
-        self._last_check_time = datetime.utcnow()
-        self._last_check_result = result
-        
-        return result
-    
-    def get_liveness(self) -> Dict[str, Any]:
-        """
-        Simple liveness check - returns healthy if the service is running.
-        """
-        return {
-            "status": HealthStatus.HEALTHY.value,
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-    
-    def get_readiness(self) -> Dict[str, Any]:
-        """
-        Readiness check - returns healthy if the service is ready to accept traffic.
-        """
-        # Quick check of critical dependencies
-        vector_store_health = self.check_vector_store()
-        llm_health = self.check_llm_connection()
-        
+            return {"status": HealthStatus.DEGRADED, "class": "info", "error": str(e)}
+
+    def _set_dep_metric(self, name: str, dep_class: str, status: str) -> None:
+        if not MONITORING_ENABLED:
+            return
+        value = 1 if status == HealthStatus.HEALTHY else 0
+        try:
+            dependency_health.labels(name=name, dep_class=dep_class).set(value)
+        except Exception:
+            pass
+
+    async def get_readiness(self) -> Dict[str, Any]:
+        mongo = await self.ping_mongo()
+        redis = await self.ping_redis()
+        self._set_dep_metric("mongo", "critical", mongo["status"])
+        self._set_dep_metric("redis", "critical", redis["status"])
         ready = (
-            vector_store_health["status"] != HealthStatus.UNHEALTHY
-            and llm_health["status"] != HealthStatus.UNHEALTHY
+            mongo["status"] == HealthStatus.HEALTHY
+            and redis["status"] == HealthStatus.HEALTHY
         )
-        
         return {
             "status": HealthStatus.HEALTHY.value if ready else HealthStatus.UNHEALTHY.value,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": _iso(),
             "ready": ready,
+            "critical": {"mongo": mongo, "redis": redis},
         }
-    
-    def get_public_health(self) -> Dict[str, Any]:
-        """
-        Get sanitized public health status (no sensitive information).
-        For public access - does not expose document counts, cache stats, or validation logic.
-        """
-        comprehensive = self.get_comprehensive_health()
-        
-        # Return only status and timestamp - no internal details
+
+    async def get_public_readiness(self) -> Dict[str, Any]:
+        readiness = await self.get_readiness()
         return {
-            "status": comprehensive["status"],
-            "timestamp": comprehensive["timestamp"],
+            "status": readiness["status"],
+            "timestamp": readiness["timestamp"],
+            "ready": readiness["ready"],
         }
-    
-    def get_public_readiness(self) -> Dict[str, Any]:
-        """
-        Get sanitized readiness status (no sensitive information).
-        """
-        readiness = self.get_readiness()
-        
-        # Return only status and timestamp - no internal details
+
+    async def get_comprehensive_health(self) -> Dict[str, Any]:
+        start = time.time()
+        mongo, redis = await asyncio.gather(self.ping_mongo(), self.ping_redis())
+        degraded = await asyncio.gather(
+            self._cached_probe("gemini", self.check_gemini),
+            self._cached_probe("infinity", self.check_infinity),
+            self._cached_probe("ollama", self.check_ollama),
+            self._cached_probe("payload", self.check_payload),
+            self._cached_probe("litecoin_space", self.check_litecoin_space),
+            self._cached_probe("redis_stack", self.check_redis_stack),
+        )
+        names = ("gemini", "infinity", "ollama", "payload", "litecoin_space", "redis_stack")
+        degraded_map = dict(zip(names, degraded))
+        info = {
+            "vector_store": self.check_vector_store(),
+            "in_process_cache": self.check_cache(),
+            "langsmith_configured": bool(os.getenv("LANGCHAIN_API_KEY")),
+        }
+
+        critical_ok = mongo["status"] == HealthStatus.HEALTHY and redis["status"] == HealthStatus.HEALTHY
+        any_degraded = any(
+            d.get("status") == HealthStatus.DEGRADED and not d.get("skipped")
+            for d in degraded_map.values()
+        )
+        if not critical_ok:
+            overall = HealthStatus.UNHEALTHY
+        elif any_degraded:
+            overall = HealthStatus.DEGRADED
+        else:
+            overall = HealthStatus.HEALTHY
+
+        self._set_dep_metric("mongo", "critical", mongo["status"])
+        self._set_dep_metric("redis", "critical", redis["status"])
+        for name, result in degraded_map.items():
+            self._set_dep_metric(name, "degraded", result.get("status", HealthStatus.UNKNOWN))
+
+        result = {
+            "status": overall.value,
+            "timestamp": _iso(),
+            "check_duration_seconds": time.time() - start,
+            "ready": critical_ok,
+            "critical": {"mongo": mongo, "redis": redis},
+            "degraded": degraded_map,
+            "info": info,
+        }
+        self._last_check_time = _utcnow()
+        self._last_check_result = result
+        return result
+
+    def get_liveness(self) -> Dict[str, Any]:
+        return {"status": HealthStatus.HEALTHY.value, "timestamp": _iso()}
+
+    async def get_public_health(self) -> Dict[str, Any]:
+        readiness = await self.get_readiness()
         return {
             "status": readiness["status"],
             "timestamp": readiness["timestamp"],
         }
 
 
-# Global health checker instance
-# Will be initialized with global VectorStoreManager instance by main.py
 _health_checker: Optional[HealthChecker] = None
 
-def set_global_vector_store_manager(vector_store_manager: VectorStoreManager):
-    """
-    Set the global VectorStoreManager instance for the health checker.
-    Called by main.py during application startup to avoid creating new connection pools.
-    """
-    global _health_checker
-    _health_checker = HealthChecker(vector_store_manager=vector_store_manager)
-    logger.info("Health checker initialized with global VectorStoreManager instance")
 
-def _get_health_checker() -> HealthChecker:
-    """Get health checker instance, creating default if not set."""
+def set_global_vector_store_manager(vector_store_manager: VectorStoreManager) -> None:
     global _health_checker
     if _health_checker is None:
-        logger.warning("Health checker not initialized with global instance, creating default")
+        _health_checker = HealthChecker(vector_store_manager=vector_store_manager)
+    else:
+        _health_checker.set_vector_store_manager(vector_store_manager)
+    logger.info("Health checker initialized with shared VectorStoreManager")
+
+
+def _get_health_checker() -> HealthChecker:
+    global _health_checker
+    if _health_checker is None:
+        logger.warning("Health checker created without VectorStoreManager (info probes only)")
         _health_checker = HealthChecker()
     return _health_checker
 
 
-def get_health_status() -> Dict[str, Any]:
-    """Get comprehensive health status."""
-    return _get_health_checker().get_comprehensive_health()
+async def get_health_status() -> Dict[str, Any]:
+    return await _get_health_checker().get_comprehensive_health()
 
 
 def get_liveness() -> Dict[str, Any]:
-    """Get liveness status."""
     return _get_health_checker().get_liveness()
 
 
-def get_readiness() -> Dict[str, Any]:
-    """Get readiness status."""
-    return _get_health_checker().get_readiness()
-
+async def get_readiness() -> Dict[str, Any]:
+    return await _get_health_checker().get_readiness()

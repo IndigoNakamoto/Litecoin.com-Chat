@@ -25,9 +25,13 @@ const nextConfig: NextConfig = {
   },
   
   async rewrites() {
-    // Use environment variable for backend URL, fallback to localhost for development
-    // Handle empty strings as missing (empty string from Docker build args)
-    const backendUrl = (process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || 'http://localhost:8000');
+    // Server-side rewrite target. In Docker this must be the backend service
+    // name; NEXT_PUBLIC_BACKEND_URL is localhost and is for the browser.
+    const backendUrl = (
+      process.env.BACKEND_INTERNAL_URL?.trim()
+      || process.env.NEXT_PUBLIC_BACKEND_URL?.trim()
+      || 'http://localhost:8000'
+    );
     
     return [
       {

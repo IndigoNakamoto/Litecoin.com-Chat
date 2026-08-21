@@ -213,6 +213,17 @@ class LitecoinSpaceClient:
 
     async def _request(self, path: str) -> httpx.Response:
         """GET with basic retry on 429. Returns the raw Response."""
+        from backend.services.circuit_breaker import CircuitOpen, space_breaker
+
+        async def _do() -> httpx.Response:
+            return await self._request_inner(path)
+
+        try:
+            return await space_breaker.call(_do)
+        except CircuitOpen:
+            raise httpx.ConnectError(f"Litecoin Space circuit open ({path})")
+
+    async def _request_inner(self, path: str) -> httpx.Response:
         for attempt in range(3):
             resp = await self._http.get(path)
             if resp.status_code == 429:

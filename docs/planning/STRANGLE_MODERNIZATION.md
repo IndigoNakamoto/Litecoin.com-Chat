@@ -10,16 +10,100 @@ A full rewrite would lose the parts that already work: LangGraph routing, HMAC C
 
 ## Table of Contents
 
-1. [What is holding the system back](#what-is-holding-the-system-back)
-2. [Rebuild philosophy](#rebuild-philosophy)
-3. [Workstream A — Operational workflow](#workstream-a--operational-workflow)
-4. [Workstream B — Health](#workstream-b--health)
-5. [Workstream C — Graph and RAG structure](#workstream-c--graph-and-rag-structure)
-6. [Suggested sequence](#suggested-sequence)
-7. [What we will not rebuild](#what-we-will-not-rebuild)
-8. [First slice](#first-slice)
-9. [Build on a second machine](#build-on-a-second-machine)
-10. [Success criteria](#success-criteria)
+1. [As-is architecture](#as-is-architecture)
+2. [What is holding the system back](#what-is-holding-the-system-back)
+3. [Rebuild philosophy](#rebuild-philosophy)
+4. [Workstream A — Operational workflow](#workstream-a--operational-workflow)
+5. [Workstream B — Health](#workstream-b--health)
+6. [Workstream C — Graph and RAG structure](#workstream-c--graph-and-rag-structure)
+7. [Suggested sequence](#suggested-sequence)
+8. [What we will not rebuild](#what-we-will-not-rebuild)
+9. [First slice](#first-slice)
+10. [Build on a second machine](#build-on-a-second-machine)
+11. [Success criteria](#success-criteria)
+
+---
+
+## As-is architecture
+
+Five services today. No shared UI between `frontend/` and `admin-frontend/`. Chat is SSE-only. Retrieval is **FAISS on disk + MongoDB chunks**, not Atlas vector search. Generation is a sidecar after the graph, so LangSmith sees two traces.
+
+**1. System as-is** — contracts and data/external deps. Compare this to the target ASCII in [Rebuild philosophy](#rebuild-philosophy).
+
+```mermaid
+flowchart TB
+    subgraph ingress [Ingress]
+        CF[Cloudflare tunnels]
+    end
+
+    subgraph apps [Browser apps no shared UI]
+        FE[Public chat Next.js 15]
+        AF[Admin UI Next.js 16]
+        CMS[Payload CMS 3.x]
+        GR[Grafana]
+    end
+
+    subgraph api [FastAPI monolith]
+        Chat["POST /api/v1/chat/stream SSE"]
+        Admin[Admin routers Bearer]
+        Webhook["POST /api/v1/sync/payload HMAC"]
+        Graph[LangGraph pre-generation]
+        Pipe[rag_pipeline generate and stream]
+    end
+
+    subgraph data [Data on the box]
+        Mongo[("MongoDB litecoin_rag_db + payload_cms")]
+        Redis[(Redis rate limit cache spend)]
+        Faiss[(FAISS index on disk)]
+    end
+
+    subgraph ext [External]
+        Gemini[Google Gemini]
+        Space[Litecoin Space]
+        Turnstile[Cloudflare Turnstile]
+    end
+
+    CF --> FE
+    CF --> AF
+    CF --> CMS
+    CF --> GR
+    FE -->|"rewrite /chat/api/v1/*"| Chat
+    FE -->|suggested questions REST| CMS
+    AF --> Admin
+    CMS -->|afterChange webhook| Webhook
+    Chat --> Graph
+    Graph --> Pipe
+    Pipe --> Gemini
+    Graph --> Faiss
+    Graph --> Mongo
+    Graph --> Redis
+    Graph --> Space
+    Chat --> Redis
+    Chat --> Turnstile
+    Webhook --> Mongo
+    Webhook --> Faiss
+    CMS --> Mongo
+    Admin --> Redis
+    Admin --> Mongo
+```
+
+**2. RAG path as-is** — 9 nodes, 3 conditional exits. Graph ends at `spend_limit`; `rag_pipeline.astream_query()` synthesizes after `graph.ainvoke()`.
+
+```mermaid
+flowchart LR
+    SN[sanitize_normalize] --> RT[route] --> PC[prechecks]
+    PC -->|early_answer or error| Done[graph END]
+    PC -->|blockchain_lookup| BL[blockchain_lookup] --> Done
+    PC --> SC[semantic_cache]
+    SC -->|hit or error| Done
+    SC --> DC[decompose] --> RV[retrieve]
+    RV -->|error| Done
+    RV --> RP[resolve_parents] --> SL[spend_limit] --> Done
+    Done --> Gen[rag_pipeline astream_query]
+    Gen --> SSE[SSE chunks to frontend]
+```
+
+Most admin already lives under `backend/api/v1/admin/`. `backend/main.py` still owns chat, health, and leftover refresh routes (`refresh-suggested-cache`, `refresh-faiss-index`).
 
 ---
 
@@ -47,14 +131,14 @@ Readiness that counts every vector document is both slow and the wrong signal. A
 
 ### 3. The “brain” is still a god object
 
-The graph in `backend/rag_graph/` is the right shape:
+The graph in `backend/rag_graph/` is the right shape (9 nodes, 3 conditional exits — see [As-is architecture](#as-is-architecture)):
 
 ```
-sanitize → route → prechecks → (FAQ / blockchain / cache)
+sanitize → route → prechecks → (early / blockchain / semantic_cache)
          → decompose → retrieve → parents → spend → END
 ```
 
-Generation, flags, rewriting leftovers, and streaming still live in `backend/rag_pipeline.py` (~1680 lines). `backend/main.py` is another ~1500-line mix of chat, leftover admin routes, and health. Feature flags are scattered `os.getenv` calls. CMS sync is fire-and-forget — the integration blueprint mentions a DLQ and reconciliation job that were never built.
+Generation, flags, rewriting leftovers, and streaming still live in `backend/rag_pipeline.py` (~1680 lines). `backend/main.py` is another ~1500-line mix of chat, leftover refresh routes, and health. Feature flags are scattered `os.getenv` calls. CMS sync is fire-and-forget — the integration blueprint mentions a DLQ and reconciliation job that were never built.
 
 `graph.ainvoke()` runs first, then `astream_query` generates. LangSmith sees a graph trace **and** a separate chain. You cannot ask “why did this answer look like this?” in one place.
 
@@ -87,8 +171,8 @@ Generation, flags, rewriting leftovers, and streaming still live in `backend/rag
          LangGraph (retrieve + generate + tools)
                         │
               ┌─────────┼──────────┬─────────────┐
-           MongoDB    Redis     Job worker    External
-           vectors    cache     (ARQ)         Gemini / Space / Infinity
+           Mongo+FAISS  Redis     Job worker    External
+           docs/index   cache     (ARQ)         Gemini / Space / Infinity
 ```
 
 Keep the hard boundary: **no shared UI between `frontend/` and `admin-frontend/`**. Share **generated API types** from OpenAPI, not components.
@@ -292,7 +376,7 @@ Phases 1–2 are the rebuild we feel every day. Phases 3–5 are the rebuild tha
 
 - **Payload CMS** — it is the right content plane.
 - **Two frontends** — the boundary is a feature, not a bug.
-- **Mongo as vector store + Redis** — fine at this traffic; Atlas later if the Mac Mini cluster plan proceeds.
+- **FAISS + Mongo + Redis** — fine at this traffic; Atlas later if the Mac Mini cluster plan proceeds.
 - **Gemini + local spillover** — the hybrid router is already the right cost model.
 - **Cloudflare tunnels** — keep them; just make tokens a preflight requirement.
 - **The graph node list** — extend it; do not replace it.
@@ -303,15 +387,15 @@ Phases 1–2 are the rebuild we feel every day. Phases 3–5 are the rebuild tha
 
 ## First slice
 
-Start with **health + ops contract**, not RAG:
+Start with **health + ops contract**, not RAG. Implemented on the build machine (2026-08-21):
 
-1. Fix compose healthchecks to `/health/live`.
-2. Rewrite `HealthChecker` as a dependency matrix (critical / degraded / info) using existing service `health_check()` methods.
-3. Make `/health/ready` cheap and correct.
-4. Expand `diagnose-prod.sh` to print that matrix.
-5. Add a non-interactive `preflight` used by `run-prod.sh`.
+1. Compose + Dockerfile healthchecks hit `/health/live`.
+2. `HealthChecker` is a critical / degraded / info matrix and calls existing service `health_check()` methods.
+3. `/health/ready` pings Mongo + Redis (~200ms) and returns 503 when critical deps fail.
+4. `diagnose-prod.sh` prints that matrix (use `ADMIN_TOKEN` for detailed rows).
+5. Non-interactive `scripts/preflight.sh` + `just preflight`. Prod/prod-local scripts fail closed (no `read -p`).
 
-That improves operational workflow and system health without touching retrieval behavior.
+Operator surface: `justfile`. Jobs: ARQ worker + `POST /api/v1/admin/jobs/*`. Pull corpus: `scripts/pull-cms-from-prod.sh` (cms.lite.space → local RAG).
 
 ---
 
@@ -379,3 +463,5 @@ Keep Cloudflare and `.env.docker.prod` / `.env.secrets` only on the Mini. After 
 - [System integration blueprint](../architecture/system_integration_blueprint.md) — outbox / reconciliation design (unfinished)
 - [Prod-local](../deployment/PROD_LOCAL.md) — second-machine production-image gate
 - [Development cycle v2](../DEVELOPMENT_CYCLE_V2.md) — spec → Cursor checklist loop
+- Historical diagrams ([System Architecture Diagram.mmd](../architecture/System%20Architecture%20Diagram.mmd), [component_architecture.mmd](../architecture/component_architecture.mmd), [data_flow_diagram.mmd](../architecture/data_flow_diagram.mmd)) are stale (single frontend, Atlas as vector store, `POST /api/v1/chat`). Use the as-is mermaid above, not those files.
+- Future: Litecoin Research Kit (`/Users/indigo/Dev/lrk`) `/ask` is a browser-side WebGPU assistant. Later it can be a third HTTP client of `POST /api/v1/chat/stream`. Do not merge UIs. Keep the SSE event set stable.

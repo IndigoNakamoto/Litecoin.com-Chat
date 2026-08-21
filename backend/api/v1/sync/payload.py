@@ -341,7 +341,12 @@ async def receive_payload_webhook(request: Request, background_tasks: Background
         if operation == 'delete' or payload_doc.status != 'published':
             # Delete any existing chunks for this document and refresh RAG pipeline
             webhook_operation = 'delete' if operation == 'delete' else 'unpublish'
-            background_tasks.add_task(delete_and_refresh_vector_store, payload_doc.id, webhook_operation)
+            from backend.jobs.enqueue import enqueue_delete
+            try:
+                await enqueue_delete(payload_doc.id, webhook_operation)
+            except Exception as enqueue_error:
+                logger.warning("ARQ enqueue failed, falling back to BackgroundTasks: %s", enqueue_error)
+                background_tasks.add_task(delete_and_refresh_vector_store, payload_doc.id, webhook_operation)
             if operation == 'delete':
                 msg = f"🗑️ DELETE operation: Document ID '{payload_doc.id}' deleted from CMS. Removing embeddings from FAISS and refreshing RAG pipeline."
                 logger.info(msg)
@@ -353,7 +358,12 @@ async def receive_payload_webhook(request: Request, background_tasks: Background
             # Document is published and not deleted, process it
             # Run the processing in the background to avoid blocking the webhook response.
             webhook_operation = 'create' if operation == 'create' else 'update'
-            background_tasks.add_task(process_and_embed_document, payload_doc, webhook_operation)
+            from backend.jobs.enqueue import enqueue_ingest
+            try:
+                await enqueue_ingest(payload_doc.model_dump(mode="json"), webhook_operation)
+            except Exception as enqueue_error:
+                logger.warning("ARQ enqueue failed, falling back to BackgroundTasks: %s", enqueue_error)
+                background_tasks.add_task(process_and_embed_document, payload_doc, webhook_operation)
             msg = f"✅ Processing triggered for published document ID: {payload_doc.id}"
             logger.info(msg)
             return {"status": "processing_triggered", "message": msg, "document_id": payload_doc.id}
@@ -381,8 +391,10 @@ async def webhook_health_check():
         if _global_rag_pipeline and hasattr(_global_rag_pipeline, 'vector_store_manager'):
             vector_store_manager = _global_rag_pipeline.vector_store_manager
         else:
-            # Fallback: create new instance only if global not available
-            vector_store_manager = VectorStoreManager()
+            return {
+                "status": "degraded",
+                "error": "vector_store_manager not injected",
+            }
 
         # Get total document count from MongoDB (documents have 'text' and 'metadata' fields)
         total_count = 0

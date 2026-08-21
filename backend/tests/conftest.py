@@ -123,6 +123,7 @@ def mock_redis():
     redis_mock.hgetall = AsyncMock(return_value={})
     redis_mock.exists = AsyncMock(return_value=0)
     redis_mock.aclose = AsyncMock()
+    redis_mock.ping = AsyncMock(return_value=True)
     
     # Store for test data
     redis_mock._storage = {}
