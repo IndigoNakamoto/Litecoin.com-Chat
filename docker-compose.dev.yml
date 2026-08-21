@@ -50,9 +50,11 @@ services:
       # Note: GOOGLE_API_KEY is loaded from ./backend/.env via env_file above
       - NODE_ENV=development
       - ENVIRONMENT=development
-      # Use Docker service name for Payload CMS (internal port 3000)
-      # This allows backend to connect to Payload CMS inside Docker network
+      # Use Docker service name for Payload CMS (internal port 3000).
+      # env_file sets PAYLOAD_URL=http://localhost:3001 (browser/host). That
+      # is unreachable from this container; fetch prefers PAYLOAD_URL.
       - PAYLOAD_PUBLIC_SERVER_URL=http://payload_cms:3000
+      - PAYLOAD_URL=http://payload_cms:3000
       # Redis connection URL using Docker service name
       - REDIS_URL=redis://redis:6379/0
       # Local TTFT: ungrounded generate. Recreate backend after this change:
@@ -88,6 +90,7 @@ services:
       - NODE_ENV=development
       - REDIS_URL=redis://redis:6379/0
       - PAYLOAD_PUBLIC_SERVER_URL=http://payload_cms:3000
+      - PAYLOAD_URL=http://payload_cms:3000
       - USE_SEARCH_GROUNDING=false
       - HF_HOME=/root/.cache/huggingface
     command: ["arq", "backend.jobs.worker.WorkerSettings"]
