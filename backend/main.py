@@ -501,6 +501,19 @@ if "https://litecoin.com" not in origins:
 if "https://www.litecoin.com" not in origins:
     origins.append("https://www.litecoin.com")
 
+# LRK /ask (website_next) talks to this API cross-origin
+for ask_origin in (
+    "https://litview.space",
+    "https://www.litview.space",
+    "https://next.litview.space",
+    "http://localhost:8787",
+    "http://localhost:8788",
+    "http://127.0.0.1:8787",
+    "http://127.0.0.1:8788",
+):
+    if ask_origin not in origins:
+        origins.append(ask_origin)
+
 # In development, allow all methods and headers for easier debugging
 # Note: Can't use ["*"] with allow_credentials=True, so we allow common localhost ports
 is_dev = os.getenv("ENVIRONMENT", "production").lower() == "development" or os.getenv("DEBUG", "false").lower() == "true"
@@ -1306,7 +1319,14 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
             # Get streaming response from RAG pipeline
             # This will check QueryCache internally, then run RAG pipeline if needed
             async for chunk_data in rag_pipeline_instance.astream_query(request.query, paired_chat_history):
-                if chunk_data["type"] == "blockchain_data":
+                if chunk_data["type"] == "chart_spec":
+                    payload = {
+                        "status": "chart_spec",
+                        "artifact": chunk_data.get("artifact", {}),
+                        "isComplete": False,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+                elif chunk_data["type"] == "blockchain_data":
                     payload = {
                         "status": "blockchain_data",
                         "data_type": chunk_data.get("data_type", "unknown"),

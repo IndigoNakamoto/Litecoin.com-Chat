@@ -464,4 +464,4 @@ Keep Cloudflare and `.env.docker.prod` / `.env.secrets` only on the Mini. After 
 - [Prod-local](../deployment/PROD_LOCAL.md) — second-machine production-image gate
 - [Development cycle v2](../DEVELOPMENT_CYCLE_V2.md) — spec → Cursor checklist loop
 - Historical diagrams ([System Architecture Diagram.mmd](../architecture/System%20Architecture%20Diagram.mmd), [component_architecture.mmd](../architecture/component_architecture.mmd), [data_flow_diagram.mmd](../architecture/data_flow_diagram.mmd)) are stale (single frontend, Atlas as vector store, `POST /api/v1/chat`). Use the as-is mermaid above, not those files.
-- Future: Litecoin Research Kit (`/Users/indigo/Dev/lrk`) `/ask` is a browser-side WebGPU assistant. Later it can be a third HTTP client of `POST /api/v1/chat/stream`. Do not merge UIs. Keep the SSE event set stable.
+- LRK `/ask` is a third HTTP client of `POST /api/v1/chat/stream`. Do not merge UIs. Keep the SSE event set stable and treat `chart_spec` as additive.

@@ -132,3 +132,30 @@ async def test_astream_query_omits_follow_ups_when_no_sources():
     assert event_types == ["sources", "chunk", "metadata", "complete"]
     assert "follow_ups" not in event_types
     pipeline.agenerate_follow_up_questions.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_astream_query_emits_chart_spec_on_early_answer():
+    artifact = {
+        "type": "chart",
+        "chart": {
+            "title": "Realized Price",
+            "unit": "usd",
+            "view": "line",
+            "scale": "linear",
+            "series": [{"path": "realized-price", "label": "Realized Price"}],
+        },
+    }
+    state = {
+        "metadata": {},
+        "early_answer": "Here is a chart.",
+        "early_sources": [],
+        "chart_spec": artifact,
+    }
+    pipeline = make_pipeline(state)
+
+    events = [event async for event in pipeline.astream_query("chart realized price", [])]
+    types = [event["type"] for event in events]
+    assert "chart_spec" in types
+    assert events[types.index("chart_spec")]["artifact"] == artifact
+    assert types.index("chart_spec") < types.index("chunk")

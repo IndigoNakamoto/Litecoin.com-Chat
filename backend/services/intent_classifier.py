@@ -32,6 +32,7 @@ class Intent(Enum):
     THANKS = "thanks"
     FAQ_MATCH = "faq_match"
     BLOCKCHAIN_LOOKUP = "blockchain_lookup"
+    LRK_METRIC = "lrk_metric"
     SEARCH = "search"
 
 
@@ -276,6 +277,21 @@ class IntentClassifier:
         
         # Check for blockchain data lookup (live API queries)
         blockchain_entity = self._detect_blockchain_lookup(query_lower, query)
+        if blockchain_entity and self._is_concrete_blockchain_entity(blockchain_entity):
+            logger.debug(f"Classified as BLOCKCHAIN_LOOKUP: {query[:50]} -> {blockchain_entity}")
+            return Intent.BLOCKCHAIN_LOOKUP, blockchain_entity, None
+
+        # Chart / time-series via LRK. Mixed "explain + chart" stays on SEARCH
+        # so RAG can run and generate attaches a chart_spec.
+        from backend.services.lrk_chart import is_mixed_lrk_question, wants_lrk_chart
+
+        if wants_lrk_chart(query):
+            if is_mixed_lrk_question(query):
+                logger.debug(f"Classified as SEARCH (mixed LRK chart): {query[:50]}")
+                return Intent.SEARCH, None, None
+            logger.debug(f"Classified as LRK_METRIC: {query[:50]}")
+            return Intent.LRK_METRIC, "lrk_metric", None
+
         if blockchain_entity:
             logger.debug(f"Classified as BLOCKCHAIN_LOOKUP: {query[:50]} -> {blockchain_entity}")
             return Intent.BLOCKCHAIN_LOOKUP, blockchain_entity, None
@@ -370,6 +386,11 @@ class IntentClassifier:
         
         return False
     
+    @staticmethod
+    def _is_concrete_blockchain_entity(entity: str) -> bool:
+        """Tx / address / block lookups win over chart routing; keyword stats do not."""
+        return entity.startswith(("tx:", "address:", "block_height:", "block_hash:"))
+
     def _detect_blockchain_lookup(self, query_lower: str, query_raw: str) -> Optional[str]:
         """
         Detect if the query is requesting live blockchain data.

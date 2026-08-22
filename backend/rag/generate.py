@@ -174,5 +174,14 @@ async def generate_answer(pipeline: Any, state: RAGState) -> RAGState:
     )
     state["generated_answer"] = answer
     state["grounding_metadata"] = grounding_meta
+    if not state.get("chart_spec"):
+        try:
+            from backend.services.lrk_chart import maybe_attach_lrk_chart
+
+            chart = await maybe_attach_lrk_chart(pipeline, sanitized_query)
+            if chart is not None:
+                state["chart_spec"] = chart
+        except Exception as exc:
+            logger.warning("LRK chart attach failed: %s", exc, exc_info=True)
     state["metadata"] = metadata
     return state

@@ -57,3 +57,4 @@ class CircuitBreaker:
 space_breaker = CircuitBreaker("litecoin_space")
 infinity_breaker = CircuitBreaker("infinity")
 payload_breaker = CircuitBreaker("payload")
+lrk_breaker = CircuitBreaker("lrk")

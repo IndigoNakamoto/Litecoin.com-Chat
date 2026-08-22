@@ -27,6 +27,7 @@ class TestBlockchainGraphRouting:
             "spend_limit": dummy_node,
             "generate": dummy_node,
             "blockchain_lookup": dummy_node,
+            "lrk_lookup": dummy_node,
         }
         graph = build_rag_graph(nodes)
         assert graph is not None

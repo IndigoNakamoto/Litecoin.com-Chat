@@ -33,9 +33,13 @@ def make_prechecks_node(pipeline: Any):
                     state["intent"] = getattr(intent, "value", str(intent))
                     state["matched_faq"] = matched_faq
 
-                    # Blockchain lookups always proceed (live data, independent of history)
+                    # Blockchain / LRK metric lookups always proceed (live data)
                     if intent == Intent.BLOCKCHAIN_LOOKUP:
                         logger.info(f"Blockchain lookup detected (is_dependent={is_dependent}): {matched_faq}")
+                        state["metadata"] = metadata
+                        return state
+                    if intent == Intent.LRK_METRIC:
+                        logger.info(f"LRK metric lookup detected (is_dependent={is_dependent})")
                         state["metadata"] = metadata
                         return state
 

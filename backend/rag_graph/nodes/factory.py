@@ -12,6 +12,7 @@ from .resolve_parents import make_resolve_parents_node
 from .spend_limit import make_spend_limit_node
 from .generate import make_generate_node
 from .blockchain_lookup import make_blockchain_lookup_node
+from .lrk_lookup import make_lrk_lookup_node
 
 
 def build_nodes(pipeline: Any) -> Dict[str, Callable[..., Any]]:
@@ -32,6 +33,7 @@ def build_nodes(pipeline: Any) -> Dict[str, Callable[..., Any]]:
         "spend_limit": make_spend_limit_node(pipeline),
         "generate": make_generate_node(pipeline),
         "blockchain_lookup": make_blockchain_lookup_node(pipeline),
+        "lrk_lookup": make_lrk_lookup_node(pipeline),
     }
 
 

@@ -66,6 +66,9 @@ class RAGState(TypedDict, total=False):
     blockchain_data: Optional[Dict[str, Any]]
     blockchain_lookup_type: Optional[str]
 
+    # LRK /ask chart artifact (validated series paths only)
+    chart_spec: Optional[Dict[str, Any]]
+
     # Metadata
     metadata: Dict[str, Any]
 

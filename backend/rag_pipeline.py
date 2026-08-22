@@ -1318,6 +1318,9 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             if state.get("early_answer") is not None:
                 sources = state.get("early_sources") or []
 
+                if state.get("chart_spec") is not None:
+                    yield {"type": "chart_spec", "artifact": state["chart_spec"]}
+
                 # Emit structured blockchain data before the text narration
                 if state.get("blockchain_data") is not None:
                     yield {
@@ -1508,6 +1511,18 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                 published_sources,
                 chat_history,
             )
+            if not state.get("chart_spec"):
+                try:
+                    from backend.services.lrk_chart import maybe_attach_lrk_chart
+
+                    chart = await maybe_attach_lrk_chart(self, sanitized_query)
+                    if chart is not None:
+                        state["chart_spec"] = chart
+                except Exception as exc:
+                    logger.warning("LRK chart attach failed in stream: %s", exc, exc_info=True)
+            if state.get("chart_spec") is not None:
+                yield {"type": "chart_spec", "artifact": state["chart_spec"]}
+
             if follow_up_questions:
                 yield {"type": "follow_ups", "questions": follow_up_questions}
 

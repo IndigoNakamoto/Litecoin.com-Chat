@@ -7,6 +7,17 @@ from langgraph.graph import END, StateGraph
 from .state import RAGState
 
 
+def after_prechecks(state: RAGState) -> str:
+    """Route live lookups off the RAG path. Used by tests."""
+    if state.get("early_answer") is not None or state.get("error_message") is not None:
+        return END
+    if state.get("intent") == "blockchain_lookup":
+        return "blockchain_lookup"
+    if state.get("intent") == "lrk_metric":
+        return "lrk_lookup"
+    return "semantic_cache"
+
+
 def build_rag_graph(nodes: Dict[str, Callable[..., Any]]):
     """
     Build and compile a LangGraph graph for the RAG pipeline.
@@ -27,24 +38,24 @@ def build_rag_graph(nodes: Dict[str, Callable[..., Any]]):
     graph.add_node("spend_limit", nodes["spend_limit"])
     graph.add_node("generate", nodes["generate"])
     graph.add_node("blockchain_lookup", nodes["blockchain_lookup"])
+    graph.add_node("lrk_lookup", nodes["lrk_lookup"])
 
     graph.set_entry_point("sanitize_normalize")
     graph.add_edge("sanitize_normalize", "route")
     graph.add_edge("route", "prechecks")
 
-    # After prechecks: early return, blockchain lookup, or continue to semantic cache.
-    def _after_prechecks(state: RAGState) -> str:
-        if state.get("early_answer") is not None or state.get("error_message") is not None:
-            return END
-        if state.get("intent") == "blockchain_lookup":
-            return "blockchain_lookup"
-        return "semantic_cache"
-
+    # After prechecks: early return, live lookup, or continue to semantic cache.
     graph.add_conditional_edges(
-        "prechecks", _after_prechecks,
-        {END: END, "blockchain_lookup": "blockchain_lookup", "semantic_cache": "semantic_cache"},
+        "prechecks", after_prechecks,
+        {
+            END: END,
+            "blockchain_lookup": "blockchain_lookup",
+            "lrk_lookup": "lrk_lookup",
+            "semantic_cache": "semantic_cache",
+        },
     )
     graph.add_edge("blockchain_lookup", END)
+    graph.add_edge("lrk_lookup", END)
 
     # If semantic cache hit, end immediately. Otherwise decompose the query.
     def _after_semantic_cache(state: RAGState) -> str:
