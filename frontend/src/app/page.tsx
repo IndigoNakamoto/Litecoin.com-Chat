@@ -1150,10 +1150,12 @@ export default function Home() {
           )}
         </div>
       )}
-      <div className="flex-1 min-h-0 overflow-hidden relative z-10">
+      <div className="flex-1 min-h-0 overflow-hidden relative z-10 flex flex-col">
         {messages.length === 0 && !streamingMessage && !isLoading ? (
-          <div className="flex items-center justify-center h-full relative z-10">
-            <SuggestedQuestions onQuestionClick={handleSendMessage} />
+          <div className="flex-1 min-h-0 overflow-y-auto relative z-10">
+            <div className="flex min-h-full items-center justify-center py-8">
+              <SuggestedQuestions onQuestionClick={handleSendMessage} />
+            </div>
           </div>
         ) : (
           <ChatWindow 

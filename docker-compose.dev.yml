@@ -57,9 +57,9 @@ services:
       - PAYLOAD_URL=http://payload_cms:3000
       # Redis connection URL using Docker service name
       - REDIS_URL=redis://redis:6379/0
-      # Local TTFT: ungrounded generate. Recreate backend after this change:
+      # Recreate backend after this change:
       # docker compose -f docker-compose.dev.yml up -d --force-recreate backend worker
-      - USE_SEARCH_GROUNDING=false
+      - USE_SEARCH_GROUNDING=true
       - HF_HOME=/root/.cache/huggingface
     depends_on:
       mongodb:
@@ -91,7 +91,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - PAYLOAD_PUBLIC_SERVER_URL=http://payload_cms:3000
       - PAYLOAD_URL=http://payload_cms:3000
-      - USE_SEARCH_GROUNDING=false
+      - USE_SEARCH_GROUNDING=true
       - HF_HOME=/root/.cache/huggingface
     command: ["arq", "backend.jobs.worker.WorkerSettings"]
     depends_on:

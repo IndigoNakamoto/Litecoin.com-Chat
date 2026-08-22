@@ -75,9 +75,7 @@ const InputBox: React.FC<InputBoxProps> = ({
   const isOverLimit = input.length > MAX_QUERY_LENGTH;
 
   return (
-    <div 
-      className="sticky bottom-0 inset-x-0 z-10 mt-4"
-    >
+    <div className="shrink-0 bg-background">
       <div className="mx-auto max-w-4xl px-4 py-4">
         {showConversationActions && onClearConversation && (
           <div className="mb-2 flex items-center justify-between px-2">

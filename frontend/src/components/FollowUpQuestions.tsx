@@ -17,7 +17,7 @@ const FollowUpQuestions: React.FC<FollowUpQuestionsProps> = ({
   }
 
   return (
-    <div className="mt-6">
+    <div className="mt-6 mb-2">
       <p className="text-sm font-medium text-gray-700 mb-3">Ask next</p>
       <div className="flex flex-wrap gap-2">
         {questions.map((question) => (

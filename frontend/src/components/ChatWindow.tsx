@@ -275,7 +275,7 @@ const ChatWindow = forwardRef<ChatWindowRef, ChatWindowProps>(
   }, [pinnedMessageId, children]);
 
     return (
-      <div ref={scrollRef} className="flex flex-col h-full m-4 px-4 md:px-16 py-16 pb-32 overflow-y-auto">
+      <div ref={scrollRef} className="flex flex-col flex-1 min-h-0 mx-4 mt-4 px-4 md:px-16 pt-16 pb-8 overflow-y-auto">
         {children}
         {pinnedMessageId && (
           <div ref={spacerRef} style={{ height: '0px', flexShrink: 0 }} />
