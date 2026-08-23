@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -34,3 +35,28 @@ def test_reindex_requires_admin(monkeypatch):
     http = _jobs_client(monkeypatch)
     response = http.post("/api/v1/admin/jobs/reindex")
     assert response.status_code == 401
+
+
+def test_redis_settings_omits_empty_username(monkeypatch):
+    pytest.importorskip("arq")
+    monkeypatch.setenv("REDIS_URL", "redis://:secret%2Bpass@redis:6379/2")
+    monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+    from backend.jobs.redis_settings import redis_settings_from_env
+
+    settings = redis_settings_from_env()
+    assert settings.host == "redis"
+    assert settings.port == 6379
+    assert settings.database == 2
+    assert settings.username is None
+    assert settings.password == "secret+pass"
+
+
+def test_redis_settings_prefers_raw_password_env(monkeypatch):
+    pytest.importorskip("arq")
+    monkeypatch.setenv("REDIS_URL", "redis://:ignored@redis:6379/0")
+    monkeypatch.setenv("REDIS_PASSWORD", "raw-password")
+    from backend.jobs.redis_settings import redis_settings_from_env
+
+    settings = redis_settings_from_env()
+    assert settings.username is None
+    assert settings.password == "raw-password"

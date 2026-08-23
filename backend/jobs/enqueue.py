@@ -3,19 +3,13 @@
 from __future__ import annotations
 
 import logging
-import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict
+
+from backend.jobs.redis_settings import redis_settings_from_env
 
 logger = logging.getLogger(__name__)
 
 _pool = None
-
-
-def _redis_settings():
-    from arq.connections import RedisSettings
-
-    url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    return RedisSettings.from_dsn(url)
 
 
 async def _get_pool():
@@ -23,7 +17,7 @@ async def _get_pool():
     if _pool is None:
         from arq import create_pool
 
-        _pool = await create_pool(_redis_settings())
+        _pool = await create_pool(redis_settings_from_env("redis://localhost:6379/0"))
     return _pool
 
 

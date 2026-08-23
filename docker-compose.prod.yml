@@ -334,6 +334,9 @@ services:
       mongodb:
         condition: service_healthy
     restart: unless-stopped
+    # Image HEALTHCHECK hits FastAPI /health/live; this process is ARQ.
+    healthcheck:
+      disable: true
 
   # =============================================================================
   # LOCAL RAG SERVICES (High-Performance Local RAG with Cloud Spillover)

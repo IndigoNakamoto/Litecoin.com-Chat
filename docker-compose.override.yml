@@ -43,6 +43,17 @@ services:
       # Internal port is 6379, external host port is 6380
       - REDIS_STACK_URL=redis://${REDIS_PASSWORD_ENCODED:+:${REDIS_PASSWORD_ENCODED}@}redis_stack:6379
 
+  # Worker uses the same Redis/Mongo credentials as backend (ARQ + ingest jobs).
+  worker:
+    env_file:
+      - ./.env.secrets
+    environment:
+      - MONGO_DETAILS=mongodb://${MONGO_INITDB_ROOT_USERNAME_ENCODED:-admin}:${MONGO_INITDB_ROOT_PASSWORD_ENCODED}@mongodb:27017/litecoin_rag_db?authSource=admin
+      - MONGO_URI=mongodb://${MONGO_INITDB_ROOT_USERNAME_ENCODED:-admin}:${MONGO_INITDB_ROOT_PASSWORD_ENCODED}@mongodb:27017/litecoin_rag_db?authSource=admin
+      - REDIS_URL=redis://${REDIS_PASSWORD_ENCODED:+:${REDIS_PASSWORD_ENCODED}@}redis:6379/0
+      - REDIS_STACK_URL=redis://${REDIS_PASSWORD_ENCODED:+:${REDIS_PASSWORD_ENCODED}@}redis_stack:6379
+      - PAYLOAD_URL=http://payload_cms:3000
+
   payload_cms:
     env_file:
       - ./.env.secrets

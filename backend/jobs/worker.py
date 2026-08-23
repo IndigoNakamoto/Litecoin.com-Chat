@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import os
-
+from backend.jobs.redis_settings import redis_settings_from_env
 from backend.jobs.tasks import (
     cleanup_orphans,
     delete_payload_document,
@@ -12,13 +11,6 @@ from backend.jobs.tasks import (
     reindex_vectors,
     reindex_with_faq,
 )
-
-
-def _redis_settings():
-    from arq.connections import RedisSettings
-
-    url = os.getenv("REDIS_URL", "redis://redis:6379/0")
-    return RedisSettings.from_dsn(url)
 
 
 class WorkerSettings:
@@ -30,5 +22,5 @@ class WorkerSettings:
         refresh_suggested_questions,
         cleanup_orphans,
     ]
-    redis_settings = _redis_settings()
+    redis_settings = redis_settings_from_env()
     max_jobs = 4
