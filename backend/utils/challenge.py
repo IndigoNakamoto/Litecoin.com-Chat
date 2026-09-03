@@ -62,7 +62,9 @@ async def generate_challenge(identifier: str) -> Dict[str, Any]:
     """
     # Read settings from Redis with env fallback
     from backend.utils.settings_reader import get_setting_from_redis_or_env
-    from backend.redis_client import get_redis_client
+    # Resolved at call time on purpose: tests patch backend.redis_client, which a
+    # module-level binding would not pick up.
+    from backend.redis_client import get_redis_client  # noqa: F811
     
     redis = await get_redis_client()
     
@@ -270,7 +272,9 @@ async def validate_and_consume_challenge(challenge_id: str, identifier: str) -> 
     """
     # Read settings from Redis with env fallback
     from backend.utils.settings_reader import get_setting_from_redis_or_env
-    from backend.redis_client import get_redis_client
+    # Resolved at call time on purpose: tests patch backend.redis_client, which a
+    # module-level binding would not pick up.
+    from backend.redis_client import get_redis_client  # noqa: F811
     
     redis = await get_redis_client()
     
@@ -360,7 +364,9 @@ async def cleanup_expired_challenges():
     """
     # Read settings from Redis with env fallback
     from backend.utils.settings_reader import get_setting_from_redis_or_env
-    from backend.redis_client import get_redis_client
+    # Resolved at call time on purpose: tests patch backend.redis_client, which a
+    # module-level binding would not pick up.
+    from backend.redis_client import get_redis_client  # noqa: F811
     
     redis = await get_redis_client()
     

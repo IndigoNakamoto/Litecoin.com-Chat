@@ -44,7 +44,6 @@ def client_with_admin(monkeypatch, mock_redis):
     # Set admin token in environment
     monkeypatch.setenv("ADMIN_TOKEN", TEST_ADMIN_TOKEN)
     
-    from backend.main import app
     from backend import dependencies
     from backend import redis_client
     
@@ -150,7 +149,7 @@ async def test_admin_settings_update(client_with_admin, admin_headers, mock_redi
 
 
 @pytest.mark.asyncio
-async def test_admin_redis_stats(client_with_admin, admin_headers, mock_redis):
+async def test_admin_redis_stats(client_with_admin, admin_headers, mock_redis, monkeypatch):
     """Test getting Redis statistics."""
     # Mock Redis scan to return empty (no bans/throttles)
     async def mock_scan(cursor=0, match=None, count=None):
@@ -162,6 +161,15 @@ async def test_admin_redis_stats(client_with_admin, admin_headers, mock_redis):
     mock_redis.scan = mock_scan
     mock_redis.zcard = mock_zcard
     
+    # The endpoint resolves its client through get_redis_client(), so the fixture
+    # only takes effect once that lookup is patched.
+    async def fake_get_redis_client():
+        return mock_redis
+
+    monkeypatch.setattr(
+        "backend.api.v1.admin.redis.get_redis_client", fake_get_redis_client
+    )
+
     response = client_with_admin.get(
         "/api/v1/admin/redis/stats",
         headers=admin_headers

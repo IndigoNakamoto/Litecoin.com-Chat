@@ -64,7 +64,6 @@ async def test_per_identifier_challenge_limit(mock_redis):
     from backend.utils.challenge import generate_challenge
     from backend.utils.settings_reader import get_setting_from_redis_or_env
     from unittest.mock import patch, AsyncMock
-    import time
     
     identifier = "test_identifier_123"
     

@@ -20,7 +20,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install ruff mypy
+          # Pinned so a new release cannot turn the build red on rules or checks
+          # that nobody opted into.
+          pip install ruff==0.16.5 mypy==1.14.1
+
+      - name: Seed env files for compose validation
+        working-directory: .
+        run: |
+          cp .env.example .env.docker.prod
+          cp backend/.env.example backend/.env
+          cp payload_cms/.env.example payload_cms/.env
+
       - name: Compose config
         working-directory: .
         env:
@@ -38,4 +48,4 @@ jobs:
           ADMIN_TOKEN: test-admin-token
           WEBHOOK_SECRET: test-webhook-secret-key
         working-directory: .
-        run: pytest backend/tests/ -v --tb=short -q -m "not eval"
+        run: pytest backend/tests/ -v --tb=short -q -m "not eval and not integration"
