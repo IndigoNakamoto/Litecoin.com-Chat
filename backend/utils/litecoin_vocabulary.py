@@ -39,7 +39,6 @@ LTC_SYNONYM_MAP: Dict[str, str] = {
     "mining algorithm": "scrypt",
     "hashing algorithm": "scrypt",
     "pow": "proof of work",
-    "hashrate": "security",
     "51% attack": "security",
     "double spend": "security",
     "asic": "mining hardware",

@@ -210,8 +210,6 @@ def mock_motor_client(mock_mongo):
 @pytest.fixture
 def mock_llm():
     """THE FINAL WORKING LLM MOCK — NO MORE COROUTINES."""
-    from langchain_core.messages import AIMessage
-
     # Create AIMessage with proper content and metadata for token extraction
     message = AIMessage(
         content="Litecoin was created by Charlie Lee in October 2011 as a faster Bitcoin fork using Scrypt.",
