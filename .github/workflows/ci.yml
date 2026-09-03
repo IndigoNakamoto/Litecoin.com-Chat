@@ -47,8 +47,5 @@ jobs:
           MONGO_URI: mongodb://test
           ADMIN_TOKEN: test-admin-token
           WEBHOOK_SECRET: test-webhook-secret-key
-          # Without this the default is a sentence-transformers model, which the
-          # import of backend.main downloads from HuggingFace during collection.
-          EMBEDDING_MODEL: gemini-embedding-001
         working-directory: .
         run: pytest backend/tests/ -v --tb=short -q -m "not eval and not integration"

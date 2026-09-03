@@ -27,6 +27,25 @@ if not os.getenv("GOOGLE_API_KEY"):
 if not os.getenv("MONGO_URI"):
     os.environ["MONGO_URI"] = "mongodb://test"
 
+# Importing backend.main builds the RAG pipeline at module scope, which embeds a
+# placeholder document and reads MongoDB for real. Both are neutralised here,
+# before any test module triggers that import, so collection never depends on a
+# reachable database or a valid embedding API key.
+#
+# Both spellings are patched on purpose: this file puts the project root and
+# backend/ on sys.path, so "backend.data_ingestion.vector_store_manager" and
+# "data_ingestion.vector_store_manager" are distinct module objects. rag_pipeline
+# imports the latter.
+from langchain_core.embeddings import DeterministicFakeEmbedding
+
+for _vsm_name in (
+    "backend.data_ingestion.vector_store_manager",
+    "data_ingestion.vector_store_manager",
+):
+    _vsm = __import__(_vsm_name, fromlist=["get_embedding_model"])
+    _vsm.get_embedding_model = lambda: DeterministicFakeEmbedding(size=768)
+    _vsm._get_shared_mongo_client = lambda: None
+
 import pytest
 import asyncio
 import json
