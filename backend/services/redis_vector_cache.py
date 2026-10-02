@@ -195,7 +195,11 @@ class RedisVectorCache:
             
             # Create HNSW vector index
             from redis.commands.search.field import VectorField, TextField
-            from redis.commands.search.index_definition import IndexDefinition, IndexType
+
+            try:  # redis-py >= 6 (snake_case module)
+                from redis.commands.search.index_definition import IndexDefinition, IndexType
+            except ImportError:  # redis-py 5.x ships the camelCase module name
+                from redis.commands.search.indexDefinition import IndexDefinition, IndexType
             
             schema = [
                 VectorField(

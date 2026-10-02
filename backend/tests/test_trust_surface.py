@@ -31,7 +31,8 @@ def _doc(**md) -> Document:
 
 
 def test_serialize_sources_dedupes_by_payload_id_and_skips_drafts(monkeypatch):
-    monkeypatch.setenv("ARTICLE_PUBLIC_BASE_URL", "https://cms.example")
+    monkeypatch.setenv("ARTICLE_PUBLIC_BASE_URL", "https://chat.example/chat")
+    monkeypatch.delenv("ARTICLE_PUBLIC_PATH_TEMPLATE", raising=False)
     docs = [
         _doc(payload_id="a", doc_title="A", slug="a", updated_at="2026-01-01T00:00:00+00:00"),
         _doc(payload_id="a", doc_title="A", slug="a"),  # second chunk, same article
@@ -40,10 +41,48 @@ def test_serialize_sources_dedupes_by_payload_id_and_skips_drafts(monkeypatch):
     ]
     chips = serialize_sources_for_client(docs)
     assert [c["payload_id"] for c in chips] == ["a", "c"]
-    assert chips[0]["url"] == "https://cms.example/articles/a"
+    # Reader URL is keyed by payload_id (most articles have no slug)
+    assert chips[0]["url"] == "https://chat.example/chat/articles/a"
+    assert chips[0]["kind"] == "article"
     assert chips[0]["updated_at"] == "2026-01-01T00:00:00+00:00"
-    assert chips[1]["url"] is None
+    assert chips[1]["url"] == "https://chat.example/chat/articles/c"
     assert all("page_content" not in c for c in chips)
+
+
+def test_serialize_sources_link_precedence_and_kind(monkeypatch):
+    monkeypatch.setenv("ARTICLE_PUBLIC_BASE_URL", "https://chat.example/chat")
+    monkeypatch.delenv("ARTICLE_PUBLIC_PATH_TEMPLATE", raising=False)
+    chips = serialize_sources_for_client(
+        [
+            _doc(payload_id="lc", source_url="https://litecoin.com/learning-center/mweb"),
+            _doc(payload_id="yt", source_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+            _doc(payload_id="pin", pinned_url="https://x/notice", source_url="https://ignored"),
+            _doc(payload_id="own"),
+        ]
+    )
+    by = {c["payload_id"]: c for c in chips}
+    assert by["lc"]["url"] == "https://litecoin.com/learning-center/mweb" and by["lc"]["kind"] == "external"
+    assert by["yt"]["kind"] == "youtube" and by["yt"]["video_id"] == "dQw4w9WgXcQ"
+    assert by["pin"]["url"] == "https://x/notice"
+    assert by["own"]["url"] == "https://chat.example/chat/articles/own" and by["own"]["kind"] == "article"
+    # every chip also carries its own reader URL so the UI can offer "read in hub"
+    assert by["lc"]["reader_url"] == "https://chat.example/chat/articles/lc"
+
+
+def test_serialize_sources_caps_chip_count_in_relevance_order(monkeypatch):
+    monkeypatch.setenv("SOURCE_CHIPS_MAX", "3")
+    docs = [_doc(payload_id=str(i), doc_title=f"T{i}") for i in range(8)]
+    chips = serialize_sources_for_client(docs)
+    assert [c["payload_id"] for c in chips] == ["0", "1", "2"]
+    assert len(serialize_sources_for_client(docs, max_chips=0)) == 8
+
+
+def test_serialize_sources_no_public_base_means_no_reader_links(monkeypatch):
+    monkeypatch.delenv("ARTICLE_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.setenv("PAYLOAD_PUBLIC_SERVER_URL", "https://cms.test")
+    chips = serialize_sources_for_client([_doc(payload_id="x"), _doc(payload_id="y", source_url="https://a.b/c")])
+    assert chips[0]["url"] is None and chips[0]["reader_url"] is None
+    assert chips[1]["url"] == "https://a.b/c"
 
 
 def test_serialize_sources_stale_flag_uses_review_window():
@@ -150,6 +189,90 @@ async def test_astream_retrieval_failure_is_error_not_abstain():
     events = [e async for e in _pipeline(state, grounding=True).astream_query("q", [])]
     assert events[1]["content"] == "ERR"
     assert events[-1]["abstained"] is False
+
+
+@pytest.mark.parametrize(
+    "query,related",
+    [
+        ("What is MWEB?", True),
+        ("How do I enable Litecoin's built-in staking rewards?", True),
+        ("How does merged mining work?", True),
+        ("Is a hardware wallet safe?", True),
+        ("Look up ltc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4abc", True),
+        ("What is the best recipe for sourdough bread?", False),
+        ("Best hotels in Paris", False),
+        ("Write a poem about cats", False),
+        ("What was discussed in the Foundation board meeting last Tuesday?", True),  # "foundation" is topical
+    ],
+)
+def test_is_litecoin_related(query, related):
+    from backend.utils.litecoin_vocabulary import is_litecoin_related
+
+    assert is_litecoin_related(query) is related
+
+
+@pytest.mark.asyncio
+async def test_astream_off_topic_low_similarity_abstains_even_with_grounding():
+    """Web tier is only for Litecoin-related gaps."""
+    from backend.rag_pipeline import KB_ABSTAIN_RESPONSE
+
+    docs = [_doc()]
+    state = {"metadata": {}, "context_docs": docs, "published_sources": docs, "low_similarity": True,
+             "sanitized_query": "What is the best recipe for sourdough bread?"}
+    events = [e async for e in _pipeline(state, grounding=True).astream_query("What is the best recipe for sourdough bread?", [])]
+    assert events[1]["content"] == KB_ABSTAIN_RESPONSE
+    assert events[-1]["abstained"] is True
+
+
+@pytest.mark.asyncio
+async def test_generate_answer_skips_low_similarity_off_topic_and_runs_web_tier_on_topic(monkeypatch):
+    from backend.rag.generate import generate_answer
+
+    class _Chain:
+        def __init__(self):
+            self.calls = []
+
+        async def ainvoke(self, inputs):
+            self.calls.append(inputs)
+            return MagicMock(content="## From the web (unverified)\nLitecoin has no staking.", response_metadata={})
+
+    chain = _Chain()
+    p = MagicMock()
+    p.document_chain_simple = chain
+    p._select_document_chain = lambda _s: (chain, "simple", "instr")
+    p.search_grounding_enabled = True
+    p.monitoring_enabled = False
+    p.query_cache = None
+    p.use_redis_cache = False
+    p.semantic_cache = None
+    p._extract_grounding_metadata = lambda _r: None
+    p._find_missing_query_terms = lambda _q, _d: []
+    monkeypatch.setattr("backend.rag_pipeline.ABSTAIN_BEFORE_SEARCH", False)
+
+    docs = [_doc()]
+    # off-topic: no generation at all
+    st = await generate_answer(p, {"metadata": {}, "context_docs": docs, "published_sources": docs, "low_similarity": True, "sanitized_query": "best sourdough recipe"})  # type: ignore[arg-type]
+    assert st.get("generated_answer") is None and chain.calls == []
+
+    # on-topic: flagged web search with empty context, weak chunks not reported as sources
+    st = await generate_answer(p, {"metadata": {}, "context_docs": docs, "published_sources": docs, "low_similarity": True, "sanitized_query": "Does Litecoin have staking rewards?"})  # type: ignore[arg-type]
+    assert st["generated_answer"].startswith("## From the web")
+    assert chain.calls[0]["context"] == ""
+    assert "does NOT cover" in chain.calls[0]["context_coverage_note"]
+    assert st["metadata"]["is_grounded"] is True
+    assert st["published_sources"] == []
+
+
+def test_decompose_gate_only_fires_for_real_compounds():
+    from backend.rag_graph.nodes.decompose import _COMPOUND_PATTERN as P
+
+    assert not P.search("How does Litecoin differ from Bitcoin and why does it matter?") is None  # second clause -> compound
+    assert P.search("What are the pros and cons of MWEB?") is None
+    assert P.search("How does merged mining with Dogecoin work?") is None
+    assert P.search("Litecoin and Bitcoin block times") is None
+    assert P.search("Does Litecoin support RBF, CPFP, and child keys?") is not None
+    assert P.search("What is MWEB? And how do I use it?") is not None
+    assert P.search("Explain MWEB as well as LitVM") is not None
 
 
 @pytest.mark.asyncio

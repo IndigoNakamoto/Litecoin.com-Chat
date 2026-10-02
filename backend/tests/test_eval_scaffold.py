@@ -54,9 +54,12 @@ def test_golden_runner_scoring_logic():
     r = score_question({"id": "b", "query": "q", "expected_behavior": "answer", "expected_source_substrings": ["halving"]}, "ans", pub, {}, 10)
     assert r.behavior_ok and not r.citation_ok and not r.passed
 
-    # answer with no sources at all
-    r = score_question({"id": "c", "query": "q", "expected_behavior": "answer", "expected_source_substrings": []}, "ans", [], {}, 10)
+    # answer with required citation but no sources at all
+    r = score_question({"id": "c", "query": "q", "expected_behavior": "answer", "expected_source_substrings": [], "requires_citation": True}, "ans", [], {}, 10)
     assert not r.citation_ok
+    # known-gap answer (web tier): no substrings, no citation required, guards only
+    r = score_question({"id": "c2", "query": "q", "expected_behavior": "answer", "expected_source_substrings": [], "must_not_contain": ["staking rewards are paid"]}, "Litecoin has no staking.", [], {"is_grounded": True}, 10)
+    assert r.passed
 
     # abstain detection from metadata or canonical text
     assert classify_actual_behavior("x", [], {"abstained": True}) == "abstain"

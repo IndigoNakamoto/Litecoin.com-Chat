@@ -21,7 +21,12 @@ from langchain.chains import create_history_aware_retriever
 from data_ingestion.vector_store_manager import VectorStoreManager
 from cache_utils import query_cache, SemanticCache
 from backend.utils.input_sanitizer import sanitize_query_input, detect_prompt_injection
-from backend.utils.litecoin_vocabulary import normalize_ltc_keywords, expand_ltc_entities, LTC_ENTITY_EXPANSIONS
+from backend.utils.litecoin_vocabulary import (
+    LTC_ENTITY_EXPANSIONS,
+    expand_ltc_entities,
+    is_litecoin_related,
+    normalize_ltc_keywords,
+)
 from fastapi import HTTPException
 from langchain_google_genai import HarmCategory, HarmBlockThreshold
 from backend.rag_graph.graph import build_rag_graph
@@ -1287,7 +1292,10 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             retrieval_failed = bool(state.get("retrieval_failed", False))
             low_similarity = bool(state.get("low_similarity", False))
 
-            if state.get("generated_answer") is None and published_sources and not low_similarity:
+            # generate_answer applies the source hierarchy itself: on a low-confidence
+            # match it either runs the flagged web tier (Litecoin-related + grounding on)
+            # or returns without an answer so we abstain below.
+            if state.get("generated_answer") is None and published_sources:
                 from backend.rag.generate import generate_answer
 
                 state = await generate_answer(self, state)
@@ -1297,7 +1305,7 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                 metadata.setdefault("duration_seconds", time.time() - start_time)
                 return (
                     state.get("generated_answer") or "",
-                    state.get("published_sources") or published_sources,
+                    [] if low_similarity else (state.get("published_sources") or published_sources),
                     metadata,
                 )
 
@@ -1389,10 +1397,11 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
 
                 yield {"type": "sources", "sources": sources}
                 answer_text = state.get("early_answer") or ""
-                for i, char in enumerate(answer_text):
-                    yield {"type": "chunk", "content": char}
-                    if i % 10 == 0:
-                        await asyncio.sleep(0.001)
+                # Replay in ~64-char chunks: still renders progressively, without one
+                # SSE event per character.
+                for i in range(0, len(answer_text), 64):
+                    yield {"type": "chunk", "content": answer_text[i : i + 64]}
+                    await asyncio.sleep(0)
                 follow_up_questions = await self.agenerate_follow_up_questions(
                     query_text,
                     answer_text,
@@ -1423,8 +1432,15 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             low_similarity = bool(state.get("low_similarity", False))
 
             # Source hierarchy: KB -> (live data handled upstream) -> flagged web search -> abstain.
+            # The web tier is only for Litecoin-related gaps; an off-topic question with a
+            # weak KB match abstains immediately instead of being answered from the web.
             kb_insufficient = retrieval_failed or not published_sources or low_similarity
-            search_as_last_tier = self.search_grounding_enabled and not ABSTAIN_BEFORE_SEARCH and not retrieval_failed
+            on_topic = is_litecoin_related(state.get("sanitized_query") or query_text)
+            search_as_last_tier = (
+                self.search_grounding_enabled and not ABSTAIN_BEFORE_SEARCH and not retrieval_failed and on_topic
+            )
+            if kb_insufficient and not on_topic and not retrieval_failed:
+                logger.info("Off-topic low-confidence query → abstain without web search: %r", (query_text or "")[:80])
             if kb_insufficient and not search_as_last_tier:
                 abstain_reason = (
                     "retrieval_failed" if retrieval_failed
@@ -1526,11 +1542,21 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                         from backend.rag.timing import ms_since_t0
 
                         t_first = ms_since_t0()
+                        stages = " ".join(
+                            f"{k[2:-3]}={metadata[k]:.0f}"
+                            for k in (
+                                "t_embed_ms", "t_decompose_ms", "t_vector_bm25_ms", "t_sparse_ms",
+                                "t_cross_encoder_ms", "t_parents_ms", "t_retrieve_total_ms",
+                            )
+                            if isinstance(metadata.get(k), (int, float))
+                        )
                         logger.info(
-                            "chat_ttft_ms t_route_end=%.0f t_retrieve_end=%.0f t_first_token=%.0f query=%r",
+                            "chat_ttft_ms t_route_end=%.0f t_retrieve_end=%.0f t_first_token=%.0f [%s] ce_skip=%s query=%r",
                             metadata.get("t_route_end_ms") or -1,
                             metadata.get("t_retrieve_end_ms") or -1,
                             t_first if t_first is not None else -1,
+                            stages,
+                            metadata.get("cross_encoder_skipped"),
                             (sanitized_query or "")[:80],
                         )
                         logged_first_token = True

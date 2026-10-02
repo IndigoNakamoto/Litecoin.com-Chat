@@ -154,6 +154,9 @@ services:
     environment:
       # Production-specific overrides
       - NODE_ENV=production
+      # Server-side fetch target for the public article reader (/chat/articles/[id]).
+      # NEXT_PUBLIC_PAYLOAD_URL is the browser-facing host; inside the network use the service name.
+      - PAYLOAD_INTERNAL_URL=http://payload_cms:3000
     deploy:
       resources:
         limits:
@@ -354,6 +357,12 @@ services:
     environment:
       - NODE_ENV=production
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      # The image is built from ./backend only; reindex / cleanup jobs shell out to
+      # repo-level scripts, so mount them in. The FAISS index must be the same volume
+      # the backend reads, or a worker reindex is invisible to the API.
+      - ./scripts:/app/scripts:ro
+      - faiss_index_data:/app/backend/faiss_index_1024
     command: ["arq", "backend.jobs.worker.WorkerSettings"]
     depends_on:
       redis:

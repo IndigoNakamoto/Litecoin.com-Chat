@@ -133,13 +133,17 @@ def score_question(q: Dict[str, Any], answer: str, sources: Sequence[Any], metad
     citation_ok = True
     note = ""
     if expected == "answer":
+        needles = [s.lower() for s in q.get("expected_source_substrings") or []]
         published = [d for d in sources if (getattr(d, "metadata", None) or {}).get("status") in (None, "published")]
-        if not published:
-            citation_ok = False
-            note = "no cited sources"
-        else:
-            needles = [s.lower() for s in q.get("expected_source_substrings") or []]
-            if needles:
+        # A question with expected substrings must be answered from cited KB sources.
+        # A question with none is a known KB gap whose correct path is the web tier
+        # (unverified, no KB chips); it only needs `must_not_contain` guards.
+        requires_citation = bool(needles) or bool(q.get("requires_citation"))
+        if requires_citation:
+            if not published:
+                citation_ok = False
+                note = "no cited sources"
+            elif needles:
                 blob = _source_blob(published)
                 if not any(n in blob for n in needles):
                     citation_ok = False

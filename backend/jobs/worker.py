@@ -24,6 +24,7 @@ from backend.jobs.maintenance import (
     flag_stale_articles,
     ingest_doc_sources,
     reconcile_embeddings,
+    reingest_all_published,
     run_golden_eval_job,
 )
 from backend.jobs.redis_settings import redis_settings_from_env
@@ -53,6 +54,7 @@ class WorkerSettings:
         func(cluster_gap_candidates, name="cluster_gap_candidates", timeout=1200),
         func(reconcile_embeddings, name="reconcile_embeddings", timeout=1200),
         func(ingest_doc_sources, name="ingest_doc_sources", timeout=3600),
+        func(reingest_all_published, name="reingest_all_published", timeout=600),
     ]
     cron_jobs = (
         []

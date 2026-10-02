@@ -380,14 +380,20 @@ questions:
     expected_behavior: abstain
     expected_source_substrings: []
 
-  - id: abstain-obscure-internal
+  # Litecoin-related questions the KB does not cover take the web tier (unverified) rather
+  # than abstaining; only off-topic low-confidence questions abstain outright. These two
+  # therefore expect an answer with no KB citations, and guard against the two ways the
+  # model could get it wrong: inventing a meeting, or claiming staking exists.
+  - id: gap-obscure-internal
     category: abstain
     query: What was discussed in the Litecoin Foundation board meeting last Tuesday?
-    expected_behavior: abstain
+    expected_behavior: answer
     expected_source_substrings: []
+    must_not_contain: ["the board discussed", "minutes show", "agenda included"]
 
-  - id: abstain-nonexistent-feature
+  - id: gap-nonexistent-feature
     category: abstain
     query: How do I enable Litecoin's built-in staking rewards?
-    expected_behavior: abstain
+    expected_behavior: answer
     expected_source_substrings: []
+    must_not_contain: ["enable staking", "to stake your litecoin", "staking rewards are paid"]

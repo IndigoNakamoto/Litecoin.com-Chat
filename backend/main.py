@@ -1271,17 +1271,15 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                         if source_chips:
                             yield f"data: {json.dumps({'status': 'sources', 'sources': source_chips, 'isComplete': False})}\n\n"
                         
-                        # Stream cached response character by character for consistent UX
-                        for i, char in enumerate(answer):
+                        # Stream cached response in ~64-char chunks (progressive, not 1 event/char)
+                        for i in range(0, len(answer), 64):
                             payload = {
                                 "status": "streaming",
-                                "chunk": char,
+                                "chunk": answer[i : i + 64],
                                 "isComplete": False
                             }
                             yield f"data: {json.dumps(payload)}\n\n"
-                            # Small delay to control streaming speed
-                            if i % 10 == 0:  # Yield control every 10 characters
-                                await asyncio.sleep(0.001)
+                            await asyncio.sleep(0)
 
                         follow_up_questions = await rag_pipeline_instance.agenerate_follow_up_questions(
                             request.query,

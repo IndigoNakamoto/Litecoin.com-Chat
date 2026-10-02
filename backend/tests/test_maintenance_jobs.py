@@ -125,7 +125,7 @@ async def test_flag_stale_articles_silent_when_nothing_stale(monkeypatch, no_ale
 @pytest.mark.asyncio
 async def test_cluster_gap_candidates_merges_and_drafts(monkeypatch, no_alerts):
     pending = [
-        {"_id": "c1", "user_question": "What is LitVM?", "question_embedding": [1.0, 0.0], "question_frequency": 1, "generated_answer": "LitVM is ...", "topic_cluster": "litvm", "grounding_sources": [{"url": "https://x"}]},
+        {"_id": "c1", "user_question": "What is LitVM on Litecoin?", "question_embedding": [1.0, 0.0], "question_frequency": 1, "generated_answer": "LitVM is ...", "topic_cluster": "litvm", "grounding_sources": [{"url": "https://x"}]},
         {"_id": "c2", "user_question": "Explain LitVM please", "question_embedding": [0.99, 0.05], "question_frequency": 1, "generated_answer": "short"},
         {"_id": "c3", "user_question": "How do I accept LTC in Shopify?", "question_embedding": [0.0, 1.0], "question_frequency": 1, "generated_answer": "..."},
     ]
@@ -155,6 +155,36 @@ async def test_cluster_gap_candidates_merges_and_drafts(monkeypatch, no_alerts):
     assert article_update[2]["$set"]["payload_article_id"] == "article-123"
     # the merchant question has frequency 1 -> no draft
     assert len(created) == 1
+
+
+@pytest.mark.asyncio
+async def test_cluster_gap_candidates_skips_junk_even_with_demand(monkeypatch, no_alerts):
+    """Regression for the first-night drafts: 'Live Agent' and a debit-card question got CMS drafts."""
+    pending = [
+        {"_id": "j1", "user_question": "Live Agent", "question_embedding": [1.0, 0.0], "question_frequency": 5, "generated_answer": "...", "topic_cluster": None},
+        {"_id": "j2", "user_question": "Can you transfer litecoin money to my regular debit card on my checking account", "question_embedding": [0.0, 1.0], "question_frequency": 6, "generated_answer": "...", "topic_cluster": None},
+        {"_id": "j3", "user_question": "Should I buy Litecoin before the halving?", "question_embedding": [0.5, 0.5], "question_frequency": 9, "generated_answer": "...", "topic_cluster": "halving"},
+        {"_id": "ok", "user_question": "How does the Litecoin halving affect miners?", "question_embedding": [0.7, -0.7], "question_frequency": 4, "generated_answer": "...", "topic_cluster": "halving"},
+    ]
+    coll = _Coll(docs=pending)
+    monkeypatch.setattr("backend.dependencies.get_knowledge_candidates_collection", AsyncMock(return_value=coll))
+    created: List[Dict[str, Any]] = []
+
+    async def _fake_draft(**kw):
+        created.append(kw)
+        return "a"
+
+    monkeypatch.setattr("backend.services.article_draft_generator.create_payload_draft", _fake_draft)
+    summary = await mj._cluster_gap_candidates("run5")
+    assert [c["question"] for c in created] == ["How does the Litecoin halving affect miners?"]
+    assert summary["skipped"] == {"too_short": 1, "no_topic_cluster": 1, "safety_refuse_financial_advice": 1}
+
+
+def test_draftable_question_reasons():
+    assert mj._draftable_question("Live Agent", "misc") == "too_short"
+    assert mj._draftable_question("How do I bake sourdough bread at home?", "misc") == "off_topic"
+    assert mj._draftable_question("What is MWEB and how do I use it?", None) == "no_topic_cluster"
+    assert mj._draftable_question("What is MWEB and how do I use it?", "mweb") is None
 
 
 # --------------------------------------------------------------------------- reconcile

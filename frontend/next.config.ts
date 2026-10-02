@@ -77,6 +77,8 @@ const nextConfig: NextConfig = {
       "font-src 'self' fonts.gstatic.com data:",
       "img-src 'self' data: https:",
       `connect-src 'self' ${backendHost} ${payloadHost} https://static.cloudflareinsights.com`,
+      // Inline player for YouTube-sourced articles (SourceChips.tsx)
+      "frame-src https://www.youtube-nocookie.com https://www.youtube.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

@@ -881,9 +881,30 @@ export default function Home() {
       let shouldBreak = false;
       let isGroundedResponse = false;
 
-      // Helper function to check if tab is visible
-      const isTabVisible = () => {
-        return !document.hidden;
+      // Render streamed text as it arrives. Chunks are coalesced to one state
+      // update per animation frame: cached answers are replayed character by
+      // character by the backend, which would otherwise mean hundreds of
+      // re-renders per second. No artificial typing delay.
+      let frameScheduled = false;
+      const flushContent = () => {
+        frameScheduled = false;
+        if (streamId !== activeStreamIdRef.current) return;
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: accumulatedContent,
+          status: 'streaming',
+          isStreamActive: true
+        } : null);
+      };
+      const scheduleFlush = () => {
+        if (frameScheduled) return;
+        frameScheduled = true;
+        if (typeof requestAnimationFrame === 'function' && !document.hidden) {
+          requestAnimationFrame(flushContent);
+        } else {
+          // Hidden tabs throttle rAF; fall back to a short timer so content keeps flowing.
+          setTimeout(flushContent, 16);
+        }
       };
 
       // Type for SSE data objects
@@ -917,51 +938,8 @@ export default function Home() {
         } else if (data.status === 'thinking') {
           setStreamingMessage(prev => prev ? { ...prev, status: 'thinking' } : null);
         } else if (data.status === 'streaming') {
-          // When tab is hidden, process chunks immediately without delay to avoid throttling
-          const tabVisible = isTabVisible();
-          
-          if (tabVisible) {
-            // Accumulate characters and display word by word (only when tab is visible)
-            let wordBuffer = "";
-            for (const char of data.chunk) {
-              wordBuffer += char;
-              accumulatedContent += char;
-
-              // Check if we've completed a word (space, punctuation, or end of chunk)
-              const isWordBoundary = char === ' ' || char === '\n' || char === '.' || char === '!' || char === '?' || char === ',' || char === ';' || char === ':';
-
-              if (isWordBoundary || wordBuffer.length > 20) { // Also break long words
-                setStreamingMessage(prev => prev ? {
-                  ...prev,
-                  content: accumulatedContent,
-                  status: 'streaming',
-                  isStreamActive: true
-                } : null);
-                // Delay between words for natural typing rhythm (only when visible)
-                await new Promise(resolve => setTimeout(resolve, 25));
-                wordBuffer = "";
-              }
-            }
-
-            // Display any remaining characters in the buffer
-            if (wordBuffer.length > 0) {
-              setStreamingMessage(prev => prev ? {
-                ...prev,
-                content: accumulatedContent,
-                status: 'streaming',
-                isStreamActive: true
-              } : null);
-            }
-          } else {
-            // Tab is hidden - process entire chunk immediately without delay
-            accumulatedContent += data.chunk;
-            setStreamingMessage(prev => prev ? {
-              ...prev,
-              content: accumulatedContent,
-              status: 'streaming',
-              isStreamActive: true
-            } : null);
-          }
+          accumulatedContent += data.chunk;
+          scheduleFlush();
         } else if (data.status === 'blockchain_data') {
           setStreamingMessage(prev => prev ? {
             ...prev,

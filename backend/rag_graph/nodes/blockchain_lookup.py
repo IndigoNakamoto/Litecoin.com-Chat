@@ -416,6 +416,18 @@ def make_blockchain_lookup_node(pipeline: Any):
             state["early_answer"] = answer
             state["early_sources"] = []
             state["early_cache_type"] = "blockchain_lookup_error"
+            # Still a look-up (the tool failed, retrieval was never the plan); keep the
+            # intent on metadata so logs and the golden-set scorer classify it correctly.
+            metadata.update({
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cost_usd": 0.0,
+                "cache_hit": False,
+                "cache_type": "blockchain_lookup_error",
+                "intent": "blockchain_lookup",
+                "blockchain_entity": entity,
+                "blockchain_lookup_duration": time.time() - start,
+            })
 
         state["metadata"] = metadata
         return state

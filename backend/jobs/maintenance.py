@@ -26,8 +26,32 @@ logger = logging.getLogger(__name__)
 
 STALE_DEFAULT_INTERVAL_DAYS = int(os.getenv("STALE_DEFAULT_REVIEW_INTERVAL_DAYS", "180"))
 GAP_CLUSTER_SIMILARITY = float(os.getenv("GAP_CLUSTER_SIMILARITY", "0.85"))
-GAP_CLUSTER_MIN_FREQUENCY = int(os.getenv("GAP_CLUSTER_MIN_FREQUENCY", "2"))
+# First night at >=2 produced junk drafts ("Live Agent", a debit-card question). Require real
+# demand, a recognised topic, and a question the safety router would actually answer.
+GAP_CLUSTER_MIN_FREQUENCY = int(os.getenv("GAP_CLUSTER_MIN_FREQUENCY", "3"))
 GAP_CLUSTER_MAX_DRAFTS_PER_RUN = int(os.getenv("GAP_CLUSTER_MAX_DRAFTS_PER_RUN", "5"))
+GAP_CLUSTER_MIN_QUESTION_WORDS = int(os.getenv("GAP_CLUSTER_MIN_QUESTION_WORDS", "4"))
+
+
+def _draftable_question(question: str, topic: Optional[str]) -> Optional[str]:
+    """Return None if the cluster representative is worth a CMS draft, else the reason it is not."""
+    q = (question or "").strip()
+    if len(q.split()) < GAP_CLUSTER_MIN_QUESTION_WORDS:
+        return "too_short"
+    if not topic:
+        return "no_topic_cluster"
+    try:
+        from backend.services.safety_router import classify_safety
+        from backend.utils.litecoin_vocabulary import is_litecoin_related
+
+        intent, category = classify_safety(q)
+        if intent is not None:
+            return f"safety_{intent}_{category}"
+        if not is_litecoin_related(q):
+            return "off_topic"
+    except Exception as e:  # noqa: BLE001
+        logger.debug("draftable check fell back: %s", e)
+    return None
 
 
 async def _alert(title: str, description: str, level: str = "info", fields: Optional[List[Dict[str, Any]]] = None) -> None:
@@ -248,6 +272,7 @@ async def _cluster_gap_candidates(run_id: str) -> Dict[str, Any]:
     merged = 0
     drafted = 0
     drafted_titles: List[str] = []
+    skipped: Dict[str, int] = {}
     for cluster in clusters:
         rep = max(cluster, key=lambda c: (int(c.get("question_frequency") or 1), len(c.get("generated_answer") or "")))
         others = [c for c in cluster if c["_id"] != rep["_id"]]
@@ -269,6 +294,11 @@ async def _cluster_gap_candidates(run_id: str) -> Dict[str, Any]:
             merged += len(others)
 
         if total_freq >= GAP_CLUSTER_MIN_FREQUENCY and not rep.get("payload_article_id") and drafted < GAP_CLUSTER_MAX_DRAFTS_PER_RUN:
+            reason = _draftable_question(rep.get("user_question") or "", rep.get("topic_cluster"))
+            if reason:
+                skipped[reason] = skipped.get(reason, 0) + 1
+                logger.info("cluster job: not drafting %r (%s)", (rep.get("user_question") or "")[:60], reason)
+                continue
             try:
                 from backend.services.article_draft_generator import create_payload_draft
 
@@ -292,7 +322,7 @@ async def _cluster_gap_candidates(run_id: str) -> Dict[str, Any]:
             except Exception as e:  # noqa: BLE001
                 logger.warning("cluster job: draft failed for %s: %s", rep.get("_id"), e)
 
-    summary = {"pending_seen": len(pending), "clusters": len(clusters), "merged": merged, "drafted": drafted, "drafted_titles": drafted_titles}
+    summary = {"pending_seen": len(pending), "clusters": len(clusters), "merged": merged, "drafted": drafted, "drafted_titles": drafted_titles, "skipped": skipped}
     if drafted or merged:
         await _alert(
             f"Gap queue: {len(clusters)} clusters from {len(pending)} pending ({merged} merged, {drafted} new drafts)",
@@ -400,6 +430,36 @@ async def reconcile_embeddings(ctx: Dict[str, Any]) -> Dict[str, Any]:
     return await _run("reconcile_embeddings", _reconcile_embeddings)
 
 
+async def _reingest_all_published(run_id: str) -> Dict[str, Any]:
+    """Re-ingest every published article from Payload.
+
+    Unlike `reindex_vectors` (which only re-embeds the chunks already in Mongo), this
+    re-runs chunking + metadata, so new Article fields (sourceUrl, sourceTier, review
+    dates) reach the vector store. One-shot after schema changes; not on the cron.
+    """
+    from backend.jobs.enqueue import enqueue_ingest
+
+    published = await _payload_published_docs()
+    enqueued = 0
+    for doc in published:
+        try:
+            await enqueue_ingest(doc, "update")
+            enqueued += 1
+        except Exception as e:  # noqa: BLE001
+            logger.warning("reingest: enqueue failed for %s: %s", doc.get("id"), e)
+    summary = {"published": len(published), "enqueued": enqueued}
+    await _alert(
+        f"Re-ingest queued for {enqueued} published articles",
+        "Each article is re-chunked and re-embedded with current metadata. Press 'Reload index into API' once the worker is idle.",
+        level="info",
+    )
+    return summary
+
+
+async def reingest_all_published(ctx: Dict[str, Any]) -> Dict[str, Any]:
+    return await _run("reingest_all_published", _reingest_all_published)
+
+
 # --------------------------------------------------------------------------- 5) doc sources
 
 
@@ -432,4 +492,5 @@ JOB_FUNCTIONS: Dict[str, Callable[..., Awaitable[Dict[str, Any]]]] = {
     "cluster_gap_candidates": cluster_gap_candidates,
     "reconcile_embeddings": reconcile_embeddings,
     "ingest_doc_sources": ingest_doc_sources,
+    "reingest_all_published": reingest_all_published,
 }

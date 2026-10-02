@@ -49,6 +49,28 @@ async def enqueue_reindex_job(request: Request) -> Dict[str, Any]:
     return {"status": "queued", "job": "reindex_vectors", "job_id": job_id}
 
 
+@router.post("/jobs/reload-index")
+async def reload_vector_index(request: Request) -> Dict[str, Any]:
+    """Reload the FAISS index from disk into this API process (after a worker reindex)."""
+    _require_admin(request)
+    from backend.api.v1.sync.payload import _global_rag_pipeline
+
+    if _global_rag_pipeline is None:
+        raise HTTPException(status_code=503, detail="RAG pipeline not initialised")
+    try:
+        _global_rag_pipeline.refresh_vector_store()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Reload failed: {e}")
+    vsm = getattr(_global_rag_pipeline, "vector_store_manager", None)
+    count = None
+    try:
+        idx = getattr(getattr(vsm, "vector_store", None), "index", None)
+        count = int(idx.ntotal) if idx is not None else None
+    except Exception:
+        pass
+    return {"status": "reloaded", "vectors": count}
+
+
 @router.post("/jobs/reindex-faq")
 async def enqueue_reindex_faq_job(request: Request) -> Dict[str, Any]:
     _require_admin(request)

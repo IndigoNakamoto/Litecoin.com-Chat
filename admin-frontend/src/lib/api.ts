@@ -509,6 +509,9 @@ export const jobsApi = {
   async cleanupOrphans(): Promise<{ status: string; job: string; job_id: string }> {
     return apiRequest("/api/v1/admin/jobs/cleanup-orphans", { method: "POST" });
   },
+  async reloadIndex(): Promise<{ status: string; vectors: number | null }> {
+    return apiRequest("/api/v1/admin/jobs/reload-index", { method: "POST" });
+  },
 };
 
 /**

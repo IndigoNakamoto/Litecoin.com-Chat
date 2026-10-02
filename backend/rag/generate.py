@@ -51,15 +51,40 @@ async def generate_answer(pipeline: Any, state: RAGState) -> RAGState:
     sanitized_query = (
         state.get("sanitized_query") or state.get("raw_query") or ""
     )
+
+    # Source hierarchy (same rules as astream_query): a low-confidence KB match only
+    # proceeds to generation as a flagged web search, and only for Litecoin-related
+    # questions. Otherwise we return without an answer and the caller abstains.
+    low_similarity = bool(state.get("low_similarity", False))
+    kb_insufficient = low_similarity
+    if low_similarity:
+        try:
+            from backend.rag_pipeline import ABSTAIN_BEFORE_SEARCH
+            from backend.utils.litecoin_vocabulary import is_litecoin_related
+        except Exception:  # pragma: no cover
+            ABSTAIN_BEFORE_SEARCH, is_litecoin_related = True, (lambda _q: False)  # type: ignore[assignment]
+        on_topic = is_litecoin_related(sanitized_query)
+        if not (getattr(pipeline, "search_grounding_enabled", False) and not ABSTAIN_BEFORE_SEARCH and on_topic):
+            state["metadata"] = metadata
+            return state
+
     active_chain, response_profile, active_instruction = pipeline._select_document_chain(state)
     metadata["response_profile"] = response_profile
 
     llm_start = time.time()
-    context_text = format_docs(context_docs)
+    context_text = "" if low_similarity else format_docs(context_docs)
 
     coverage_note = ""
     missing: List[str] = []
-    if getattr(pipeline, "search_grounding_enabled", False):
+    if kb_insufficient:
+        coverage_note = (
+            "IMPORTANT: The knowledge base does NOT cover this question. "
+            "If it is about Litecoin, you MUST use Google Search and present everything you find "
+            "under a final `## From the web (unverified)` heading. If it is not about Litecoin, "
+            "decline briefly."
+        )
+        metadata["kb_low_confidence"] = True
+    elif getattr(pipeline, "search_grounding_enabled", False):
         missing = pipeline._find_missing_query_terms(sanitized_query, published_sources)
         if missing:
             coverage_note = (
@@ -98,12 +123,17 @@ async def generate_answer(pipeline: Any, state: RAGState) -> RAGState:
 
     if not is_grounded and coverage_note and answer:
         missing_in_answer = [t for t in missing if t in answer.lower()]
-        if missing_in_answer:
+        if missing_in_answer or (kb_insufficient and "from the web" in answer.lower()):
             is_grounded = True
             logger.info(
-                "Coverage-gap fallback (generate): missing terms %s in answer → grounded",
-                missing_in_answer,
+                "Coverage-gap fallback (generate): %s → grounded",
+                missing_in_answer or "web section heading",
             )
+    if kb_insufficient and not is_grounded:
+        # Web tier did not fire: flag as abstained so the UI shows the notice and the
+        # question is logged as a gap. The text is the model's brief decline.
+        metadata["abstained"] = True
+        metadata["abstain_reason"] = "low_similarity"
 
     input_tokens, output_tokens = 0, 0
     cost_usd = 0.0
@@ -145,12 +175,12 @@ async def generate_answer(pipeline: Any, state: RAGState) -> RAGState:
     query_text = state.get("raw_query") or sanitized_query
     effective_history = state.get("effective_history_pairs") or []
     query_cache = getattr(pipeline, "query_cache", None)
-    if query_cache is not None:
+    if query_cache is not None and not kb_insufficient:
         query_cache.set(query_text, effective_history, answer, published_sources)
 
     query_vector = state.get("query_vector")
     rewritten_query = state.get("rewritten_query_for_cache") or state.get("rewritten_query") or ""
-    if getattr(pipeline, "use_redis_cache", False) and query_vector:
+    if getattr(pipeline, "use_redis_cache", False) and query_vector and not kb_insufficient:
         redis_cache = (
             pipeline.get_redis_vector_cache()
             if hasattr(pipeline, "get_redis_vector_cache")
@@ -168,7 +198,7 @@ async def generate_answer(pipeline: Any, state: RAGState) -> RAGState:
             except Exception as e:
                 logger.warning("Redis cache storage failed: %s", e)
     semantic_cache = getattr(pipeline, "semantic_cache", None)
-    if semantic_cache and not getattr(pipeline, "use_redis_cache", False):
+    if semantic_cache and not getattr(pipeline, "use_redis_cache", False) and not kb_insufficient:
         semantic_cache.set(rewritten_query, [], answer, published_sources)
 
     metadata.update(
@@ -185,9 +215,13 @@ async def generate_answer(pipeline: Any, state: RAGState) -> RAGState:
             "complexity_route": state.get("complexity_route"),
             "grounding_metadata": grounding_meta,
             "is_grounded": is_grounded,
+            "abstained": bool(metadata.get("abstained", False)),
         }
     )
     state["generated_answer"] = answer
     state["grounding_metadata"] = grounding_meta
+    if low_similarity:
+        # Weak chunks are not sources for this answer; the UI shows web chips / the notice instead.
+        state["published_sources"] = []
     state["metadata"] = metadata
     return state

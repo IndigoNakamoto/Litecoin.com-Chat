@@ -34,7 +34,17 @@ def make_semantic_cache_node(pipeline: Any):
             infinity = pipeline.get_infinity_embeddings() if hasattr(pipeline, "get_infinity_embeddings") else None
             if infinity:
                 try:
+                    import time as _time
+
+                    _t0 = _time.perf_counter()
                     query_vector, query_sparse = await infinity.embed_query(rewritten_query)
+                    metadata["t_embed_ms"] = round((_time.perf_counter() - _t0) * 1000, 1)
+                    try:
+                        from backend.monitoring.metrics import rag_embedding_generation_duration_seconds
+
+                        rag_embedding_generation_duration_seconds.observe(_time.perf_counter() - _t0)
+                    except Exception:
+                        pass
                     # Validate query vector dimension (best-effort)
                     if query_vector is not None and hasattr(infinity, "dimension"):
                         actual_dim = len(query_vector)

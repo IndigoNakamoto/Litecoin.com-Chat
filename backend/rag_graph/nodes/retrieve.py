@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.documents import Document
@@ -11,6 +12,18 @@ from langchain_core.documents import Document
 from ..state import RAGState
 
 USE_CROSS_ENCODER_RERANK = os.getenv("USE_CROSS_ENCODER_RERANK", "true").lower() == "true"
+
+
+def _observe_stage(stage: str, seconds: float, timings: Optional[Dict[str, float]] = None) -> None:
+    """Record a per-stage latency to the Prometheus histogram and the request's timing dict."""
+    if timings is not None:
+        timings[f"t_{stage}_ms"] = round(timings.get(f"t_{stage}_ms", 0.0) + seconds * 1000, 1)
+    try:
+        from backend.monitoring.metrics import rag_stage_duration_seconds
+
+        rag_stage_duration_seconds.labels(stage=stage).observe(seconds)
+    except Exception:
+        pass
 
 
 def _stored_sparse(doc: Document) -> Optional[Dict[str, float]]:
@@ -57,6 +70,7 @@ def make_retrieve_node(pipeline: Any):
         is_short_query: bool,
         use_infinity: bool,
         logger: logging.Logger,
+        timings: Optional[Dict[str, float]] = None,
     ) -> Tuple[List[Document], bool, Optional[float]]:
         """Run retrieval for a single query. Returns (docs, retrieval_failed, top_faiss_l2)."""
         context_docs: List[Document] = []
@@ -69,6 +83,7 @@ def make_retrieve_node(pipeline: Any):
             bm25_docs: List[Document] = []
             vector_results: List[Tuple[Document, float]] = []
 
+            _t_vec0 = time.perf_counter()
             try:
                 def run_vector_search():
                     return pipeline.vector_store_manager.vector_store.similarity_search_with_score_by_vector(
@@ -102,6 +117,7 @@ def make_retrieve_node(pipeline: Any):
                 logger.warning("Infinity parallel retrieval failed; falling back: %s", e, exc_info=True)
                 vector_docs = []
                 bm25_docs = []
+            _observe_stage("vector_bm25", time.perf_counter() - _t_vec0, timings)
 
             seen = set()
             candidate_docs: List[Document] = []
@@ -137,6 +153,7 @@ def make_retrieve_node(pipeline: Any):
                 )
 
             if query_sparse and infinity and candidate_docs and not skip_sparse:
+                _t_sp0 = time.perf_counter()
                 try:
                     candidates_for_rerank = candidate_docs[:sparse_rerank_limit]
                     doc_sparse_list = await _resolve_doc_sparse(
@@ -160,6 +177,7 @@ def make_retrieve_node(pipeline: Any):
                 except Exception as e:
                     logger.warning("Sparse re-ranking failed; using basic hybrid: %s", e, exc_info=True)
                     context_docs = candidate_docs[:retriever_k]
+                _observe_stage("sparse", time.perf_counter() - _t_sp0, timings)
             else:
                 context_docs = candidate_docs[:retriever_k]
 
@@ -174,6 +192,7 @@ def make_retrieve_node(pipeline: Any):
                     context_docs = []
         else:
             retriever = getattr(pipeline, "hybrid_retriever", None)
+            _t_h0 = time.perf_counter()
             try:
                 if retriever and hasattr(retriever, "ainvoke"):
                     context_docs = await retriever.ainvoke(query_text)
@@ -182,6 +201,7 @@ def make_retrieve_node(pipeline: Any):
             except Exception:
                 retrieval_failed = True
                 context_docs = []
+            _observe_stage("vector_bm25", time.perf_counter() - _t_h0, timings)
 
         return context_docs, retrieval_failed, top_vector_distance
 
@@ -230,6 +250,8 @@ def make_retrieve_node(pipeline: Any):
 
         all_docs: List[Document] = []
         any_failed = False
+        timings: Dict[str, float] = {}
+        _t_retrieve0 = time.perf_counter()
 
         async def _prepare_and_retrieve(idx: int, sub_query: str) -> Tuple[int, List[Document], bool]:
             try:
@@ -264,6 +286,7 @@ def make_retrieve_node(pipeline: Any):
                 is_short_query=is_short_query,
                 use_infinity=use_infinity,
                 logger=logger,
+                timings=timings,
             )
             logger.debug(
                 "Retrieve sub-query %d/%d: query='%s', docs=%d, failed=%s",
@@ -318,19 +341,38 @@ def make_retrieve_node(pipeline: Any):
             )
 
         if USE_CROSS_ENCODER_RERANK and context_docs and primary_query and not skip_ce:
+            _t_ce0 = time.perf_counter()
             try:
                 from backend.services.cross_encoder_reranker import CrossEncoderReranker
 
                 reranker = CrossEncoderReranker.get_instance()
                 cross_encoder_top_k = int(os.getenv("CROSS_ENCODER_TOP_K", str(retriever_k)))
-                context_docs = reranker.rerank(primary_query, context_docs, top_k=cross_encoder_top_k)
+                # Cap how many (query, chunk) pairs the CPU model scores: cost is linear in
+                # candidates and the tail of a hybrid list rarely changes the top-k.
+                max_input = int(os.getenv("CROSS_ENCODER_MAX_INPUT", "10") or 0)
+                ce_input = context_docs[:max_input] if max_input > 0 else context_docs
+                ce_rest = context_docs[len(ce_input):]
+                # The model is synchronous CPU work; keep it off the event loop so other
+                # requests (and this request's SSE keepalive) are not stalled.
+                reranked = await asyncio.to_thread(
+                    reranker.rerank, primary_query, ce_input, cross_encoder_top_k
+                )
+                context_docs = reranked + [d for d in ce_rest if d not in reranked][: max(cross_encoder_top_k - len(reranked), 0)]
                 logger.debug(
                     "Cross-encoder re-ranked %d docs, kept top %d",
-                    len(all_docs) if is_multi_query else len(context_docs),
+                    len(ce_input),
                     len(context_docs),
                 )
             except Exception as e:
                 logger.warning("Cross-encoder re-ranking failed; using original order: %s", e)
+            _ce_s = time.perf_counter() - _t_ce0
+            _observe_stage("cross_encoder", _ce_s, timings)
+            try:
+                from backend.monitoring.metrics import rag_cross_encoder_duration_seconds
+
+                rag_cross_encoder_duration_seconds.observe(_ce_s)
+            except Exception:
+                pass
 
         # Debug logging for retrieval diagnostics
         if logger.isEnabledFor(logging.DEBUG) and context_docs:
@@ -395,6 +437,15 @@ def make_retrieve_node(pipeline: Any):
                 single_query_top_distance, l2_floor, primary_query[:80],
             )
         metadata["low_similarity"] = low_similarity
+
+        _observe_stage("retrieve_total", time.perf_counter() - _t_retrieve0, timings)
+        metadata.update(timings)
+        try:
+            from backend.monitoring.metrics import rag_retrieval_duration_seconds
+
+            rag_retrieval_duration_seconds.observe(time.perf_counter() - _t_retrieve0)
+        except Exception:
+            pass
 
         from backend.rag.timing import ms_since_t0
 

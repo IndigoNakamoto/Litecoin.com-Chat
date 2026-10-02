@@ -99,6 +99,19 @@ rag_sparse_rerank_duration_seconds = Histogram(
     buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
 )
 
+rag_cross_encoder_duration_seconds = Histogram(
+    "rag_cross_encoder_duration_seconds",
+    "Cross-encoder re-ranking duration in seconds (CPU)",
+    buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0],
+)
+
+rag_stage_duration_seconds = Histogram(
+    "rag_stage_duration_seconds",
+    "Per-stage RAG latency (embed, vector_bm25, sparse, cross_encoder, parents, decompose, retrieve_total)",
+    ["stage"],
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0],
+)
+
 rag_llm_generation_duration_seconds = Histogram(
     "rag_llm_generation_duration_seconds",
     "LLM answer generation duration in seconds",

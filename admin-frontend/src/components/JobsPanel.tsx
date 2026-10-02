@@ -137,7 +137,10 @@ export function JobsPanel() {
       <Card>
         <CardHeader>
           <CardTitle className="text-card-foreground">On-demand</CardTitle>
-          <CardDescription>Heavier operations. Reindex after CMS schema or embedding-model changes.</CardDescription>
+          <CardDescription>
+            Heavier operations. Reindex after CMS schema or embedding-model changes; the worker writes the shared
+            index, then press “Reload index into API” so the running backend picks it up.
+          </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           <Button variant="outline" disabled={busy !== null} onClick={() => run("reindex", () => jobsApi.reindex(false))}>
@@ -148,6 +151,18 @@ export function JobsPanel() {
           </Button>
           <Button variant="outline" disabled={busy !== null} onClick={() => run("cleanup-orphans", () => jobsApi.cleanupOrphans())}>
             Cleanup orphan embeddings
+          </Button>
+          <Button
+            variant="outline"
+            disabled={busy !== null}
+            onClick={() =>
+              run("reload-index", async () => {
+                const r = await jobsApi.reloadIndex();
+                return { job: `reload-index (${r.vectors ?? "?"} vectors)`, job_id: "in-process" };
+              })
+            }
+          >
+            Reload index into API
           </Button>
         </CardContent>
       </Card>

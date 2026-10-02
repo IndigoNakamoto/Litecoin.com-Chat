@@ -56,6 +56,7 @@ MAINTENANCE_JOBS = (
     "cluster_gap_candidates",
     "reconcile_embeddings",
     "ingest_doc_sources",
+    "reingest_all_published",  # on-demand only (not scheduled)
 )
 
 

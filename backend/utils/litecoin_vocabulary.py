@@ -172,6 +172,39 @@ LTC_ENTITY_EXPANSIONS: Dict[str, str] = {
     "litecoin foundation": "lf foundation",
 }
 
+# Topicality: terms that mark a question as being about Litecoin (or the crypto
+# concepts the knowledge base covers). Used by the abstain path: a low-confidence
+# retrieval for a question with none of these never reaches the web-search tier.
+_TOPICAL_TERMS = frozenset(
+    {
+        "litecoin", "ltc", "lite coin", "mweb", "mimblewimble", "scrypt", "halving", "halvening",
+        "charlie lee", "coblee", "litvm", "omnilite", "ltc-20", "auxpow", "merged mining",
+        "litecoin core", "litecoin foundation", "electrum-ltc", "litecoinspace", "litecoin space",
+        # generic chain concepts the KB documents (allowed even without the word "litecoin")
+        "blockchain", "wallet", "seed phrase", "private key", "mining", "miner", "hashrate",
+        "mempool", "utxo", "segwit", "taproot", "lightning network", "lightning", "node",
+        "confirmation", "confirmations", "block reward", "block time", "transaction fee",
+        "satoshi", "crypto", "cryptocurrency", "bitcoin", "btc", "dogecoin", "doge",
+        "ordinals", "inscriptions", "atomic swap", "cold storage", "hardware wallet",
+        "exchange", "merchant", "payment", "address", "txid", "block height", "difficulty",
+    }
+    | set(LTC_SYNONYM_MAP.keys())
+    | set(LTC_ENTITY_EXPANSIONS.keys())
+)
+_TOPICAL_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(t) for t in sorted(_TOPICAL_TERMS, key=len, reverse=True)) + r")\b",
+    flags=re.IGNORECASE,
+)
+_LTC_ADDRESS_OR_TXID = re.compile(r"\b(?:[LM3][a-km-zA-HJ-NP-Z1-9]{26,34}|ltc1[a-z0-9]{20,}|[a-fA-F0-9]{64})\b")
+
+
+def is_litecoin_related(query: str) -> bool:
+    """True when the question is plausibly within the knowledge base's domain."""
+    if not query:
+        return False
+    return bool(_TOPICAL_PATTERN.search(query) or _LTC_ADDRESS_OR_TXID.search(query))
+
+
 # 2. Pre-compile the regex for O(1) invocation performance
 # We sort by length descending to ensure longest matches are prioritized
 _SORTED_SYNONYMS = sorted(LTC_SYNONYM_MAP.keys(), key=len, reverse=True)

@@ -185,3 +185,41 @@ class TestBlockchainIntentDetection:
     def test_no_match_on_history_question(self, classifier):
         intent, _, _ = classifier.classify("What is the history of Litecoin blocks?")
         assert intent != Intent.BLOCKCHAIN_LOOKUP
+
+
+class TestExplainVsLookup:
+    """Golden-set regressions: definitional/mechanism questions are RAG, live values are tool calls."""
+
+    @pytest.fixture
+    def classifier(self):
+        return IntentClassifier(faq_questions=[])
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "How do Litecoin transaction fees work?",
+            "What is the mempool?",
+            "What are transaction fees?",
+            "Why does the mempool fill up?",
+            "Explain how the difficulty adjustment mechanism works",
+        ],
+    )
+    def test_conceptual_questions_route_to_rag(self, classifier, query):
+        intent, entity, _ = classifier.classify(query)
+        assert intent == Intent.SEARCH, (query, entity)
+
+    @pytest.mark.parametrize(
+        "query,entity",
+        [
+            ("What are the current Litecoin network fees?", "fees"),
+            ("What is the recommended fee right now?", "fees"),
+            ("How many unconfirmed transactions are in the Litecoin mempool right now?", "mempool"),
+            ("What is the mempool congestion like today?", "mempool"),
+            ("What is the current Litecoin hashrate?", "hashrate"),
+            ("When is the next Litecoin difficulty adjustment?", "hashrate"),
+            ("What is the current Litecoin block height?", "block_tip"),
+        ],
+    )
+    def test_live_value_questions_route_to_lookup(self, classifier, query, entity):
+        intent, got, _ = classifier.classify(query)
+        assert intent == Intent.BLOCKCHAIN_LOOKUP and got == entity, (query, intent, got)

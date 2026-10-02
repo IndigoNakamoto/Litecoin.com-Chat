@@ -197,6 +197,17 @@ class IntentClassifier:
         """,
         re.IGNORECASE | re.VERBOSE,
     )
+    # Live-value signals: with one of these, a fee/mempool/hashrate question wants a number.
+    _LIVE_SIGNAL_RE = re.compile(
+        r"\b(current(ly)?|right\s+now|now|today|tonight|at\s+the\s+moment|live|latest|recommended|"
+        r"estimates?d?|how\s+(many|much|high|low|big|large|full|congested)|how\s+long\s+(will|does\s+it\s+take))\b",
+        re.IGNORECASE,
+    )
+    # Bare definitional question ("What is the mempool?", "What are transaction fees?") → RAG.
+    _DEFINITIONAL_RE = re.compile(
+        r"^\s*(what|whats|what's)\s+(is|are)\s+(a|an|the)?\s*[\w\s'-]{1,48}\??\s*$",
+        re.IGNORECASE,
+    )
     _PRICE_KEYWORDS: Set[str] = {
         "litecoin price", "ltc price", "current price", "price of litecoin",
         "price of ltc", "how much is litecoin", "how much is ltc",
@@ -412,12 +423,19 @@ class IntentClassifier:
         if any(kw in query_lower for kw in self._BLOCK_TIP_KEYWORDS):
             return "block_tip"
 
+        # Explain vs look-up: "how do fees work" / "what is the mempool" are RAG questions;
+        # "current fees" / "how many txs in the mempool right now" are tool calls.
+        live_signal = bool(self._LIVE_SIGNAL_RE.search(query_lower))
+        conceptual = bool(self._CONCEPTUAL_CHAIN_EXPLAIN_RE.search(query_lower)) or (
+            not live_signal and bool(self._DEFINITIONAL_RE.match(query_lower))
+        )
+
         # Keyword-based lookups (check longest matches first)
         if any(kw in query_lower for kw in self._PRICE_KEYWORDS):
             return "price"
-        if any(kw in query_lower for kw in self._FEE_KEYWORDS):
+        if any(kw in query_lower for kw in self._FEE_KEYWORDS) and not conceptual:
             return "fees"
-        if any(kw in query_lower for kw in self._MEMPOOL_KEYWORDS):
+        if any(kw in query_lower for kw in self._MEMPOOL_KEYWORDS) and not conceptual:
             return "mempool"
         if self._wants_mining_pool_ranking(query_lower):
             period = self._extract_mining_pool_period(query_lower)
@@ -426,8 +444,6 @@ class IntentClassifier:
             if period:
                 return f"mining_pools:{period}"
             return "mining_pools"
-
-        conceptual = bool(self._CONCEPTUAL_CHAIN_EXPLAIN_RE.search(query_lower))
 
         if any(kw in query_lower for kw in self._HASHRATE_KEYWORDS):
             if not conceptual:

@@ -232,7 +232,7 @@ export const Article: CollectionConfig = {
       type: 'text',
       admin: {
         position: 'sidebar',
-        description: 'Canonical source URL if this article was imported from an external site.',
+        description: 'Canonical origin of this content. Source chips in the chat link here: a litecoin.com page opens the page, a YouTube URL (youtube.com/watch?v=… or youtu.be/…) opens an inline player. Leave empty for editor-authored articles; they link to the Hub reader page.',
       },
     },
     {

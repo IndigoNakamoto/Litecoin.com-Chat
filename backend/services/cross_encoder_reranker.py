@@ -25,6 +25,10 @@ class CrossEncoderReranker:
 
     def __init__(self, model_name: Optional[str] = None):
         self._model_name = model_name or os.getenv("CROSS_ENCODER_MODEL", DEFAULT_MODEL)
+        # Pair truncation length. ms-marco MiniLM was trained on passages; 256 tokens
+        # (~1000 chars of chunk) scores as well as 512 for our chunk sizes and is ~30%
+        # faster on CPU (measured: 10 pairs 294ms -> 214ms).
+        self._max_length = int(os.getenv("CROSS_ENCODER_MAX_LENGTH", "256") or 0) or None
         self._model = None
 
     @classmethod
@@ -50,8 +54,8 @@ class CrossEncoderReranker:
         try:
             from sentence_transformers import CrossEncoder
 
-            logger.info("Loading cross-encoder model: %s", self._model_name)
-            self._model = CrossEncoder(self._model_name)
+            logger.info("Loading cross-encoder model: %s (max_length=%s)", self._model_name, self._max_length)
+            self._model = CrossEncoder(self._model_name, max_length=self._max_length) if self._max_length else CrossEncoder(self._model_name)
             logger.info("Cross-encoder model loaded successfully")
         except Exception as e:
             logger.error("Failed to load cross-encoder model '%s': %s", self._model_name, e)

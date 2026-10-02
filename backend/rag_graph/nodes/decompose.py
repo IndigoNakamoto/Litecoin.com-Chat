@@ -9,12 +9,19 @@ from ..state import RAGState
 
 USE_QUERY_DECOMPOSITION = os.getenv("USE_QUERY_DECOMPOSITION", "true").lower() == "true"
 
+# Gate for the (paid, ~0.5-1s) LLM decomposition call. A bare "and"/"or" fires on
+# ordinary single-topic questions ("Litecoin and Bitcoin", "pros and cons"), so we
+# require a conjunction that starts a *second clause*, two question marks, an
+# "as well as", or a comma list of three or more items.
 _COMPOUND_PATTERN = re.compile(
     r"""
-    \b(?:and|or)\b              # explicit conjunctions
-    |,\s*(?:and\s+)?            # comma-separated lists ("RBF, Child Key", "RBF, and Child Key")
+    \b(?:and|or)\s+(?:also\s+)?(?:what|how|why|when|where|which|who|does|do|is|are|can|could|should|will|explain|tell)\b
+    |\?.*\?                                   # two questions in one message
+    |\bas\s+well\s+as\b
+    |\b(?:and|or)\s+(?:also|additionally|separately)\b
+    |(?:[^,]+,){2,}[^,]*\b(?:and|or)\b        # "A, B, and C"
     """,
-    re.IGNORECASE | re.VERBOSE,
+    re.IGNORECASE | re.VERBOSE | re.DOTALL,
 )
 
 _SYSTEM_PROMPT = (
@@ -70,12 +77,23 @@ def make_decompose_node(pipeline: Any):
             return state
 
         try:
+            import time as _time
+
             from langchain_core.messages import HumanMessage, SystemMessage
 
+            _t0 = _time.perf_counter()
             result = await llm.ainvoke([
                 SystemMessage(content=_SYSTEM_PROMPT),
                 HumanMessage(content=retrieval_query),
             ])
+            _dt = _time.perf_counter() - _t0
+            metadata["t_decompose_ms"] = round(_dt * 1000, 1)
+            try:
+                from backend.monitoring.metrics import rag_stage_duration_seconds
+
+                rag_stage_duration_seconds.labels(stage="decompose").observe(_dt)
+            except Exception:
+                pass
             raw = getattr(result, "content", None) or str(result)
 
             sub_queries = [

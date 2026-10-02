@@ -29,6 +29,7 @@ SCHEDULED_JOBS: Dict[str, Dict[str, str]] = {
     "cluster_gap_candidates": {"schedule": "daily 04:15 UTC", "description": "Collapse repeated knowledge gaps into one draft each"},
     "reconcile_embeddings": {"schedule": "weekly Sun 04:45 UTC", "description": "Re-embed published articles missing from the vector store; drop orphans"},
     "ingest_doc_sources": {"schedule": "weekly Mon 05:15 UTC", "description": "Refresh Core / MWEB / Litecoin Space / litecoin.com reference drafts"},
+    "reingest_all_published": {"schedule": "on demand", "description": "Re-chunk and re-embed every published article from Payload (after Article schema changes); then reload the index into the API"},
 }
 
 

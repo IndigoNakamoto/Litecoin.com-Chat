@@ -308,7 +308,11 @@ class LitecoinSpaceClient:
         return MempoolData.model_validate(data)
 
     async def get_hashrate(self) -> HashrateData:
-        data = await self.get_mining_network_hashrate_detail("1w")
+        # /v1/mining/hashrate/1w routinely exceeds our 15s timeout on litecoinspace.org
+        # (measured >25s) while /3d answers in ~0.2s; currentHashrate/currentDifficulty
+        # are the same fields in both. Period is env-tunable in case that flips.
+        period = os.getenv("LITECOIN_SPACE_HASHRATE_PERIOD", "3d")
+        data = await self.get_mining_network_hashrate_detail(period)
         current = data.get("currentHashrate", 0)
         difficulty = data.get("currentDifficulty", 0)
         return HashrateData(current_hashrate=current, current_difficulty=difficulty)

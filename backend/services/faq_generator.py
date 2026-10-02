@@ -379,6 +379,15 @@ Questions:"""
                         "payload_id": chunk.metadata.get("payload_id"),
                         "status": chunk.metadata.get("status", "published"),
                         "source": chunk.metadata.get("source"),
+                        # Inherit provenance so a synthetic hit that is not swapped for its
+                        # parent still yields a correct source chip / stale flag.
+                        "doc_title": chunk.metadata.get("doc_title"),
+                        "slug": chunk.metadata.get("slug"),
+                        "updated_at": chunk.metadata.get("updated_at"),
+                        "source_url": chunk.metadata.get("source_url"),
+                        "source_tier": chunk.metadata.get("source_tier"),
+                        "last_reviewed_at": chunk.metadata.get("last_reviewed_at"),
+                        "review_interval_days": chunk.metadata.get("review_interval_days"),
                         # Synthetic question markers
                         "doc_type": "synthetic_question",
                         "is_synthetic": True,
