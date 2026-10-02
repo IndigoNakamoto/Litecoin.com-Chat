@@ -15,7 +15,7 @@ MAX_QUERY_LENGTH = 2000
 
 # Prompt injection patterns to detect and neutralize
 PROMPT_INJECTION_PATTERNS = [
-    r'(?i)ignore\s+(previous|all|above)\s+(instructions?|prompts?|rules?)',
+    r'(?i)ignore\s+(?:(?:all|any|the)\s+)?(previous|prior|above|earlier|all)\s+(instructions?|prompts?|rules?)',
     r'(?i)forget\s+(everything|all|previous)',
     r'(?i)new\s+instructions?',
     r'(?i)system\s*:',

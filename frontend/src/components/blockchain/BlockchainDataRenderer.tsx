@@ -7,16 +7,16 @@ import BlockCard from "./BlockCard";
 import FeeEstimator from "./FeeEstimator";
 import MempoolStatus from "./MempoolStatus";
 import NetworkStats from "./NetworkStats";
+import MiningPoolsCard, { type MiningPoolRow } from "./MiningPoolsCard";
+import MiningPoolCard from "./MiningPoolCard";
+import ProvenanceFooter, { type LiveDataProvenance } from "./ProvenanceFooter";
 
 interface BlockchainDataRendererProps {
   dataType: string;
   data: Record<string, unknown>;
 }
 
-export default function BlockchainDataRenderer({
-  dataType,
-  data,
-}: BlockchainDataRendererProps) {
+function renderCard(dataType: string, data: Record<string, unknown>): React.ReactElement | null {
   switch (dataType) {
     case "transaction":
       return (
@@ -88,11 +88,51 @@ export default function BlockchainDataRenderer({
     case "price":
       return (
         <NetworkStats
-          price={data as { USD: number; EUR: number; GBP: number; AUD: number; JPY: number; time: number }}
+          price={data as unknown as { USD: number; EUR: number; GBP: number; AUD: number; JPY: number; time: number }}
+        />
+      );
+
+    case "mining_pools":
+      return (
+        <MiningPoolsCard
+          pools={(data.pools as MiningPoolRow[]) || []}
+          blockCount={data.blockCount as number | undefined}
+          lastEstimatedHashrate={data.lastEstimatedHashrate as number | undefined}
+          period={data.period as string | undefined}
+        />
+      );
+
+    case "mining_pool":
+      return (
+        <MiningPoolCard
+          pool={(data.pool as { name?: string; slug?: string; link?: string; addresses?: string[] }) || {}}
+          blockCount={data.blockCount as Record<string, number | undefined> | undefined}
+          blockShare={data.blockShare as Record<string, number | undefined> | undefined}
+          estimatedHashrate={data.estimatedHashrate as number | undefined}
+          reportedHashrate={data.reportedHashrate as number | string | null | undefined}
         />
       );
 
     default:
       return null;
   }
+}
+
+/**
+ * Dispatches a `blockchain_data` SSE event to the matching card and appends
+ * the shared provenance footer (fetched_at + endpoint) under every card.
+ */
+export default function BlockchainDataRenderer({
+  dataType,
+  data,
+}: BlockchainDataRendererProps) {
+  const card = renderCard(dataType, data);
+  if (!card) return null;
+  const provenance = data._provenance as LiveDataProvenance | undefined;
+  return (
+    <div data-testid={`blockchain-card-${dataType}`}>
+      {card}
+      <ProvenanceFooter provenance={provenance} />
+    </div>
+  );
 }

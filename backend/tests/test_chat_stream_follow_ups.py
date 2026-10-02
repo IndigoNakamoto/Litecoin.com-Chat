@@ -8,8 +8,18 @@ async def fake_astream_query(_query, _history):
     sources = [
         Document(
             page_content="Litecoin was created by Charlie Lee.",
-            metadata={"status": "published", "title": "Litecoin History"},
-        )
+            metadata={
+                "status": "published",
+                "title": "Litecoin History",
+                "payload_id": "art-1",
+                "slug": "litecoin-history",
+                "updated_at": "2026-03-01T00:00:00+00:00",
+            },
+        ),
+        Document(
+            page_content="Draft text must never reach the wire.",
+            metadata={"status": "draft", "title": "Unpublished", "payload_id": "art-2"},
+        ),
     ]
     yield {"type": "sources", "sources": sources}
     yield {"type": "chunk", "content": "Litecoin was created by Charlie Lee."}
@@ -59,9 +69,23 @@ def test_chat_stream_endpoint_emits_follow_up_sse_event(client, monkeypatch):
         ]
 
     statuses = [event["status"] for event in sse_payloads]
-    assert statuses == ["thinking", "streaming", "follow_ups", "complete"]
-    assert sse_payloads[2]["questions"] == [
+    assert statuses == ["thinking", "sources", "streaming", "follow_ups", "complete"]
+
+    # Source chips are structured metadata only: published docs, no chunk text.
+    chips = sse_payloads[1]["sources"]
+    assert [c["payload_id"] for c in chips] == ["art-1"]
+    assert chips[0]["title"] == "Litecoin History"
+    assert chips[0]["updated_at"] == "2026-03-01T00:00:00+00:00"
+    assert "page_content" not in chips[0]
+    assert "Draft text" not in json.dumps(sse_payloads)
+
+    assert sse_payloads[3]["questions"] == [
         "When was Litecoin launched?",
         "How is Litecoin different from Bitcoin?",
     ]
-    assert sse_payloads[-1]["fromCache"] is False
+    done = sse_payloads[-1]
+    assert done["fromCache"] is False
+    assert done["isGrounded"] is False
+    assert done["webSources"] == []
+    assert done["abstained"] is False
+    assert isinstance(done["requestId"], str) and len(done["requestId"]) >= 8

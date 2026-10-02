@@ -407,6 +407,111 @@ export interface KnowledgeCandidate {
 }
 
 /**
+ * Reader feedback (thumbs up/down) API client.
+ */
+export interface FeedbackItem {
+  id: string;
+  request_id: string;
+  verdict: "up" | "down";
+  reason: string | null;
+  comment: string | null;
+  source_payload_ids: string[];
+  user_question: string | null;
+  timestamp: string;
+}
+
+export interface FeedbackBySource {
+  payload_id: string;
+  down: number;
+  up: number;
+  reasons: Record<string, number>;
+  last_feedback: string | null;
+  sample_questions: string[];
+}
+
+export const feedbackApi = {
+  async list(params: { limit?: number; verdict?: "up" | "down"; days?: number } = {}): Promise<{
+    items: FeedbackItem[];
+    count: number;
+    totals: { up: number | null; down: number | null };
+    days: number;
+  }> {
+    const sp = new URLSearchParams();
+    if (params.limit) sp.set("limit", String(params.limit));
+    if (params.verdict) sp.set("verdict", params.verdict);
+    if (params.days) sp.set("days", String(params.days));
+    const qs = sp.toString();
+    return apiRequest(`/api/v1/admin/feedback${qs ? `?${qs}` : ""}`);
+  },
+
+  async bySource(days: number = 30): Promise<{ items: FeedbackBySource[]; days: number }> {
+    return apiRequest(`/api/v1/admin/feedback/by-source?days=${days}`);
+  },
+};
+
+/**
+ * Incident override pin API client (Redis admin:incident_pin).
+ */
+export interface IncidentPin {
+  active: boolean;
+  id?: string;
+  title?: string;
+  answer?: string;
+  sources?: Array<{ title?: string; url?: string }>;
+  match_terms?: string[];
+  expires_at?: string;
+  created_at?: string;
+  created_by?: string | null;
+}
+
+export const incidentApi = {
+  async get(): Promise<IncidentPin> {
+    return apiRequest("/api/v1/admin/incident-pin");
+  },
+  async set(data: {
+    title: string;
+    answer: string;
+    match_terms: string[];
+    ttl_hours: number;
+    sources?: Array<{ title: string; url: string }>;
+    created_by?: string;
+  }): Promise<IncidentPin> {
+    return apiRequest("/api/v1/admin/incident-pin", { method: "PUT", body: JSON.stringify(data) });
+  },
+  async clear(): Promise<{ active: false; cleared: boolean }> {
+    return apiRequest("/api/v1/admin/incident-pin", { method: "DELETE" });
+  },
+};
+
+/**
+ * Background jobs API client (ARQ cron status + on-demand runs).
+ */
+export interface JobStatus {
+  name: string;
+  schedule: string;
+  description: string;
+  last_status: string | null;
+  last_run: string | null;
+  summary: Record<string, unknown> | null;
+  error: string | null;
+}
+
+export const jobsApi = {
+  async status(): Promise<{ jobs: JobStatus[] }> {
+    return apiRequest("/api/v1/admin/jobs/status");
+  },
+  async runMaintenance(name: string): Promise<{ status: string; job: string; job_id: string }> {
+    return apiRequest(`/api/v1/admin/jobs/maintenance/${name}`, { method: "POST" });
+  },
+  async reindex(withFaq: boolean = false): Promise<{ status: string; job: string; job_id: string }> {
+    return apiRequest(withFaq ? "/api/v1/admin/jobs/reindex-faq" : "/api/v1/admin/jobs/reindex", { method: "POST" });
+  },
+  async cleanupOrphans(): Promise<{ status: string; job: string; job_id: string }> {
+    return apiRequest("/api/v1/admin/jobs/cleanup-orphans", { method: "POST" });
+  },
+};
+
+/**
  * Question logs API client.
  */
 export const questionLogsApi = {

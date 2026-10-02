@@ -263,11 +263,41 @@ user_questions_count_from_db = Gauge(
     ["endpoint_type"],  # endpoint_type: "chat", "stream", or "total"
 )
 
+# Trust-surface / resilience metrics
+rag_abstain_total = Counter(
+    "rag_abstain_total",
+    "Answers where the bot abstained because the knowledge base did not cover the question",
+    ["reason"],  # reason: "no_kb_sources", "low_similarity", "retrieval_failed"
+)
+
+rag_refuse_total = Counter(
+    "rag_refuse_total",
+    "Requests refused or escalated by the intent router",
+    ["category"],  # e.g. "financial_advice", "seed_phrase", "legal_tax", "impersonation", "escalate"
+)
+
+tool_error_total = Counter(
+    "tool_error_total",
+    "Upstream tool failures (including circuit-open short circuits)",
+    ["tool"],  # tool: "gemini", "google_search", "litecoin_space", "infinity", "payload"
+)
+
+incident_pin_served_total = Counter(
+    "incident_pin_served_total",
+    "Answers served from the admin incident pin instead of retrieval",
+)
+
+answer_feedback_total = Counter(
+    "answer_feedback_total",
+    "Reader thumbs up/down submissions",
+    ["verdict"],  # verdict: "up" | "down"
+)
+
 # Knowledge Gap Flywheel Metrics
 knowledge_candidates_total = Counter(
     "knowledge_candidates_total",
     "Total knowledge gap candidates created",
-    ["trigger"],  # trigger: "grounding", "no_kb_sources", "provenance_marker"
+    ["trigger"],  # trigger: "grounding", "grounded_chain", "no_kb_sources", "abstain"
 )
 
 knowledge_candidates_approved_total = Counter(

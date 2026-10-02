@@ -39,6 +39,35 @@ except ImportError:
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
+async def invalidate_cached_answers_for(payload_id: str) -> int:
+    """
+    Drop semantic-cache answers that cited this CMS document.
+
+    Without this, an edited or unpublished article keeps being served from the
+    Redis vector cache (which has no content-aware expiry) until eviction.
+    Best-effort: any failure is logged and ignored so the webhook still succeeds.
+    """
+    removed = 0
+    try:
+        pipeline = _global_rag_pipeline
+        redis_cache = None
+        if pipeline is not None and hasattr(pipeline, "get_redis_vector_cache"):
+            redis_cache = pipeline.get_redis_vector_cache()
+        if redis_cache is not None and hasattr(redis_cache, "invalidate_by_payload_id"):
+            removed += int(await redis_cache.invalidate_by_payload_id(payload_id) or 0)
+
+        legacy = getattr(pipeline, "semantic_cache", None) if pipeline is not None else None
+        if legacy is not None and hasattr(legacy, "invalidate_by_payload_id"):
+            removed += int(legacy.invalidate_by_payload_id(payload_id) or 0)
+
+        query_cache = getattr(pipeline, "query_cache", None) if pipeline is not None else None
+        if query_cache is not None and hasattr(query_cache, "invalidate_by_payload_id"):
+            removed += int(query_cache.invalidate_by_payload_id(payload_id) or 0)
+    except Exception as e:
+        logger.warning("Cache invalidation failed for payload_id=%s: %s", payload_id, e)
+    return removed
+
 def normalize_relationship_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normalize relationship fields that may come as objects or strings from Payload CMS.
@@ -336,6 +365,11 @@ async def receive_payload_webhook(request: Request, background_tasks: Background
 
         logger.info(f"📝 Processing doc ID '{payload_doc.id}' with status '{payload_doc.status}' and operation '{operation}'")
         logger.info(f"📖 Document title: '{payload_doc.title}'" if hasattr(payload_doc, 'title') and payload_doc.title else "📖 No title found")
+
+        # Any change to a document invalidates answers that cited it.
+        invalidated = await invalidate_cached_answers_for(payload_doc.id)
+        if invalidated:
+            logger.info("♻️ Invalidated %d cached answer(s) for doc ID '%s'", invalidated, payload_doc.id)
 
         # Handle delete operations or non-published documents
         if operation == 'delete' or payload_doc.status != 'published':

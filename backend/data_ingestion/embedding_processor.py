@@ -378,7 +378,30 @@ def process_payload_documents(payload_docs: List[PayloadWebhookDoc]) -> List[Doc
                         payload_doc.id,
                     )
 
+        # Review metadata (Phase 3 freshness): powers the "last reviewed" chip label
+        # and the nightly stale-doc report. Missing values are simply omitted.
+        last_reviewed_dt = None
+        raw_reviewed = getattr(payload_doc, "lastReviewedAt", None)
+        if isinstance(raw_reviewed, datetime.datetime):
+            last_reviewed_dt = raw_reviewed
+        elif isinstance(raw_reviewed, str) and raw_reviewed:
+            try:
+                last_reviewed_dt = datetime.datetime.fromisoformat(raw_reviewed.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                logger.warning("Could not parse 'lastReviewedAt' for Payload doc ID %s. Skipping.", payload_doc.id)
+        review_interval = getattr(payload_doc, "reviewIntervalDays", None)
+        try:
+            review_interval = int(review_interval) if review_interval not in (None, "") else None
+        except (TypeError, ValueError):
+            review_interval = None
+        source_tier = getattr(payload_doc, "sourceTier", None) or "cms"
+        source_url = getattr(payload_doc, "sourceUrl", None)
+
         initial_metadata = {
+            "last_reviewed_at": last_reviewed_dt,
+            "review_interval_days": review_interval,
+            "source_tier": source_tier,
+            "source_url": source_url,
             "payload_id": payload_doc.id,
             "source": "payload",
             "content_type": "article",

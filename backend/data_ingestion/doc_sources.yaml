@@ -1,0 +1,79 @@
+# Source registry for scheduled reference-doc ingestion (Phase 3 / Milestone 13).
+#
+# Every source produces Payload CMS *drafts* keyed by `sourceUrl`; re-runs update
+# the same draft. Nothing here is auto-published: an editor still presses
+# Publish, which fires the normal afterChange sync into the vector store.
+#
+# kinds:
+#   litecoin_com     the existing Learning Center scraper (sitemap + hub crawl)
+#   github_markdown  files from a GitHub repo (markdown or mediawiki), via raw.githubusercontent.com;
+#                    `paths` may be files or directories (directories are listed via the GitHub API)
+#   html_page        a single public HTML page, main content extracted to markdown
+#
+# tier:             sourceTier written on the draft (cms | pinned | web)
+# review_interval_days: written on the draft; the stale-doc job uses it
+
+sources:
+  - id: litecoin_com_learning_center
+    kind: litecoin_com
+    enabled: true
+    tier: cms
+    review_interval_days: 180
+
+  - id: litecoin_core_release_notes
+    kind: github_markdown
+    enabled: true
+    repo: litecoin-project/litecoin
+    ref: master
+    paths:
+      - doc/release-notes.md
+      - doc/release-notes
+    include_glob: "release-notes*.md"
+    max_files: 12            # newest first by filename; older releases rarely change
+    tier: pinned
+    review_interval_days: 90
+    title_prefix: "Litecoin Core release notes"
+
+  - id: litecoin_core_docs
+    kind: github_markdown
+    enabled: true
+    repo: litecoin-project/litecoin
+    ref: master
+    paths:
+      - doc/README.md
+      - doc/build-unix.md
+      - doc/build-osx.md
+      - doc/build-windows.md
+      - doc/init.md
+      - doc/tor.md
+      - doc/REST-interface.md
+      - doc/JSON-RPC-interface.md
+      - doc/zmq.md
+      - doc/psbt.md
+      - doc/descriptors.md
+    tier: pinned
+    review_interval_days: 180
+    title_prefix: "Litecoin Core"
+
+  - id: litecoin_lips_mweb
+    kind: github_markdown
+    enabled: true
+    repo: litecoin-project/lips
+    ref: master
+    paths:
+      - lip-0002.mediawiki   # Extension Blocks
+      - lip-0003.mediawiki   # MimbleWimble via Extension Blocks (MWEB)
+      - lip-0004.mediawiki   # One-Sided Transactions in MWEB
+    tier: pinned
+    review_interval_days: 365
+    title_prefix: "LIP"
+
+  - id: litecoin_space_api_reference
+    kind: html_page
+    enabled: true
+    urls:
+      - https://litecoinspace.org/docs/api/rest
+    tier: pinned
+    review_interval_days: 90
+    title_prefix: "Litecoin Space API"
+    min_words: 80

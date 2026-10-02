@@ -304,7 +304,8 @@ async def validate_and_consume_challenge(challenge_id: str, identifier: str) -> 
     )
     
     status_code = result[0]
-    stored_identifier = result[1]
+    # Lua `{1, nil}` arrives as a 1-element list: a missing/expired challenge has no identifier.
+    stored_identifier = result[1] if len(result) > 1 else None
     
     # Decode bytes if needed
     if stored_identifier and isinstance(stored_identifier, bytes):

@@ -17,17 +17,23 @@ import {
 import type { SerializedEditorState } from '@payloadcms/richtext-lexical/lexical'
 import { CollectionConfig } from 'payload'
 import { isVerifiedTranslatorField } from '../access/isVerifiedTranslatorField'
+import { isServiceRequest } from '../access/isServiceRequest'
 import type { User } from '../payload-types' // It's good practice to import your generated types
 import StatusBadge from '../components/StatusBadge'
 import CategorySelector from '../components/CategorySelector'
-import crypto from 'crypto'
+import { sendSyncWebhook } from '../lib/syncWebhook'
 
 type AccessResult = boolean | Record<string, unknown>
 
 const userHasRole = (user: User | null | undefined, roles: string[]): boolean =>
   Boolean(user?.roles?.some((role) => roles.includes(role)))
 
-const articleCreateAccess = ({ req }: { req: { user?: User } }): AccessResult => {
+const articleCreateAccess = ({ req }: { req: { user?: User; headers?: any } }): AccessResult => {
+  if (isServiceRequest(req)) {
+    console.log('[Article access] Create check - Trusted service key, allowing create')
+    return true
+  }
+
   const user = req.user as User | undefined
   
   // Require authentication for create operations - fail securely if no user
@@ -42,7 +48,12 @@ const articleCreateAccess = ({ req }: { req: { user?: User } }): AccessResult =>
   return hasAccess
 }
 
-const articleReadAccess = ({ req }: { req: { user?: User } }): AccessResult => {
+const articleReadAccess = ({ req }: { req: { user?: User; headers?: any } }): AccessResult => {
+  if (isServiceRequest(req)) {
+    console.log('[Article access] Read check - Trusted service key, allowing all articles')
+    return true
+  }
+
   const user = req.user as User | undefined
   if (!user) {
     console.log('[Article access] Read check - No user, allowing published articles only')
@@ -79,7 +90,12 @@ const articleReadAccess = ({ req }: { req: { user?: User } }): AccessResult => {
   }
 }
 
-const articleUpdateAccess = async ({ req, id }: { req: { user?: User; payload: any }; id?: string }): Promise<AccessResult> => {
+const articleUpdateAccess = async ({ req, id }: { req: { user?: User; payload: any; headers?: any }; id?: string }): Promise<AccessResult> => {
+  if (isServiceRequest(req)) {
+    console.log('[Article access] Update check - Trusted service key, allowing update')
+    return true
+  }
+
   const user = req.user as User | undefined
   
   // For form state building (when id is not provided), allow access even without user
@@ -165,7 +181,11 @@ const articleUpdateAccess = async ({ req, id }: { req: { user?: User; payload: a
   return false
 }
 
-const articleDeleteAccess = ({ req }: { req: { user?: User } }): AccessResult => {
+const articleDeleteAccess = ({ req }: { req: { user?: User; headers?: any } }): AccessResult => {
+  if (isServiceRequest(req)) {
+    console.log('[Article access] Delete check - Trusted service key, allowing delete')
+    return true
+  }
   const user = req.user as User | undefined
   if (!user) return false
   return userHasRole(user, ['admin'])
@@ -205,6 +225,47 @@ export const Article: CollectionConfig = {
       type: 'date',
       admin: {
         position: 'sidebar',
+      },
+    },
+    {
+      name: 'sourceUrl',
+      type: 'text',
+      admin: {
+        position: 'sidebar',
+        description: 'Canonical source URL if this article was imported from an external site.',
+      },
+    },
+    {
+      name: 'sourceTier',
+      type: 'select',
+      defaultValue: 'cms',
+      options: [
+        { label: 'CMS (editor-authored)', value: 'cms' },
+        { label: 'Pinned (Foundation / Core / MWEB reference)', value: 'pinned' },
+        { label: 'Web import (needs review)', value: 'web' },
+      ],
+      admin: {
+        position: 'sidebar',
+        description: 'Source hierarchy tier. Pinned docs are authoritative references ingested on a schedule.',
+      },
+    },
+    {
+      name: 'lastReviewedAt',
+      type: 'date',
+      admin: {
+        position: 'sidebar',
+        description: 'When an editor last confirmed this article is still accurate. Shown on source chips.',
+        date: { pickerAppearance: 'dayOnly' },
+      },
+    },
+    {
+      name: 'reviewIntervalDays',
+      type: 'number',
+      defaultValue: 180,
+      min: 0,
+      admin: {
+        position: 'sidebar',
+        description: 'Review window in days. Past this since the last review (or update) the article is flagged stale. 0 disables.',
       },
     },
     {
@@ -292,7 +353,12 @@ export const Article: CollectionConfig = {
         },
       },
       access: {
-        create: ({ req: { user } }: any) => {
+        create: ({ req }: any) => {
+          if (isServiceRequest(req)) {
+            console.log('[Article status field] Create check - Trusted service key, allowing status write')
+            return true
+          }
+          const user = req?.user
           // Allow form state building even without user - Payload's authentication middleware
           // will handle authentication for actual operations. During SSR, user session might
           // not be available even for authenticated users, so we allow access control to pass
@@ -326,125 +392,18 @@ export const Article: CollectionConfig = {
   ],
   hooks: {
     afterChange: [
-      async ({ doc, req, operation }: any) => {
+      async ({ doc, operation }: any) => {
         console.log(`Article "${doc.title}" (ID: ${doc.id}) changed with operation: ${operation}, status: ${doc.status}`);
-        
-        const backendUrl = process.env.BACKEND_URL;
-        if (!backendUrl) {
-          console.error('❌ BACKEND_URL environment variable is not set. Cannot trigger RAG pipeline sync.');
-          return;
-        }
-
-        try {
-          // Prepare webhook payload
-          const payload = JSON.stringify({
-            operation: operation,
-            doc: doc,
-          });
-          
-          // Generate HMAC signature if WEBHOOK_SECRET is configured
-          const webhookSecret = process.env.WEBHOOK_SECRET;
-          const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-          };
-          
-          if (webhookSecret) {
-            // Generate HMAC-SHA256 signature
-            const signature = crypto
-              .createHmac('sha256', webhookSecret)
-              .update(payload)
-              .digest('hex');
-            
-            // Add signature and timestamp headers
-            headers['X-Webhook-Signature'] = signature;
-            headers['X-Webhook-Timestamp'] = Math.floor(Date.now() / 1000).toString();
-            console.log(`🔐 Webhook authentication enabled - Sending signed webhook to backend`);
-          } else {
-            console.warn('⚠️  WEBHOOK_SECRET not configured - Webhook will be sent without authentication');
-          }
-          
-          // Always trigger sync to handle publishing, unpublishing, and updates
-          const response = await fetch(`${backendUrl}/api/v1/sync/payload`, {
-            method: 'POST',
-            headers: headers,
-            body: payload,
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            if (response.status === 401) {
-              console.error(`🔒 Webhook authentication failed for article "${doc.title}" (ID: ${doc.id}). Status: ${response.status}, Error: ${errorText}`);
-            } else {
-              console.error(`❌ Failed to sync article "${doc.title}" (ID: ${doc.id}) to RAG pipeline. Status: ${response.status}, Error: ${errorText}`);
-            }
-          } else {
-            const result = await response.json();
-            console.log(`✅ Successfully triggered RAG pipeline sync for article "${doc.title}" (ID: ${doc.id}):`, result);
-          }
-        } catch (error) {
-          console.error(`💥 Error triggering RAG pipeline sync for article "${doc.title}" (ID: ${doc.id}):`, error);
-        }
+        // Always trigger sync to handle publishing, unpublishing, and updates.
+        // Retries with backoff live in sendSyncWebhook; the weekly reconcile job
+        // catches anything that still slips through.
+        await sendSyncWebhook(operation, doc, `article "${doc.title}" (ID: ${doc.id})`)
       },
     ],
     afterDelete: [
-      async ({ doc, req }: any) => {
+      async ({ doc }: any) => {
         console.log(`Article "${doc.title}" (ID: ${doc.id}) has been deleted.`);
-        
-        const backendUrl = process.env.BACKEND_URL;
-        if (!backendUrl) {
-          console.error('❌ BACKEND_URL environment variable is not set. Cannot trigger RAG pipeline deletion.');
-          return;
-        }
-
-        try {
-          // Prepare webhook payload
-          const payload = JSON.stringify({
-            operation: 'delete',
-            doc: doc,
-          });
-          
-          // Generate HMAC signature if WEBHOOK_SECRET is configured
-          const webhookSecret = process.env.WEBHOOK_SECRET;
-          const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-          };
-          
-          if (webhookSecret) {
-            // Generate HMAC-SHA256 signature
-            const signature = crypto
-              .createHmac('sha256', webhookSecret)
-              .update(payload)
-              .digest('hex');
-            
-            // Add signature and timestamp headers
-            headers['X-Webhook-Signature'] = signature;
-            headers['X-Webhook-Timestamp'] = Math.floor(Date.now() / 1000).toString();
-            console.log(`🔐 Webhook authentication enabled - Sending signed webhook for deletion`);
-          } else {
-            console.warn('⚠️  WEBHOOK_SECRET not configured - Webhook will be sent without authentication');
-          }
-          
-          // Trigger removal from vector store
-          const response = await fetch(`${backendUrl}/api/v1/sync/payload`, {
-            method: 'POST',
-            headers: headers,
-            body: payload,
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            if (response.status === 401) {
-              console.error(`🔒 Webhook authentication failed for deletion of article "${doc.title}" (ID: ${doc.id}). Status: ${response.status}, Error: ${errorText}`);
-            } else {
-              console.error(`❌ Failed to delete article "${doc.title}" (ID: ${doc.id}) from RAG pipeline. Status: ${response.status}, Error: ${errorText}`);
-            }
-          } else {
-            const result = await response.json();
-            console.log(`✅ Successfully triggered RAG pipeline deletion for article "${doc.title}" (ID: ${doc.id}):`, result);
-          }
-        } catch (error) {
-          console.error(`💥 Error triggering RAG pipeline deletion for article "${doc.title}" (ID: ${doc.id}):`, error);
-        }
+        await sendSyncWebhook('delete', doc, `article "${doc.title}" (ID: ${doc.id})`)
       },
     ],
   },

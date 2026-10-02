@@ -21,11 +21,12 @@ Never duplicate retrieval logic outside the graph. Never put generation logic in
 
 `RAGState` is defined as `TypedDict(total=False)` in `rag_graph/state.py`. All keys are optional. Never add required keys — it will break every node that returns a partial state update.
 
-### Nodes (10 total, in execution order)
+### Nodes (11 total, in execution order)
 
 | Node | File | Responsibility |
 |------|------|----------------|
 | sanitize_normalize | `nodes/sanitize_normalize.py` | Input sanitization, history truncation, keyword normalization |
+| safety_gate | `nodes/safety_gate.py` | Incident pin (Redis `admin:incident_pin`), REFUSE/ESCALATE via `services/safety_router.py`, audience label. Early-exits before cache/retrieval. |
 | route | `nodes/route.py` | Complexity classification, history dependency detection |
 | prechecks | `nodes/prechecks.py` | Intent classification, FAQ/cache lookup, query expansion |
 | semantic_cache | `nodes/semantic_cache.py` | Embedding generation, vector cache lookup |
@@ -38,7 +39,11 @@ Never duplicate retrieval logic outside the graph. Never put generation logic in
 
 ### Conditional Exits
 
-Three points can short-circuit to END: after `prechecks` (early answer/error), after `semantic_cache` (cache hit/error), after `retrieve` (error). See `graph.py` lines 34-58.
+Four points can short-circuit to END: after `safety_gate` (pin / refuse / escalate), after `prechecks` (early answer/error), after `semantic_cache` (cache hit/error), after `retrieve` (error). See `graph.py`.
+
+### Source hierarchy and abstention
+
+`retrieve` sets `low_similarity` when the cross-encoder's top `rerank_score` is below `RAG_ABSTAIN_CE_SCORE` (-3.0; FAISS L2 is not a usable signal on this corpus). `astream_query` / `aquery` then follow KB -> live data -> flagged web search (if `USE_SEARCH_GROUNDING` and not `RAG_ABSTAIN_BEFORE_SEARCH`) -> abstain with `KB_ABSTAIN_RESPONSE`. Abstentions set `metadata.abstained`, increment `rag_abstain_total`, are never cached, and are queued as knowledge candidates. Gemini calls go through `services/llm_resilience.py` (breaker + bounded retry); on `LLMUnavailable` the bot says the tool is down instead of guessing.
 
 ### Adding a New Node
 
@@ -52,11 +57,16 @@ Three points can short-circuit to END: after `prechecks` (early answer/error), a
 ### Public Routes (in `main.py`)
 
 - `GET /api/v1/auth/challenge` — fingerprint challenge for rate limiting
-- `POST /api/v1/chat/stream` — streaming SSE chat responses
+- `POST /api/v1/chat/stream` — streaming SSE chat responses (events: `sources` chips, `complete` with `requestId`/`webSources`/`abstained`)
+- `POST /api/v1/chat/feedback` — thumbs up/down filed against cited `source_payload_ids` (`api/v1/feedback.py`)
 
 ### Admin Routes (in `api/v1/admin/`)
 
-All admin routes require Bearer token auth via `verify_admin_token` dependency. Organized into routers: `auth`, `settings`, `redis`, `cache`, `users`, `knowledge_candidates`, `logs`.
+All admin routes require Bearer token auth via `verify_admin_token` dependency. Organized into routers: `auth`, `settings`, `redis`, `cache`, `users`, `knowledge_candidates`, `logs`, `jobs` (cron status + on-demand maintenance), `incident` (incident pin), and `feedback` (by-source view).
+
+### Scheduled jobs (`jobs/maintenance.py`, ARQ cron in `jobs/worker.py`)
+
+`flag_stale_articles`, `run_golden_eval` (`backend/eval/golden_runner.py`), `cluster_gap_candidates`, `reconcile_embeddings`, `ingest_doc_sources` (`data_ingestion/doc_sources.yaml`). Status via `jobs/status.py`; alerts via `monitoring/discord_alerts.send_ops_alert`.
 
 ### Webhook Sync (in `api/v1/sync/`)
 

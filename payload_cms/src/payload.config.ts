@@ -28,6 +28,9 @@ const corsOrigins = [
   'https://chat.lite.space',
   'https://litecoin.com',
   'https://www.litecoin.com',
+  // Local prod-compose still uses NODE_ENV=production; keep localhost admin working.
+  'http://localhost:3000',
+  'http://localhost:3001',
 ]
 
 const csrfOrigins = [
@@ -36,13 +39,9 @@ const csrfOrigins = [
   'https://chat.lite.space',
   'https://litecoin.com',
   'https://www.litecoin.com',
+  'http://localhost:3000',
+  'http://localhost:3001',
 ]
-
-// Only include localhost URLs in development mode
-if (process.env.NODE_ENV !== 'production') {
-  corsOrigins.push('http://localhost:3000', 'http://localhost:3001')
-  csrfOrigins.push('http://localhost:3000', 'http://localhost:3001')
-}
 
 export default buildConfig({
   admin: {

@@ -48,3 +48,19 @@ async def enqueue_refresh_suggested() -> str:
 
 async def enqueue_cleanup_orphans() -> str:
     return await enqueue_job("cleanup_orphans")
+
+
+MAINTENANCE_JOBS = (
+    "flag_stale_articles",
+    "run_golden_eval",
+    "cluster_gap_candidates",
+    "reconcile_embeddings",
+    "ingest_doc_sources",
+)
+
+
+async def enqueue_maintenance(name: str) -> str:
+    """Enqueue one of the scheduled maintenance jobs on demand (admin Jobs page)."""
+    if name not in MAINTENANCE_JOBS:
+        raise ValueError(f"Unknown maintenance job: {name!r}")
+    return await enqueue_job(name)

@@ -199,6 +199,76 @@ groups:
           summary: "Webhook processing failures detected"
           description: "Webhook error rate is {{ $value }} failures/second"
 
+  - name: trust_surface_alerts
+    interval: 1m
+    rules:
+      # Abstain rate spiking means the corpus is behind the questions.
+      - alert: HighAbstainRate
+        expr: |
+          (
+            sum(rate(rag_abstain_total[1h])) /
+            clamp_min(sum(rate(llm_requests_total{operation="generate"}[1h])) + sum(rate(rag_abstain_total[1h])), 0.0001)
+          ) > 0.3
+          and sum(rate(rag_abstain_total[1h])) > 0.002
+        for: 30m
+        labels:
+          severity: warning
+          component: rag_pipeline
+        annotations:
+          summary: "Abstain rate above 30% for the last hour"
+          description: "{{ $value | humanizePercentage }} of answerable questions ended in 'knowledge base does not cover this'. Check the gap queue."
+
+      # Any tool erroring repeatedly: Gemini, Litecoin Space, Payload, Infinity.
+      - alert: ToolErrorsSustained
+        expr: |
+          sum by (tool) (rate(tool_error_total[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: dependencies
+        annotations:
+          summary: "Sustained errors from {{ $labels.tool }}"
+          description: "{{ $labels.tool }} is failing at {{ $value }}/s; the bot is answering 'tool unavailable' or abstaining."
+
+      - alert: GeminiCircuitLikelyOpen
+        expr: |
+          sum(rate(tool_error_total{tool="gemini"}[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: critical
+          component: llm
+        annotations:
+          summary: "Gemini failing continuously (breaker likely open)"
+          description: "Generation is returning the 'answer service unavailable' message. Check Google API status and quota."
+
+      # An incident pin left on for a long time is probably forgotten.
+      - alert: IncidentPinLongRunning
+        expr: |
+          sum(increase(incident_pin_served_total[1h])) > 0
+        for: 48h
+        labels:
+          severity: info
+          component: admin
+        annotations:
+          summary: "Incident pin has been serving answers for 48h+"
+          description: "Clear the pin from the admin dashboard once the incident is over and replace it with a CMS article."
+
+      # Thumbs-down trending up.
+      - alert: NegativeFeedbackSpike
+        expr: |
+          sum(increase(answer_feedback_total{verdict="down"}[6h])) > 10
+          and (
+            sum(increase(answer_feedback_total{verdict="down"}[6h])) /
+            clamp_min(sum(increase(answer_feedback_total[6h])), 1)
+          ) > 0.5
+        for: 15m
+        labels:
+          severity: warning
+          component: content
+        annotations:
+          summary: "More than half of recent feedback is thumbs-down"
+          description: "Open admin /feedback: the by-source view points at the documents to fix."
+
   - name: local_rag_alerts
     interval: 30s
     rules:

@@ -49,6 +49,9 @@ Bearer token auth stored in `localStorage` as `admin_token`:
 | `/dashboard` | `Dashboard.tsx` | System overview, Redis stats |
 | `/knowledge` | `KnowledgeCandidates.tsx` | Knowledge gap review and management |
 | `/questions` | `QuestionLogs.tsx` | Recent question logs and analytics |
+| `/feedback` | `FeedbackReview.tsx` | Thumbs up/down grouped by cited source document |
+| `/jobs` | `JobsPanel.tsx` | ARQ cron status, run-now, reindex |
+| (dashboard) | `IncidentPin.tsx` | Incident override pin (set / clear) |
 
 ### Dashboard Components (map 1:1 to admin API endpoints)
 
@@ -61,6 +64,9 @@ Bearer token auth stored in `localStorage` as `admin_token`:
 | `SuggestedQuestionsCache` | `GET/POST /api/v1/admin/cache/suggested-questions/*` |
 | `KnowledgeCandidates` | `GET/PATCH/POST /api/v1/admin/knowledge-candidates/*` |
 | `QuestionLogs` | `GET /api/v1/admin/llm-logs/recent` |
+| `FeedbackReview` | `GET /api/v1/admin/feedback`, `GET /api/v1/admin/feedback/by-source` |
+| `IncidentPin` | `GET/PUT/DELETE /api/v1/admin/incident-pin` |
+| `JobsPanel` | `GET /api/v1/admin/jobs/status`, `POST /api/v1/admin/jobs/maintenance/{name}`, `POST jobs/reindex*` |
 
 ## Forbidden
 

@@ -49,6 +49,17 @@ class AbusePreventionSettings(BaseModel):
     enable_rate_limit_discord_alerts: Optional[bool] = Field(None, description="Enable Discord alerts when users hit rate limits")
     enable_spend_limit_discord_alerts: Optional[bool] = Field(None, description="Enable Discord alerts for global spend limit blocks")
     enable_cost_throttle_discord_alerts: Optional[bool] = Field(None, description="Enable Discord alerts for individual cost throttling")
+    enable_ops_discord_alerts: Optional[bool] = Field(None, description="Enable Discord alerts for ops events (golden eval, stale docs, reconcile, health)")
+
+
+async def get_setting_value(key: str, default: Any = None) -> Any:
+    """Read one merged setting (Redis override, env fallback) without the HTTP layer."""
+    try:
+        current = await get_current_settings()
+    except Exception:
+        return default
+    value = current.get(key)
+    return default if value is None else value
 
 
 def verify_admin_token(authorization: str = None) -> bool:
@@ -141,6 +152,7 @@ def get_settings_from_env() -> Dict[str, Any]:
         "enable_rate_limit_discord_alerts": os.getenv("ENABLE_RATE_LIMIT_DISCORD_ALERTS", "false").lower() == "true",
         "enable_spend_limit_discord_alerts": os.getenv("ENABLE_SPEND_LIMIT_DISCORD_ALERTS", "false").lower() == "true",
         "enable_cost_throttle_discord_alerts": os.getenv("ENABLE_COST_THROTTLE_DISCORD_ALERTS", "false").lower() == "true",
+        "enable_ops_discord_alerts": os.getenv("DISCORD_OPS_ALERTS_ENABLED", "true").lower() == "true",
     }
 
 

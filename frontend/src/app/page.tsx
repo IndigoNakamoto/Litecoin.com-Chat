@@ -9,6 +9,7 @@ import InputBox from "@/components/InputBox";
 import SuggestedQuestions from "@/components/SuggestedQuestions";
 import { getFingerprintWithChallenge, getFingerprint } from "@/lib/utils/fingerprint";
 import { useScrollContext } from "@/contexts/ScrollContext";
+import type { SourceChip, WebSourceChip } from "@/components/SourceChips";
 
 interface GroundingSource {
   url?: string;
@@ -29,6 +30,10 @@ interface Message {
   id?: string;
   isGrounded?: boolean;
   groundingSources?: GroundingSource[];
+  sources?: SourceChip[];
+  webSources?: WebSourceChip[];
+  abstained?: boolean;
+  requestId?: string;
   blockchainData?: BlockchainData;
   retryInfo?: {
     retryAfterSeconds: number;
@@ -885,9 +890,9 @@ export default function Home() {
       type SSEData = 
         | { status: 'thinking' }
         | { status: 'streaming'; chunk: string }
-        | { status: 'sources'; sources?: Array<{ metadata?: { grounding_metadata?: Record<string, unknown> } }> }
+        | { status: 'sources'; sources?: SourceChip[] }
         | { status: 'follow_ups'; questions?: string[] }
-        | { status: 'complete'; isGrounded?: boolean }
+        | { status: 'complete'; isGrounded?: boolean; webSources?: WebSourceChip[]; abstained?: boolean; requestId?: string }
         | { status: 'error'; error?: string }
         | { status: 'usage_status'; usage_status?: { status: string; warning_level: string | null } }
         | { status: 'blockchain_data'; data_type: string; data: Record<string, unknown> };
@@ -966,10 +971,12 @@ export default function Home() {
             },
           } : null);
         } else if (data.status === 'sources') {
-          // Sources event is informational; detect if search grounding was used
-          // by checking whether the response profile indicates grounding
-          // (grounding_metadata presence is tracked server-side and reflected
-          //  in the answer text via "Based on public sources:" marker)
+          // Structured source chips (title / URL / updated_at) built server-side
+          // from retrieval metadata. The model never writes these.
+          setStreamingMessage(prev => prev ? {
+            ...prev,
+            sources: data.sources || [],
+          } : null);
         } else if (data.status === 'follow_ups') {
           setStreamingMessage(prev => prev ? {
             ...prev,
@@ -983,6 +990,9 @@ export default function Home() {
             status: 'complete',
             isStreamActive: false,
             isGrounded: isGroundedResponse,
+            webSources: data.webSources || [],
+            abstained: data.abstained === true,
+            requestId: data.requestId,
           } : null);
           shouldBreak = true;
         } else if (data.status === 'error') {
@@ -1109,6 +1119,11 @@ export default function Home() {
         content: streamingMessage.content,
         followUpQuestions: streamingMessage.followUpQuestions,
         isGrounded: streamingMessage.isGrounded,
+        sources: streamingMessage.sources,
+        webSources: streamingMessage.webSources,
+        abstained: streamingMessage.abstained,
+        requestId: streamingMessage.requestId,
+        blockchainData: streamingMessage.blockchainData,
       }]);
       setStreamingMessage(null);
     } else if (streamingMessage && streamingMessage.status === 'error') {
@@ -1172,6 +1187,10 @@ export default function Home() {
                 content={msg.content}
                 followUpQuestions={msg.followUpQuestions}
                 isGrounded={msg.isGrounded}
+                sources={msg.sources}
+                webSources={msg.webSources}
+                abstained={msg.abstained}
+                requestId={msg.requestId}
                 blockchainData={msg.blockchainData}
                 retryInfo={msg.retryInfo}
                 onFollowUpClick={handleSendMessage}

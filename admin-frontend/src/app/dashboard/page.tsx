@@ -7,10 +7,11 @@ import { AbusePreventionSettings } from "@/components/AbusePreventionSettings";
 import { SuggestedQuestionsCache } from "@/components/SuggestedQuestionsCache";
 import { ResponseCacheManager } from "@/components/ResponseCacheManager";
 import { UserStatistics } from "@/components/UserStatistics";
+import { IncidentPin } from "@/components/IncidentPin";
 import { Button } from "@/components/ui/button";
 import { authApi } from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { LogOut, FileText, Lightbulb } from "lucide-react";
+import { LogOut, FileText, Lightbulb, ThumbsUp, Timer } from "lucide-react";
 import Link from "next/link";
 
 export default function DashboardPage() {
@@ -40,6 +41,18 @@ export default function DashboardPage() {
                   Question Logs
                 </Button>
               </Link>
+              <Link href="/feedback">
+                <Button variant="outline">
+                  <ThumbsUp className="h-4 w-4 mr-2" />
+                  Feedback
+                </Button>
+              </Link>
+              <Link href="/jobs">
+                <Button variant="outline">
+                  <Timer className="h-4 w-4 mr-2" />
+                  Jobs
+                </Button>
+              </Link>
               <Button variant="outline" onClick={handleLogout}>
                 <LogOut className="h-4 w-4 mr-2" />
                 Logout
@@ -48,6 +61,7 @@ export default function DashboardPage() {
           </div>
         </header>
         <main className="container mx-auto px-4 py-8 space-y-8">
+          <IncidentPin />
           <Dashboard />
           <UserStatistics />
           <AbusePreventionSettings />

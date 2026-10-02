@@ -118,6 +118,64 @@ async def send_spend_limit_alert(
         return False
 
 
+_LEVEL_COLORS = {
+    "info": 0x3B82F6,     # blue
+    "success": 0x22C55E,  # green
+    "warning": 0xFFAA00,  # amber
+    "error": 0xFF0000,    # red
+}
+
+
+async def send_ops_alert(
+    title: str,
+    description: str,
+    level: str = "info",
+    fields: Optional[list] = None,
+    footer: str = "Litecoin Knowledge Hub - Operations",
+) -> bool:
+    """
+    Generic Discord embed for operational events (health, golden-set eval,
+    stale-doc report, reconciliation, incident pin). Honors the
+    `enable_ops_discord_alerts` admin setting when Redis settings are reachable
+    and falls back to DISCORD_OPS_ALERTS_ENABLED (default true).
+
+    `fields` is a list of {"name", "value", "inline"} dicts (max 25).
+    """
+    webhook = os.getenv("DISCORD_OPS_WEBHOOK_URL") or DISCORD_WEBHOOK_URL or os.getenv("DISCORD_WEBHOOK_URL")
+    if not webhook:
+        return False
+
+    enabled = os.getenv("DISCORD_OPS_ALERTS_ENABLED", "true").lower() == "true"
+    try:
+        from backend.api.v1.admin.settings import get_setting_value  # optional
+
+        enabled = bool(await get_setting_value("enable_ops_discord_alerts", enabled))
+    except Exception:
+        pass
+    if not enabled:
+        return False
+
+    embed = {
+        "title": title[:256],
+        "description": description[:4000],
+        "color": _LEVEL_COLORS.get(level, _LEVEL_COLORS["info"]),
+        "fields": [
+            {"name": str(f.get("name", ""))[:256], "value": str(f.get("value", ""))[:1024], "inline": bool(f.get("inline", True))}
+            for f in (fields or [])[:25]
+        ],
+        "footer": {"text": footer},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(webhook, json={"embeds": [embed]})
+            response.raise_for_status()
+        logger.info("Discord ops alert sent: %s", title)
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.error("Failed to send Discord ops alert: %s", e)
+        return False
+
+
 def _mask_identifier(identifier: str) -> str:
     """
     Mask an identifier (IP or fingerprint) for privacy in Discord alerts.

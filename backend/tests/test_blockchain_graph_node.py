@@ -18,6 +18,7 @@ class TestBlockchainGraphRouting:
         dummy_node = AsyncMock(return_value={})
         nodes = {
             "sanitize_normalize": dummy_node,
+            "safety_gate": dummy_node,
             "route": dummy_node,
             "prechecks": dummy_node,
             "semantic_cache": dummy_node,

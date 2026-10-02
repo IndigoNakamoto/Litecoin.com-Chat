@@ -27,12 +27,22 @@ _NORMALIZE_RE = re.compile(r"[a-z0-9]+")
 
 
 class Intent(Enum):
-    """User intent categories."""
+    """User intent categories.
+
+    Mapping to the Foundation-bot taxonomy:
+      Explain  -> SEARCH (RAG over the CMS)
+      Look up  -> BLOCKCHAIN_LOOKUP (tool call, not retrieval)
+      Orient   -> SEARCH with audience=newcomer (handled by the audience router)
+      Escalate -> ESCALATE (hand off a link / ticket, never improvise a position)
+      Refuse   -> REFUSE (advice, keys, legal/tax, impersonation, prompt injection)
+    """
     GREETING = "greeting"
     THANKS = "thanks"
     FAQ_MATCH = "faq_match"
     BLOCKCHAIN_LOOKUP = "blockchain_lookup"
     SEARCH = "search"
+    REFUSE = "refuse"
+    ESCALATE = "escalate"
 
 
 class IntentClassifier:

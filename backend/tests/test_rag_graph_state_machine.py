@@ -111,6 +111,63 @@ async def test_graph_early_return_redis_vector_cache():
     assert state["early_sources"][0].metadata["status"] == "published"
 
 
+class _ScoringRetriever:
+    """Returns docs that already carry a cross-encoder `rerank_score` (as the reranker would set)."""
+
+    def __init__(self, scores):
+        self._scores = scores
+
+    async def ainvoke(self, query: str):
+        return [
+            Document(page_content=f"doc {i}", metadata={"status": "published", "rerank_score": s})
+            for i, s in enumerate(self._scores)
+        ]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_flags_low_similarity_from_cross_encoder_score(monkeypatch):
+    monkeypatch.setenv("RAG_ABSTAIN_CE_SCORE", "-3.0")
+    monkeypatch.setenv("RAG_ABSTAIN_L2_DISTANCE", "0")
+    monkeypatch.setattr("backend.rag_graph.nodes.retrieve.USE_CROSS_ENCODER_RERANK", False)  # scores are pre-set on the docs
+
+    pipeline = _FakePipeline()
+    pipeline.hybrid_retriever = _ScoringRetriever([-11.2, -12.0, -9.8])  # sourdough-class query
+    graph = build_rag_graph(build_nodes(pipeline))
+    state = await graph.ainvoke({"raw_query": "best sourdough recipe", "chat_history_pairs": [], "metadata": {}})
+    assert state["low_similarity"] is True
+    assert state["metadata"]["ce_top_score"] == pytest.approx(-9.8)
+    # docs are kept (a flagged web search may still use the flag, not the docs)
+    assert len(state["published_sources"]) == 3
+
+    pipeline.hybrid_retriever = _ScoringRetriever([4.4, 0.1, -1.4])  # on-topic
+    graph = build_rag_graph(build_nodes(pipeline))
+    state = await graph.ainvoke({"raw_query": "what is mweb", "chat_history_pairs": [], "metadata": {}})
+    assert state["low_similarity"] is False
+
+
+@pytest.mark.asyncio
+async def test_retrieve_no_ce_scores_does_not_abstain(monkeypatch):
+    monkeypatch.setenv("RAG_ABSTAIN_CE_SCORE", "-3.0")
+    monkeypatch.setattr("backend.rag_graph.nodes.retrieve.USE_CROSS_ENCODER_RERANK", False)
+    pipeline = _FakePipeline()
+    pipeline.hybrid_retriever = _DummyRetriever([Document(page_content="a", metadata={"status": "published"})])
+    graph = build_rag_graph(build_nodes(pipeline))
+    state = await graph.ainvoke({"raw_query": "q", "chat_history_pairs": [], "metadata": {}})
+    assert state["low_similarity"] is False
+    assert "ce_top_score" not in state["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_ce_floor_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("RAG_ABSTAIN_CE_SCORE", "off")
+    monkeypatch.setattr("backend.rag_graph.nodes.retrieve.USE_CROSS_ENCODER_RERANK", False)
+    pipeline = _FakePipeline()
+    pipeline.hybrid_retriever = _ScoringRetriever([-11.0])
+    graph = build_rag_graph(build_nodes(pipeline))
+    state = await graph.ainvoke({"raw_query": "q", "chat_history_pairs": [], "metadata": {}})
+    assert state["low_similarity"] is False
+
+
 @pytest.mark.asyncio
 async def test_graph_retrieve_filters_published_sources():
     pipeline = _FakePipeline()

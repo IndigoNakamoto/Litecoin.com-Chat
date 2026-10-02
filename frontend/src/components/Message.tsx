@@ -1,6 +1,8 @@
 import { Button } from "@/components/ui/button";
 import FollowUpQuestions from "@/components/FollowUpQuestions";
 import BlockchainDataRenderer from "@/components/blockchain/BlockchainDataRenderer";
+import SourceChips, { type SourceChip, type WebSourceChip } from "@/components/SourceChips";
+import AnswerFeedback from "@/components/AnswerFeedback";
 import React, { useState, useEffect, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -11,6 +13,10 @@ interface MessageProps {
   content: string;
   followUpQuestions?: string[];
   isGrounded?: boolean;
+  sources?: SourceChip[];
+  webSources?: WebSourceChip[];
+  abstained?: boolean;
+  requestId?: string;
   blockchainData?: {
     dataType: string;
     data: Record<string, unknown>;
@@ -32,6 +38,10 @@ const Message: React.FC<MessageProps> = ({
   content,
   followUpQuestions,
   isGrounded,
+  sources,
+  webSources,
+  abstained,
+  requestId,
   blockchainData,
   messageId,
   retryInfo,
@@ -214,13 +224,31 @@ const Message: React.FC<MessageProps> = ({
             {normalizedContent}
           </ReactMarkdown>
         </div>
+        {abstained && (
+          <div
+            className="mt-4 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+            data-testid="abstain-notice"
+          >
+            <span className="font-medium shrink-0">Not covered yet.</span>
+            <span>This question has been logged so the knowledge base can be extended.</span>
+          </div>
+        )}
+        <SourceChips sources={sources} webSources={webSources} />
         {isGrounded && (
-          <div className="flex items-center gap-1.5 mt-4 pt-3 border-t border-gray-200 text-xs text-gray-500">
-            <svg className="w-3.5 h-3.5 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+          <div className="flex items-center gap-1.5 mt-3 text-xs text-gray-500" data-testid="grounded-badge">
+            <svg className="w-3.5 h-3.5 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
             </svg>
-            <span>This answer includes information supplemented from web search</span>
+            <span>
+              Parts of this answer come from web search and are <strong className="font-medium">unverified</strong> by the Litecoin Foundation.
+            </span>
           </div>
+        )}
+        {requestId && !abstained && content && (
+          <AnswerFeedback
+            requestId={requestId}
+            sourcePayloadIds={(sources ?? []).map((s) => s.payload_id).filter((id): id is string => Boolean(id))}
+          />
         )}
         {followUpQuestions && followUpQuestions.length > 0 && onFollowUpClick && (
           <FollowUpQuestions

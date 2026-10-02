@@ -16,6 +16,21 @@ from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
 
+
+def _sources_cite_payload_id(sources: Any, payload_id: str) -> bool:
+    """True when any cached source (Document or dict) carries this payload_id."""
+    target = str(payload_id)
+    for src in sources or []:
+        meta = None
+        if isinstance(src, Document):
+            meta = src.metadata
+        elif isinstance(src, dict):
+            meta = src.get("metadata")
+        if isinstance(meta, dict) and str(meta.get("payload_id", "")) == target:
+            return True
+    return False
+
+
 class QueryCache:
     """
     In-memory cache for query responses with TTL and size limits.
@@ -98,6 +113,14 @@ class QueryCache:
         """Clear all cached entries."""
         with self._lock:
             self.cache.clear()
+
+    def invalidate_by_payload_id(self, payload_id: str) -> int:
+        """Remove cached answers that cited the given Payload CMS document."""
+        with self._lock:
+            doomed = [k for k, e in self.cache.items() if _sources_cite_payload_id(e.get('sources'), payload_id)]
+            for k in doomed:
+                del self.cache[k]
+            return len(doomed)
 
     def stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
@@ -344,6 +367,13 @@ class SemanticCache:
         with self._lock:
             self.entries.clear()
             self._embedding_cache.clear()
+
+    def invalidate_by_payload_id(self, payload_id: str) -> int:
+        """Remove cached answers that cited the given Payload CMS document."""
+        with self._lock:
+            before = len(self.entries)
+            self.entries = [e for e in self.entries if not _sources_cite_payload_id(e.get("sources"), payload_id)]
+            return before - len(self.entries)
 
     def stats(self) -> Dict[str, Any]:
         """Get cache statistics."""

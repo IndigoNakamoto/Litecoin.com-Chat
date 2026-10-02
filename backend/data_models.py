@@ -35,6 +35,19 @@ class PayloadArticleMetadata(BaseModel):
         None,
         description="Last update time from Payload CMS (updatedAt), propagated to each chunk.",
     )
+    last_reviewed_at: Optional[datetime] = Field(
+        None,
+        description="When an editor last confirmed the article is still accurate (Payload lastReviewedAt).",
+    )
+    review_interval_days: Optional[int] = Field(
+        None,
+        description="Review window in days; a doc older than this since last review is flagged stale.",
+    )
+    source_url: Optional[str] = Field(None, description="Canonical upstream URL for imported articles.")
+    source_tier: str = Field(
+        "cms",
+        description="Source hierarchy tier: cms (editor-authored), pinned (Foundation/Core/MWEB docs), web.",
+    )
     locale: str = Field("en", description="The locale of the content.")
     content_length: int = Field(..., description="The character length of the content in this chunk.")
 
@@ -99,9 +112,48 @@ class PayloadWebhookDoc(BaseModel):
     markdown: str # This is the auto-generated markdown from the hook in Payload
     status: Literal["draft", "published"]
     slug: Optional[str] = None # Make optional
+    sourceUrl: Optional[str] = None
+    lastReviewedAt: Optional[str] = None  # ISO string from Payload
+    reviewIntervalDays: Optional[int] = None
+    sourceTier: Optional[Literal["cms", "pinned", "web"]] = None
 
     class Config:
         extra = "allow" # Allow any other fields from Payload
+
+class AnswerFeedbackRequest(BaseModel):
+    """Thumbs up/down submitted by a reader for a specific answer."""
+    request_id: str = Field(..., min_length=8, max_length=64, description="The chat request this feedback is about.")
+    verdict: Literal["up", "down"] = Field(..., description="Thumbs up or down.")
+    reason: Optional[Literal["outdated", "incorrect", "incomplete", "off_topic", "other"]] = Field(
+        None, description="Optional reason for a thumbs-down."
+    )
+    comment: Optional[str] = Field(None, max_length=500, description="Optional free-text comment.")
+    source_payload_ids: List[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Payload ids of the cited articles; a thumbs-down is filed against these documents.",
+    )
+
+    @field_validator("comment")
+    @classmethod
+    def sanitize_comment(cls, v: Optional[str]) -> Optional[str]:
+        if not v:
+            return v
+        return sanitize_query_input(v, 500)
+
+
+class AnswerFeedback(BaseModel):
+    """Stored feedback record (Mongo `answer_feedback`)."""
+    id: Optional[str] = Field(None)
+    request_id: str
+    verdict: Literal["up", "down"]
+    reason: Optional[str] = None
+    comment: Optional[str] = None
+    source_payload_ids: List[str] = Field(default_factory=list)
+    user_question: Optional[str] = Field(None, description="Copied from the LLM request log when available.")
+    fingerprint_hash: Optional[str] = Field(None, description="Hashed reader identity for dedup, never raw.")
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
 
 class UserQuestion(BaseModel):
     """
@@ -172,6 +224,12 @@ class LLMRequestLog(BaseModel):
     
     # Source documents
     sources_count: int = Field(0, description="Number of source documents retrieved.")
+    source_payload_ids: List[str] = Field(
+        default_factory=list,
+        description="Payload CMS ids of the articles cited on the answer (feedback is filed against these).",
+    )
+    is_grounded: bool = Field(False, description="Whether web search grounding supplemented the answer.")
+    abstained: bool = Field(False, description="Whether the bot abstained because the KB did not cover the question.")
     
     # Caching
     cache_hit: bool = Field(False, description="Whether this was a cache hit.")

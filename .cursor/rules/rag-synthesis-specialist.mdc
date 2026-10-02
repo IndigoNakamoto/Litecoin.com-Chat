@@ -15,13 +15,14 @@ You are governing **final answer generation**: the LLM prompts and the **context
 1. **Metadata-first context:** Every chunk in the LLM context MUST start with a **SOURCE HEADER** before `page_content`: `[SOURCE: title | URL: reader_url_or_n/a]`, then `---` between chunks. URLs are built from chunk `slug` plus `ARTICLE_PUBLIC_BASE_URL` (or `PAYLOAD_PUBLIC_SERVER_URL` / `PAYLOAD_URL`) and `ARTICLE_PUBLIC_PATH_TEMPLATE` (default `/articles/{slug}`). Never emit the literal string `None`.
 2. **Single formatter:** All paths that turn `context_docs` into text for the model or for token estimation MUST use [`format_docs()`](backend/rag_context_format.py). Do not join `page_content` alone.
 3. **Anti-hallucination:** When `context_coverage_note` lists missing query terms, the model must acknowledge KB gaps and use allowed tools only as configured—without inventing article URLs.
-4. **No reader-facing provenance:** User replies must **not** include article titles, URLs, markdown links, a `## Sources` section, or bibliographies. Ground claims in excerpt bodies from SOURCE headers only; do not paste SOURCE HEADER lines into the reply.
+4. **Provenance is structured, never model-written:** The LLM reply text must **not** include article titles, URLs, markdown links, a `## Sources` section, or bibliographies. Source chips (title, reader URL, CMS `updated_at`, stale flag) are built by [`serialize_sources_for_client()`](backend/rag_context_format.py) from retrieval metadata and sent on the SSE `sources` event; web chips come from `serialize_web_sources()` on `complete.webSources`. Do not reintroduce LLM-authored citations.
 5. **Vocabulary sync:** Prefer canonical Litecoin terminology (see [`backend/utils/litecoin_vocabulary.py`](backend/utils/litecoin_vocabulary.py)); avoid generic crypto hype unless it appears in sources.
+6. **Abstain, don't guess:** `retrieve` sets `low_similarity` when the cross-encoder's top `rerank_score` is below `RAG_ABSTAIN_CE_SCORE` (default -3.0; measured on prod: on-topic >= -1.4, off-topic <= -4.5) or when there are no published sources. Dense FAISS L2 does not separate on/off-topic on this corpus; do not reintroduce it as the criterion. Without grounding the pipeline returns `KB_ABSTAIN_RESPONSE` and never calls the LLM; with grounding on, a flagged web search runs first with the weak chunks withheld from context, and the answer is labelled unverified.
 
 ## Grounded vs Non-Grounded Modes
 
-- **Search grounding enabled:** KB and web facts are plain prose in the user reply; no fake CMS links to web-only content. No mandatory provenance prefix in the answer text.
-- **Search grounding disabled:** Same — plain prose only in the reply; web supplements integrated without special citation formatting.
+- **Search grounding enabled:** Answer from excerpts first; anything that came only from web search goes under a trailing `## From the web (unverified)` heading. No fake CMS links to web-only content. The UI shows web sources as an explicitly unverified chip group.
+- **Search grounding disabled:** Plain prose only in the reply; no web supplements.
 
 ## Definition of Done
 
@@ -29,6 +30,6 @@ A synthesis or prompt change is complete only when:
 
 - `pytest backend/tests/` passes (project gate).
 - Tests cover `format_docs()`: headers, URL building with env, `n/a` when no base or no slug.
-- `PayloadArticleMetadata` includes `updated_at` and Payload ingestion copies `updatedAt` when present (`updated_at` supports internal context quality; user replies do not expose citations).
+- `PayloadArticleMetadata` includes `updated_at`, `last_reviewed_at`, and `review_interval_days`; Payload ingestion copies them when present. They power the source chips and the stale-doc report, not the LLM reply text.
 
 Numeric “faithfulness scores” are not part of CI today; add them only when an automated eval is wired in.

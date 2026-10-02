@@ -43,11 +43,6 @@ USE_FAQ_INDEXING = os.getenv("USE_FAQ_INDEXING", "true").lower() == "true"
 USE_SEARCH_GROUNDING = os.getenv("USE_SEARCH_GROUNDING", "true").lower() == "true"
 USE_KNOWLEDGE_GAP_DETECTION = os.getenv("USE_KNOWLEDGE_GAP_DETECTION", "true").lower() == "true"
 
-# Legacy heuristic thresholds – no longer used for chain selection (the model
-# now autonomously decides when to search), kept for backward-compat env parsing.
-SEARCH_GROUNDING_SOURCE_THRESHOLD = int(os.getenv("SEARCH_GROUNDING_SOURCE_THRESHOLD", "2"))
-SEARCH_GROUNDING_RELEVANCE_THRESHOLD = float(os.getenv("SEARCH_GROUNDING_RELEVANCE_THRESHOLD", "3.0"))
-
 # --- Short-query semantic sparsity mitigations ---
 # When enabled, very short queries (e.g. "MWEB", "supply") are expanded via the LLM
 # before retrieval to increase semantic "surface area" for embeddings + retrieval.
@@ -227,6 +222,56 @@ NO_KB_MATCH_RESPONSE = (
     "I couldn't find any relevant content in our knowledge base yet. "
 )
 
+# Canonical abstention. Used whenever the KB does not cover the question and
+# no higher-confidence tier (live data, flagged web search) could answer it.
+KB_ABSTAIN_RESPONSE = (
+    "The knowledge base does not cover this yet. "
+    "I'd rather not guess, so this question has been logged so an editor can add a sourced answer."
+)
+
+# When True, a low-confidence retrieval abstains immediately even if search
+# grounding is enabled. When False (default), grounding is tried as the last
+# tier of the source hierarchy (KB -> live data -> flagged web search -> abstain).
+ABSTAIN_BEFORE_SEARCH = os.getenv("RAG_ABSTAIN_BEFORE_SEARCH", "false").lower() == "true"
+
+
+# Audience router: one label changes length and register, never scope or facts.
+AUDIENCE_PROFILES: Dict[str, str] = {
+    "newcomer": (
+        "AUDIENCE: newcomer. Keep it short (3-6 sentences or one small list). Define every "
+        "Litecoin-specific term the first time it appears. No jargon without a plain-English gloss."
+    ),
+    "holder": (
+        "AUDIENCE: long-term holder. Moderate length. Be concrete about supply, schedule, custody and "
+        "security practices; never comment on price direction or what they should do with their coins."
+    ),
+    "merchant": (
+        "AUDIENCE: merchant. Practical and step-oriented: confirmations, fees, settlement, tooling. "
+        "Prefer numbered steps. Stay within what the excerpts document; name tools only if they appear there."
+    ),
+    "developer": (
+        "AUDIENCE: developer. Precise and complete. Use exact protocol terms, RPC/CLI names and field names "
+        "from the excerpts; include code or command snippets only when the excerpts contain them."
+    ),
+    "journalist": (
+        "AUDIENCE: journalist. Lead with the verifiable fact, then one sentence of context. Separate "
+        "documented facts from anything uncertain, and say plainly when the knowledge base is silent."
+    ),
+}
+
+
+def audience_note(audience: Optional[str]) -> str:
+    return AUDIENCE_PROFILES.get((audience or "").lower(), "")
+
+
+def _record_abstain(reason: str) -> None:
+    try:
+        from backend.monitoring.metrics import rag_abstain_total
+
+        rag_abstain_total.labels(reason=reason).inc()
+    except Exception:
+        pass
+
 # Log feature flag status at module load
 logger.info(
     f"Local RAG Features: rewriter={USE_LOCAL_REWRITER}, "
@@ -249,7 +294,7 @@ SYSTEM_INSTRUCTION = """You are the Litecoin Knowledge Hub's senior technical wr
 
 Knowledge sources (internal use only — do not expose to the reader):
 - Each excerpt begins with a SOURCE HEADER: `[SOURCE: article_title | URL: https://... or n/a]`, then body text, then `---`. Use excerpt bodies only to ground facts.
-- Do **not** include article titles, URLs, markdown links, a `## Sources` section, or any bibliography in your reply. Answer in plain prose grounded in the excerpts.
+- Do **not** include article titles, URLs, markdown links, a `## Sources` section, or any bibliography in your reply. Answer in plain prose grounded in the excerpts (the interface shows sources separately).
 
 Chain of verification (internal — do not print these steps):
 1) List the user's information needs.
@@ -288,8 +333,9 @@ SYSTEM_INSTRUCTION_GROUNDED = """You are the Litecoin Knowledge Hub's senior tec
 Grounding:
 - Answer only about Litecoin and closely related topics where Litecoin is primary; do NOT use Google Search for unrelated topics.
 - Prefer excerpt bodies when they fully answer the question.
-- When excerpts are insufficient or a system note requires it, use Google Search to fill gaps. Integrate web facts in plain prose; do not name tools. Do not attach CMS markdown links to web-only facts.
-- Do **not** include article titles, URLs, markdown links, a `## Sources` section, or any bibliography in your reply. Ground KB content in excerpt bodies without exposing provenance to the reader.
+- When excerpts are insufficient or a system note requires it, use Google Search to fill gaps. Do not name tools. Do not attach CMS markdown links to web-only facts.
+- Keep web-sourced facts separate from Foundation knowledge: answer from the excerpts first, then put anything that came only from web search under a final `## From the web (unverified)` heading. Never blend web claims into the excerpt-grounded sections.
+- Do **not** include article titles, URLs, markdown links, a `## Sources` section, or any bibliography in your reply. Ground KB content in excerpt bodies without exposing provenance to the reader (the interface shows sources separately).
 
 Chain of verification (internal — do not print these steps):
 1) Map claims to excerpt bodies and/or web; mark KB vs web.
@@ -1239,8 +1285,9 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             context_docs: List[Document] = state.get("context_docs") or []
             published_sources: List[Document] = state.get("published_sources") or []
             retrieval_failed = bool(state.get("retrieval_failed", False))
+            low_similarity = bool(state.get("low_similarity", False))
 
-            if state.get("generated_answer") is None and published_sources:
+            if state.get("generated_answer") is None and published_sources and not low_similarity:
                 from backend.rag.generate import generate_answer
 
                 state = await generate_answer(self, state)
@@ -1254,7 +1301,11 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     metadata,
                 )
 
-            if not published_sources:
+            if not published_sources or low_similarity:
+                abstain_reason = (
+                    "retrieval_failed" if retrieval_failed
+                    else ("no_kb_sources" if not published_sources else "low_similarity")
+                )
                 metadata.update(
                     {
                         "input_tokens": 0,
@@ -1263,14 +1314,18 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                         "duration_seconds": time.time() - start_time,
                         "cache_hit": False,
                         "cache_type": None,
+                        "abstained": not retrieval_failed,
+                        "abstain_reason": abstain_reason,
                     }
                 )
-                response_message = self.generic_user_error_message if retrieval_failed else self.no_kb_match_response
+                response_message = self.generic_user_error_message if retrieval_failed else KB_ABSTAIN_RESPONSE
+                if not retrieval_failed:
+                    _record_abstain(abstain_reason)
                 logger.info(
-                    "RAG returning early (no published_sources): retrieval_failed=%s, context_docs_count=%s, reason=%s",
+                    "RAG abstaining: retrieval_failed=%s, context_docs_count=%s, reason=%s",
                     retrieval_failed,
                     len(context_docs),
-                    "generic_error" if retrieval_failed else "no_kb_match",
+                    abstain_reason,
                 )
                 return response_message, [], metadata
 
@@ -1279,7 +1334,8 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Error during async RAG query execution: %s", e, exc_info=True)
+            from backend.services.llm_resilience import LLMUnavailable, LLM_UNAVAILABLE_MESSAGE
+
             metadata = {
                 "input_tokens": 0,
                 "output_tokens": 0,
@@ -1288,6 +1344,11 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                 "cache_hit": False,
                 "cache_type": None,
             }
+            if isinstance(e, LLMUnavailable):
+                logger.warning("Gemini unavailable during aquery: %s", e)
+                metadata["tool_unavailable"] = "gemini"
+                return LLM_UNAVAILABLE_MESSAGE, [], metadata
+            logger.error("Error during async RAG query execution: %s", e, exc_info=True)
             return self.generic_user_error_message, [], metadata
 
     async def astream_query(self, query_text: str, chat_history: List[Tuple[str, str]]):
@@ -1341,18 +1402,40 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                 if follow_up_questions:
                     yield {"type": "follow_ups", "questions": follow_up_questions}
                 metadata.setdefault("duration_seconds", time.time() - start_time)
+                early_cache_type = state.get("early_cache_type") or ""
+                # Pins, refusals, escalations and live lookups are early answers but not cache hits.
+                from_cache = early_cache_type not in (
+                    "incident_pin", "intent_refuse", "intent_escalate",
+                    "blockchain_lookup", "blockchain_lookup_error",
+                )
                 yield {"type": "metadata", "metadata": metadata}
-                yield {"type": "complete", "from_cache": True}
+                yield {
+                    "type": "complete",
+                    "from_cache": from_cache,
+                    "early_type": early_cache_type or None,
+                    "incident_pin_id": state.get("incident_pin_id"),
+                }
                 return
 
             context_docs: List[Document] = state.get("context_docs") or []
             published_sources: List[Document] = state.get("published_sources") or []
             retrieval_failed = bool(state.get("retrieval_failed", False))
+            low_similarity = bool(state.get("low_similarity", False))
 
-            if not published_sources:
+            # Source hierarchy: KB -> (live data handled upstream) -> flagged web search -> abstain.
+            kb_insufficient = retrieval_failed or not published_sources or low_similarity
+            search_as_last_tier = self.search_grounding_enabled and not ABSTAIN_BEFORE_SEARCH and not retrieval_failed
+            if kb_insufficient and not search_as_last_tier:
+                abstain_reason = (
+                    "retrieval_failed" if retrieval_failed
+                    else ("no_kb_sources" if not published_sources else "low_similarity")
+                )
                 yield {"type": "sources", "sources": []}
-                response_message = self.generic_user_error_message if retrieval_failed else self.no_kb_match_response
+                response_message = self.generic_user_error_message if retrieval_failed else KB_ABSTAIN_RESPONSE
                 yield {"type": "chunk", "content": response_message}
+                if not retrieval_failed:
+                    _record_abstain(abstain_reason)
+                    logger.info("Abstaining (%s) for query=%r", abstain_reason, (state.get("sanitized_query") or query_text)[:80])
                 metadata.update(
                     {
                         "input_tokens": 0,
@@ -1361,14 +1444,25 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                         "duration_seconds": time.time() - start_time,
                         "cache_hit": False,
                         "cache_type": None,
+                        "abstained": not retrieval_failed,
+                        "abstain_reason": abstain_reason,
                     }
                 )
                 yield {"type": "metadata", "metadata": metadata}
-                yield {"type": "complete", "from_cache": False, "no_kb_results": True}
+                yield {
+                    "type": "complete",
+                    "from_cache": False,
+                    "no_kb_results": not published_sources,
+                    "abstained": not retrieval_failed,
+                }
                 return
 
-            # Send sources immediately (low-latency UX)
-            yield {"type": "sources", "sources": published_sources}
+            # Send sources immediately (low-latency UX). Low-similarity hits are
+            # not shown as sources: the answer (if any) will come from flagged web search.
+            yield {"type": "sources", "sources": [] if low_similarity else published_sources}
+            if kb_insufficient:
+                metadata["kb_low_confidence"] = True
+                metadata["abstain_reason_candidate"] = "no_kb_sources" if not published_sources else "low_similarity"
 
             converted_history: List[BaseMessage] = state.get("converted_history_messages") or []
             sanitized_query = state.get("sanitized_query") or query_text
@@ -1379,12 +1473,22 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             full_answer = ""
             answer_obj = None
             chunk_count = 0
-            context_text = format_docs(context_docs)
+            # Low-similarity chunks are withheld from the model: generating from weak
+            # context is exactly the failure mode abstention exists to prevent.
+            context_text = "" if low_similarity else format_docs(context_docs)
 
             # Tell the model which query terms are missing from context
             coverage_note = ""
             missing: List[str] = []
-            if self.search_grounding_enabled:
+            if kb_insufficient:
+                coverage_note = (
+                    "IMPORTANT: The knowledge base does NOT cover this question. "
+                    "If it is about Litecoin, you MUST use Google Search and present everything you find "
+                    "under a final `## From the web (unverified)` heading. If it is not about Litecoin, "
+                    "decline briefly."
+                )
+                logger.info("KB insufficient → flagged web search for: %r", sanitized_query[:80])
+            elif self.search_grounding_enabled:
                 missing = self._find_missing_query_terms(sanitized_query, published_sources)
                 if missing:
                     coverage_note = (
@@ -1393,10 +1497,18 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     )
                     logger.info("Context coverage gap → prompting search for: %s", missing)
 
+            audience = state.get("audience")
+            if audience:
+                metadata["audience"] = audience
+                coverage_note = "\n".join(p for p in (audience_note(audience), coverage_note) if p)
+
             logged_first_token = False
-            async for chunk in active_chain.astream(
+            from backend.services.llm_resilience import astream_with_breaker
+
+            async for chunk in astream_with_breaker(
+                active_chain,
                 {"input": sanitized_query, "context": context_text,
-                 "context_coverage_note": coverage_note, "chat_history": converted_history}
+                 "context_coverage_note": coverage_note, "chat_history": converted_history},
             ):
                 chunk_count += 1
                 content = ""
@@ -1450,12 +1562,19 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             # when the library doesn't propagate grounding_metadata.
             if not is_grounded and coverage_note and full_answer:
                 missing_in_answer = [t for t in missing if t in full_answer.lower()]
-                if missing_in_answer:
+                if missing_in_answer or (kb_insufficient and "from the web" in full_answer.lower()):
                     is_grounded = True
                     logger.info(
-                        "Coverage-gap fallback: answer contains missing terms %s → marked grounded",
-                        missing_in_answer,
+                        "Coverage-gap fallback: answer contains %s → marked grounded",
+                        missing_in_answer or "web section heading",
                     )
+            if kb_insufficient and not is_grounded:
+                # The last tier did not fire: the model answered from nothing. Log it as a
+                # gap and flag it so the UI still shows the "not covered" notice.
+                logger.warning("KB insufficient and web search did not ground the answer; flagging")
+                metadata["abstained"] = True
+                metadata["abstain_reason"] = metadata.get("abstain_reason_candidate") or "low_similarity"
+                _record_abstain(metadata["abstain_reason"])
 
             input_tokens, output_tokens = 0, 0
             cost_usd = 0.0
@@ -1485,27 +1604,31 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                 except Exception as e:
                     logger.warning("Error recording spend: %s", e, exc_info=True)
 
-            # Cache write-back
+            # Cache write-back. Web-only / low-confidence answers are not cached: the
+            # whole point of logging them as gaps is that the KB answer will change.
             effective_history = state.get("effective_history_pairs") or []
-            self.query_cache.set(query_text, effective_history, full_answer, published_sources)
+            if not kb_insufficient:
+                self.query_cache.set(query_text, effective_history, full_answer, published_sources)
 
             query_vector = state.get("query_vector")
             rewritten_query = state.get("rewritten_query_for_cache") or state.get("rewritten_query") or ""
-            if self.use_redis_cache and query_vector:
+            if self.use_redis_cache and query_vector and not kb_insufficient:
                 redis_cache = self.get_redis_vector_cache()
                 if redis_cache:
                     try:
                         sources_data = [{"page_content": d.page_content, "metadata": d.metadata} for d in published_sources]
-                        await redis_cache.set(query_vector, rewritten_query, full_answer, sources_data)
+                        await redis_cache.set(
+                            query_vector, rewritten_query, full_answer, sources_data, is_grounded=is_grounded
+                        )
                     except Exception as e:
                         logger.warning("Redis cache storage failed in stream: %s", e)
-            if self.semantic_cache and not self.use_redis_cache:
+            if self.semantic_cache and not self.use_redis_cache and not kb_insufficient:
                 self.semantic_cache.set(rewritten_query, [], full_answer, published_sources)
 
             follow_up_questions = await self.agenerate_follow_up_questions(
                 sanitized_query,
                 full_answer,
-                published_sources,
+                [] if low_similarity else published_sources,
                 chat_history,
             )
             if follow_up_questions:
@@ -1523,10 +1646,11 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     "complexity_route": state.get("complexity_route"),
                     "grounding_metadata": grounding_meta,
                     "is_grounded": is_grounded,
+                    "abstained": bool(metadata.get("abstained", False)),
                 }
             )
             yield {"type": "metadata", "metadata": metadata}
-            yield {"type": "complete", "from_cache": False}
+            yield {"type": "complete", "from_cache": False, "abstained": bool(metadata.get("abstained", False))}
         except HTTPException as he:
             # Preserve previous streaming behavior: emit an error event instead of raising.
             if getattr(he, "status_code", None) == 429:
@@ -1537,7 +1661,8 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                 return
             raise
         except Exception as e:
-            logger.error("Error during streaming RAG query execution: %s", e, exc_info=True)
+            from backend.services.llm_resilience import LLMUnavailable, LLM_UNAVAILABLE_MESSAGE
+
             metadata = {
                 "input_tokens": 0,
                 "output_tokens": 0,
@@ -1546,6 +1671,14 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                 "cache_hit": False,
                 "cache_type": None,
             }
+            if isinstance(e, LLMUnavailable):
+                # Tool is down: say so, do not fill the hole with a guess.
+                logger.warning("Gemini unavailable during streaming: %s", e)
+                metadata["tool_unavailable"] = "gemini"
+                yield {"type": "metadata", "metadata": metadata}
+                yield {"type": "error", "error": LLM_UNAVAILABLE_MESSAGE}
+                return
+            logger.error("Error during streaming RAG query execution: %s", e, exc_info=True)
             yield {"type": "metadata", "metadata": metadata}
             yield {"type": "error", "error": "An error occurred while processing your query. Please try again or rephrase your question."}
 

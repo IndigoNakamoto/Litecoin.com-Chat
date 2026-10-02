@@ -354,6 +354,48 @@ def make_retrieve_node(pipeline: Any):
         if unpublished_count > 0:
             logger.debug("Retrieve: filtered %d unpublished docs from %d total", unpublished_count, len(context_docs))
 
+        # Abstention: "the knowledge base does not cover this".
+        #
+        # Primary signal is the cross-encoder's top relevance score (ms-marco logits).
+        # Measured on the production index: on-topic questions score >= -1.4, clearly
+        # off-topic ones <= -4.5, so RAG_ABSTAIN_CE_SCORE defaults to -3.0. Dense FAISS
+        # L2 does NOT separate on/off-topic on this corpus (off-topic queries often sit
+        # closer than "What is MWEB?"), so the L2 floor is off unless explicitly set.
+        # We do not drop the docs (callers may still run a flagged web search); we flag
+        # low confidence so the pipeline can abstain instead of generating from them.
+        low_similarity = False
+        ce_scores = [
+            d.metadata.get("rerank_score")
+            for d in context_docs
+            if isinstance(d.metadata.get("rerank_score"), (int, float))
+        ]
+        ce_top = max(ce_scores) if ce_scores else None
+        if ce_top is not None:
+            metadata["ce_top_score"] = float(ce_top)
+        ce_floor_raw = os.getenv("RAG_ABSTAIN_CE_SCORE", "-3.0").strip()
+        ce_floor = float(ce_floor_raw) if ce_floor_raw and ce_floor_raw.lower() != "off" else None
+        if ce_floor is not None and ce_top is not None and ce_top < ce_floor:
+            low_similarity = True
+            logger.info(
+                "Low-confidence retrieval: ce_top_score=%.2f < %.2f (query=%r)",
+                ce_top, ce_floor, primary_query[:80],
+            )
+
+        l2_floor = float(os.getenv("RAG_ABSTAIN_L2_DISTANCE", "0") or 0)
+        if (
+            not low_similarity
+            and l2_floor > 0
+            and not is_multi_query
+            and single_query_top_distance is not None
+            and single_query_top_distance > l2_floor
+        ):
+            low_similarity = True
+            logger.info(
+                "Low-confidence retrieval: faiss_top_distance=%.4f > %.2f (query=%r)",
+                single_query_top_distance, l2_floor, primary_query[:80],
+            )
+        metadata["low_similarity"] = low_similarity
+
         from backend.rag.timing import ms_since_t0
 
         t_retrieve = ms_since_t0()
@@ -365,6 +407,7 @@ def make_retrieve_node(pipeline: Any):
                 "context_docs": context_docs,
                 "published_sources": published_sources,
                 "retrieval_failed": any_failed,
+                "low_similarity": low_similarity,
             }
         )
         state["metadata"] = metadata

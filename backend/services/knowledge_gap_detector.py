@@ -22,7 +22,6 @@ from backend.data_models import KnowledgeCandidate
 logger = logging.getLogger(__name__)
 
 DEDUP_SIMILARITY_THRESHOLD = 0.90
-PROVENANCE_MARKER = "Based on public sources:"
 
 try:
     from backend.monitoring.metrics import (
@@ -86,19 +85,20 @@ def _determine_gap_trigger(
     published_sources_count: int,
     answer_text: str,
     grounded_profile: bool = False,
+    abstained: bool = False,
 ) -> Optional[str]:
     """
     Determine which gap signal triggered candidacy.
     Returns the trigger name or None if no gap detected.
     """
+    if abstained:
+        return "abstain"
     if grounding_metadata and grounding_metadata.get("grounding_chunks"):
         return "grounding"
     if grounded_profile:
         return "grounded_chain"
     if published_sources_count == 0:
         return "no_kb_sources"
-    if PROVENANCE_MARKER in answer_text:
-        return "provenance_marker"
     return None
 
 
@@ -112,6 +112,7 @@ async def detect_and_queue_knowledge_gap(
     embedding_model: Any,
     kb_sources: Optional[List[Dict[str, Any]]] = None,
     grounded_profile: bool = False,
+    abstained: bool = False,
 ) -> Optional[str]:
     """
     Detect a knowledge gap and queue a candidate for admin review.
@@ -119,7 +120,9 @@ async def detect_and_queue_knowledge_gap(
     Returns the candidate ID if a new candidate was created, or None if
     the gap was deduplicated or no gap was detected.
     """
-    trigger = _determine_gap_trigger(grounding_metadata, published_sources_count, generated_answer, grounded_profile)
+    trigger = _determine_gap_trigger(
+        grounding_metadata, published_sources_count, generated_answer, grounded_profile, abstained
+    )
     if trigger is None:
         return None
 

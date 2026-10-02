@@ -19,6 +19,41 @@ from ..state import RAGState
 
 logger = logging.getLogger(__name__)
 
+# Public Litecoin Space REST paths per lookup type. Rendered on live-data
+# cards so a reader can see exactly which endpoint produced each number.
+_ENDPOINT_BY_TYPE: Dict[str, str] = {
+    "transaction": "/api/tx/{txid}",
+    "address": "/api/address/{address}",
+    "block": "/api/block/{hash}",
+    "block_tip": "/api/blocks/tip/height",
+    "fees": "/api/v1/fees/recommended",
+    "mempool": "/api/mempool",
+    "hashrate": "/api/v1/mining/hashrate/3d + /api/v1/difficulty-adjustment",
+    "mining_pools": "/api/v1/mining/pools/{period}",
+    "mining_pool": "/api/v1/mining/pool/{slug}",
+    "price": "/api/v1/prices",
+}
+
+SPACE_UNAVAILABLE_MESSAGE = (
+    "**Live blockchain data is temporarily unavailable**\n\n"
+    "The Litecoin Space API is not responding right now, so I can't fetch a "
+    "current value. I won't guess at live numbers. Please try again in a minute, or "
+    "check [Litecoin Space](https://litecoinspace.org) directly."
+)
+
+
+def _stamp_provenance(data: Any, lookup_type: str) -> Any:
+    """Attach `_provenance` (fetched_at, endpoint, source) to a card payload."""
+    if not isinstance(data, dict):
+        return data
+    stamped = dict(data)
+    stamped["_provenance"] = {
+        "source": "Litecoin Space",
+        "endpoint": _ENDPOINT_BY_TYPE.get(lookup_type, "/api"),
+        "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    return stamped
+
 
 def make_blockchain_lookup_node(pipeline: Any):
     async def blockchain_lookup(state: RAGState) -> RAGState:
@@ -195,7 +230,7 @@ def make_blockchain_lookup_node(pipeline: Any):
                         answer += f"**Estimated network hashrate** (reference): {format_hashrate(float(last_est))}\n"
                     except (TypeError, ValueError):
                         pass
-                state["blockchain_data"] = data
+                state["blockchain_data"] = {**data, "period": period_key} if isinstance(data, dict) else data
                 state["blockchain_lookup_type"] = BlockchainLookupType.MINING_POOLS.value
 
             elif entity.startswith("mining_pool:"):
@@ -308,6 +343,9 @@ def make_blockchain_lookup_node(pipeline: Any):
                 state["metadata"] = metadata
                 return state
 
+            lookup_type = state.get("blockchain_lookup_type") or ""
+            state["blockchain_data"] = _stamp_provenance(state.get("blockchain_data"), lookup_type)
+
             state["early_answer"] = answer
             state["early_sources"] = []
             state["early_cache_type"] = "blockchain_lookup"
@@ -324,10 +362,21 @@ def make_blockchain_lookup_node(pipeline: Any):
 
         except Exception as e:
             import httpx as _httpx
+            from backend.services.circuit_breaker import CircuitOpen
 
             logger.error("Blockchain lookup failed for %s: %s", entity, e, exc_info=True)
+            try:
+                from backend.monitoring.metrics import tool_error_total
 
-            if isinstance(e, _httpx.HTTPStatusError) and e.response.status_code == 404:
+                tool_error_total.labels(tool="litecoin_space").inc()
+            except Exception:
+                pass
+
+            if isinstance(e, (CircuitOpen, _httpx.ConnectError, _httpx.TimeoutException)):
+                # Tool is down: say so plainly rather than offering a vague retry.
+                answer = SPACE_UNAVAILABLE_MESSAGE
+                metadata["tool_unavailable"] = "litecoin_space"
+            elif isinstance(e, _httpx.HTTPStatusError) and e.response.status_code == 404:
                 if entity.startswith("tx:"):
                     answer = (
                         f"**Transaction not found**\n\n"

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict
 
 from .sanitize_normalize import make_sanitize_normalize_node
+from .safety_gate import make_safety_gate_node
 from .route import make_route_node
 from .prechecks import make_prechecks_node
 from .semantic_cache import make_semantic_cache_node
@@ -23,6 +24,7 @@ def build_nodes(pipeline: Any) -> Dict[str, Callable[..., Any]]:
     """
     return {
         "sanitize_normalize": make_sanitize_normalize_node(pipeline),
+        "safety_gate": make_safety_gate_node(pipeline),
         "route": make_route_node(pipeline),
         "prechecks": make_prechecks_node(pipeline),
         "semantic_cache": make_semantic_cache_node(pipeline),

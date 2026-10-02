@@ -57,7 +57,13 @@ def make_semantic_cache_node(pipeline: Any):
             redis_cache = pipeline.get_redis_vector_cache() if hasattr(pipeline, "get_redis_vector_cache") else None
             if redis_cache:
                 try:
-                    redis_result = await redis_cache.get(query_vector)
+                    cached_is_grounded = False
+                    if hasattr(redis_cache, "get_entry"):
+                        entry = await redis_cache.get_entry(query_vector)
+                        redis_result = (entry.response, entry.sources) if entry else None
+                        cached_is_grounded = bool(getattr(entry, "is_grounded", False)) if entry else False
+                    else:
+                        redis_result = await redis_cache.get(query_vector)
                     if redis_result:
                         answer, sources_data = redis_result
                         cached_sources = []
@@ -87,6 +93,9 @@ def make_semantic_cache_node(pipeline: Any):
                                 "cache_hit": True,
                                 "cache_type": "redis_vector",
                                 "rewritten_query": rewritten_query if rewritten_query else None,
+                                # Replay the provenance flag the answer was stored with so a
+                                # web-supplemented answer is still labelled as such on a hit.
+                                "is_grounded": cached_is_grounded,
                             }
                         )
                         state["metadata"] = metadata

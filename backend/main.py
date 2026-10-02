@@ -24,6 +24,7 @@ load_dotenv()
 
 # Import the RAG chain constructor and data models
 from backend.rag_pipeline import RAGPipeline, LLM_MODEL_NAME, GENERIC_USER_ERROR_MESSAGE
+from backend.rag_context_format import serialize_sources_for_client, serialize_web_sources
 from backend.data_models import ChatRequest, ChatMessage, UserQuestion, LLMRequestLog
 from backend.api.v1.sync.payload import router as payload_sync_router
 from backend.api.v1.admin.usage import router as admin_router
@@ -35,6 +36,8 @@ from backend.api.v1.admin.cache import router as admin_cache_router
 from backend.api.v1.admin.users import router as admin_users_router
 from backend.api.v1.admin.knowledge_candidates import router as admin_knowledge_candidates_router
 from backend.api.v1.admin.jobs import router as admin_jobs_router
+from backend.api.v1.admin.incident import router as admin_incident_router
+from backend.api.v1.feedback import public_router as feedback_public_router, admin_router as feedback_admin_router
 from backend.dependencies import get_user_questions_collection, get_llm_request_logs_collection
 from bson import ObjectId
 from fastapi.encoders import jsonable_encoder # Import jsonable_encoder
@@ -611,6 +614,9 @@ app.include_router(admin_cache_router, prefix="/api/v1/admin/cache", tags=["Admi
 app.include_router(admin_users_router, prefix="/api/v1/admin/users", tags=["Admin"])
 app.include_router(admin_knowledge_candidates_router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(admin_jobs_router, prefix="/api/v1/admin", tags=["Admin"])
+app.include_router(feedback_public_router, prefix="/api/v1", tags=["Feedback"])
+app.include_router(feedback_admin_router, prefix="/api/v1/admin", tags=["Admin"])
+app.include_router(admin_incident_router, prefix="/api/v1/admin", tags=["Admin"])
 
 # Import cache utilities and suggested questions utility
 from backend.cache_utils import suggested_question_cache
@@ -932,6 +938,9 @@ async def log_llm_request(
     cache_hit: bool = False,
     cache_type: str = None,
     error_message: str = None,
+    source_payload_ids: Optional[List[str]] = None,
+    is_grounded: bool = False,
+    abstained: bool = False,
 ):
     """
     Helper function to log complete LLM request/response data to MongoDB.
@@ -941,6 +950,9 @@ async def log_llm_request(
     try:
         collection = await get_llm_request_logs_collection()
         request_log = LLMRequestLog(
+            source_payload_ids=source_payload_ids or [],
+            is_grounded=is_grounded,
+            abstained=abstained,
             request_id=request_id,
             user_question=user_question,
             chat_history_length=chat_history_length,
@@ -1169,12 +1181,15 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
         full_answer = ""
         metadata = None
         sources_count = 0
+        source_chips: List[Dict[str, Any]] = []
         cache_hit = False
         cache_type = None
         status = "success"
         error_message = None
         grounding_meta = None
         is_grounded = False
+        abstained = False
+        early_type_seen: Optional[str] = None
         
         try:
             # Check usage status and include in stream if not ok
@@ -1251,7 +1266,10 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                         cache_hit = True
                         cache_type = "suggested_question"
                         
-                        # Sources are not sent to the client; sources_count still logged below.
+                        # Structured source chips (title / URL / updated_at) for the trust surface.
+                        source_chips = serialize_sources_for_client(published_sources)
+                        if source_chips:
+                            yield f"data: {json.dumps({'status': 'sources', 'sources': source_chips, 'isComplete': False})}\n\n"
                         
                         # Stream cached response character by character for consistent UX
                         for i, char in enumerate(answer):
@@ -1284,7 +1302,11 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                             "status": "complete",
                             "chunk": "",
                             "isComplete": True,
-                            "fromCache": "suggested_question"
+                            "fromCache": "suggested_question",
+                            "requestId": request_id,
+                            "isGrounded": False,
+                            "webSources": [],
+                            "abstained": False,
                         }
                         yield f"data: {json.dumps(payload)}\n\n"
                         
@@ -1325,18 +1347,27 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
                 elif chunk_data["type"] == "sources":
-                    # Track for logging; do not expose source documents on the wire.
-                    sources_count = sum(
-                        1
-                        for doc in chunk_data["sources"]
-                        if doc.metadata.get("status") == "published"
-                    )
+                    published_docs = [
+                        doc for doc in chunk_data["sources"]
+                        if getattr(doc, "metadata", {}).get("status") == "published"
+                    ]
+                    sources_count = len(published_docs)
+                    # Forward structured chips only (title / URL / updated_at), never raw chunk text.
+                    source_chips = serialize_sources_for_client(published_docs)
+                    if source_chips:
+                        payload = {
+                            "status": "sources",
+                            "sources": source_chips,
+                            "isComplete": False,
+                        }
+                        yield f"data: {json.dumps(payload)}\n\n"
                 elif chunk_data["type"] == "metadata":
                     metadata = chunk_data.get("metadata", {})
                     cache_hit = metadata.get("cache_hit", False)
                     cache_type = metadata.get("cache_type")
                     grounding_meta = metadata.get("grounding_metadata")
                     is_grounded = metadata.get("is_grounded", False)
+                    abstained = bool(metadata.get("abstained", False))
                 elif chunk_data["type"] == "follow_ups":
                     payload = {
                         "status": "follow_ups",
@@ -1346,15 +1377,26 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                     yield f"data: {json.dumps(payload)}\n\n"
                 elif chunk_data["type"] == "complete":
                     from_cache = chunk_data.get("from_cache", False)
+                    early_type = chunk_data.get("early_type")
+                    early_type_seen = early_type
                     if from_cache:
                         cache_hit = True
-                        cache_type = "query"
+                        cache_type = early_type or cache_type or "query"
+                    elif early_type:
+                        cache_type = early_type
+                    abstained = abstained or bool(chunk_data.get("abstained", False))
                     payload = {
                         "status": "complete",
                         "chunk": "",
                         "isComplete": True,
                         "fromCache": from_cache,
                         "isGrounded": is_grounded,
+                        # Web facts are shown as a separate, explicitly unverified group.
+                        "webSources": serialize_web_sources(grounding_meta) if is_grounded else [],
+                        "abstained": abstained,
+                        "requestId": request_id,
+                        "earlyType": early_type,
+                        "incidentPinId": chunk_data.get("incident_pin_id"),
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
                     break
@@ -1411,17 +1453,21 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                 cache_hit=cache_hit,
                 cache_type=cache_type,
                 error_message=error_message,
+                source_payload_ids=[c["payload_id"] for c in source_chips if c.get("payload_id")],
+                is_grounded=is_grounded,
+                abstained=abstained,
             )
 
-            # Knowledge Gap Flywheel: queue candidates when grounding was used
-            # or no KB sources matched.  is_grounded is derived from the actual
-            # grounding_metadata on the LLM response (post-hoc detection).
+            # Knowledge Gap Flywheel: queue candidates when grounding was used,
+            # no KB sources matched, or the bot abstained.  is_grounded is derived
+            # from the actual grounding_metadata on the LLM response.
             if (
                 getattr(rag_pipeline_instance, "use_knowledge_gap_detection", False)
                 and status == "success"
                 and full_answer
                 and not cache_hit
-                and (is_grounded or sources_count == 0)
+                and early_type_seen is None  # refusals, escalations, pins and live lookups are not KB gaps
+                and (is_grounded or sources_count == 0 or abstained)
             ):
                 try:
                     from backend.services.knowledge_gap_detector import detect_and_queue_knowledge_gap
@@ -1434,7 +1480,12 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                         retriever_k=getattr(rag_pipeline_instance, "retriever_k", 14),
                         grounding_metadata=grounding_meta,
                         embedding_model=rag_pipeline_instance.vector_store_manager.embeddings,
+                        kb_sources=[
+                            {"payload_id": c.get("payload_id"), "title": c.get("title"), "url": c.get("url")}
+                            for c in source_chips
+                        ],
                         grounded_profile=is_grounded,
+                        abstained=abstained,
                     )
                 except Exception as e:
                     logger.warning("Failed to queue knowledge gap detection: %s", e)

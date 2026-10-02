@@ -18,6 +18,7 @@ def build_rag_graph(nodes: Dict[str, Callable[..., Any]]):
 
     # Core nodes (names are part of our internal contract)
     graph.add_node("sanitize_normalize", nodes["sanitize_normalize"])
+    graph.add_node("safety_gate", nodes["safety_gate"])  # incident pin, refuse/escalate, audience
     graph.add_node("route", nodes["route"])
     graph.add_node("prechecks", nodes["prechecks"])  # intent + exact cache + embedding kickoff
     graph.add_node("semantic_cache", nodes["semantic_cache"])
@@ -29,7 +30,15 @@ def build_rag_graph(nodes: Dict[str, Callable[..., Any]]):
     graph.add_node("blockchain_lookup", nodes["blockchain_lookup"])
 
     graph.set_entry_point("sanitize_normalize")
-    graph.add_edge("sanitize_normalize", "route")
+    graph.add_edge("sanitize_normalize", "safety_gate")
+
+    # After the safety gate: incident pin / refuse / escalate end immediately.
+    def _after_safety_gate(state: RAGState) -> str:
+        if state.get("early_answer") is not None or state.get("error_message") is not None:
+            return END
+        return "route"
+
+    graph.add_conditional_edges("safety_gate", _after_safety_gate, {END: END, "route": "route"})
     graph.add_edge("route", "prechecks")
 
     # After prechecks: early return, blockchain lookup, or continue to semantic cache.

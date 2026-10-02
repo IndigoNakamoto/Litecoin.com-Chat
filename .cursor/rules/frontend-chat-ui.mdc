@@ -60,7 +60,11 @@ data: {"status": "follow_ups", "questions": [...]}\n
 data: {"status": "complete", ...}\n
 ```
 
-Event types to handle: `thinking`, `streaming`, `follow_ups`, `complete`, `error`, `usage_status`, `blockchain_data`. (Legacy clients may ignore a `sources` event if ever reintroduced.)
+Event types to handle: `thinking`, `streaming`, `sources`, `follow_ups`, `complete`, `error`, `usage_status`, `blockchain_data`.
+
+- `sources` carries structured chips `{payload_id, title, url, updated_at, last_reviewed_at, stale, tier}` built server-side from retrieval metadata (`SourceChips.tsx`). Never parse citations out of the answer text.
+- `complete` carries `isGrounded`, `webSources` (unverified web chips), `abstained`, `requestId` (needed by `AnswerFeedback.tsx` to POST `/api/v1/chat/feedback`), `earlyType`, `incidentPinId`.
+- `blockchain_data.data._provenance` = `{source, endpoint, fetched_at}`; `BlockchainDataRenderer` renders it under every live card.
 
 On 403 `invalid_challenge`, fetch a new challenge from `/api/v1/auth/challenge` and retry once.
 

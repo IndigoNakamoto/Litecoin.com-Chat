@@ -194,6 +194,33 @@ services:
     profiles:
       - monitoring
 
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: litecoin-alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    env_file:
+      - ./.env.docker.prod
+    environment:
+      # Discord webhook for Prometheus alerts (health, spend, cache, tool errors).
+      # Falls back to the general DISCORD_WEBHOOK_URL if a dedicated one is not set.
+      - DISCORD_ALERTMANAGER_WEBHOOK_URL=${DISCORD_ALERTMANAGER_WEBHOOK_URL:-${DISCORD_WEBHOOK_URL:-}}
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.tmpl.yml:ro
+      - alertmanager_data:/alertmanager
+    # The official image has no envsubst; a tiny sh loop substitutes the single
+    # placeholder before starting so the webhook never lands in git.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sed "s|\$${DISCORD_ALERTMANAGER_WEBHOOK_URL}|$${DISCORD_ALERTMANAGER_WEBHOOK_URL}|g" \
+          /etc/alertmanager/alertmanager.tmpl.yml > /tmp/alertmanager.yml && \
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
   grafana:
     image: grafana/grafana:latest
     container_name: litecoin-grafana
@@ -431,6 +458,7 @@ services:
 
 volumes:
   prometheus_data:
+  alertmanager_data:
   grafana_data:
   mongodb_data:
   redis_data:

@@ -1,0 +1,56 @@
+# Alertmanager: routes Prometheus alerts (monitoring/alerts.yml) to Discord.
+#
+# Discord's native webhook needs the `/slack` compatibility suffix to accept a
+# Slack-shaped payload; Alertmanager's slack_configs then works unchanged.
+# Set DISCORD_ALERTMANAGER_WEBHOOK_URL in .env.docker.prod; the entrypoint
+# substitutes it into this file (see docker-compose.prod.yml `alertmanager`).
+
+global:
+  resolve_timeout: 5m
+  slack_api_url: '${DISCORD_ALERTMANAGER_WEBHOOK_URL}/slack'
+
+route:
+  receiver: discord
+  group_by: ['alertname', 'component']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: discord
+      matchers:
+        - severity = critical
+      repeat_interval: 1h
+    - receiver: discord-quiet
+      matchers:
+        - severity = info
+      repeat_interval: 24h
+
+inhibit_rules:
+  # When the backend is down, do not also page about everything downstream of it.
+  - source_matchers:
+      - alertname = ServiceUnhealthy
+    target_matchers:
+      - component =~ "rag_pipeline|llm|webhook|vector_store"
+    equal: ['environment']
+  # Exceeded supersedes warning.
+  - source_matchers:
+      - alertname =~ ".*SpendLimitExceeded"
+    target_matchers:
+      - alertname =~ ".*SpendLimitWarning"
+
+receivers:
+  - name: discord
+    slack_configs:
+      - send_resolved: true
+        title: '{{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+        text: >-
+          {{ range .Alerts }}*{{ .Labels.severity | toUpper }}* · {{ .Labels.component }}
+          {{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
+        footer: 'Litecoin Knowledge Hub · Alertmanager'
+  - name: discord-quiet
+    slack_configs:
+      - send_resolved: false
+        title: 'ℹ️ {{ .CommonLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'

@@ -67,13 +67,26 @@ async def generate_answer(pipeline: Any, state: RAGState) -> RAGState:
                 f"{', '.join(missing)}. You MUST use Google Search for these topics."
             )
 
-    answer_result = await active_chain.ainvoke(
+    audience = state.get("audience")
+    if audience:
+        metadata["audience"] = audience
+        try:
+            from backend.rag_pipeline import audience_note
+
+            coverage_note = "\n".join(p for p in (audience_note(audience), coverage_note) if p)
+        except Exception:  # pragma: no cover - rag_pipeline import is heavy in some test envs
+            pass
+
+    from backend.services.llm_resilience import ainvoke_with_breaker
+
+    answer_result = await ainvoke_with_breaker(
+        active_chain,
         {
             "input": sanitized_query,
             "context": context_text,
             "context_coverage_note": coverage_note,
             "chat_history": converted_history,
-        }
+        },
     )
     answer = answer_result.content if hasattr(answer_result, "content") else str(answer_result)
     llm_duration = time.time() - llm_start
@@ -149,7 +162,9 @@ async def generate_answer(pipeline: Any, state: RAGState) -> RAGState:
                     {"page_content": d.page_content, "metadata": d.metadata}
                     for d in published_sources
                 ]
-                await redis_cache.set(query_vector, rewritten_query, answer, sources_data)
+                await redis_cache.set(
+                    query_vector, rewritten_query, answer, sources_data, is_grounded=is_grounded
+                )
             except Exception as e:
                 logger.warning("Redis cache storage failed: %s", e)
     semantic_cache = getattr(pipeline, "semantic_cache", None)

@@ -74,6 +74,20 @@ class CacheEntry:
     response: str
     sources: List[Dict[str, Any]]
     similarity: float
+    is_grounded: bool = False
+
+
+def _payload_ids_from_sources(sources: List[Dict[str, Any]]) -> List[str]:
+    """Collect distinct Payload CMS document ids referenced by cached sources."""
+    ids: List[str] = []
+    for src in sources or []:
+        meta = src.get("metadata") if isinstance(src, dict) else None
+        if not isinstance(meta, dict):
+            continue
+        pid = meta.get("payload_id")
+        if pid and str(pid) not in ids:
+            ids.append(str(pid))
+    return ids
 
 
 class RedisVectorCache:
@@ -99,6 +113,7 @@ class RedisVectorCache:
         index_name: Optional[str] = None,
         dimension: Optional[int] = None,
         threshold: Optional[float] = None,
+        ttl_seconds: Optional[int] = None,
     ):
         """
         Initialize Redis vector cache.
@@ -108,18 +123,25 @@ class RedisVectorCache:
             index_name: Index name (default: REDIS_CACHE_INDEX_NAME env var)
             dimension: Vector dimension (default: VECTOR_DIMENSION env var or 1024)
             threshold: Similarity threshold (default: REDIS_CACHE_SIMILARITY_THRESHOLD env var or 0.92)
+            ttl_seconds: Per-entry TTL (default: REDIS_CACHE_TTL_SECONDS env var or 7 days; 0 = no expiry)
         """
         self.redis_url = redis_url or os.getenv("REDIS_STACK_URL", "redis://localhost:6379")
         self.index_name = index_name or os.getenv("REDIS_CACHE_INDEX_NAME", self.INDEX_NAME)
         self.dimension = dimension or int(os.getenv("VECTOR_DIMENSION", "1024"))
         self.threshold = threshold or float(os.getenv("REDIS_CACHE_SIMILARITY_THRESHOLD", "0.92"))
+        # Per-key TTL so corrected articles cannot be shadowed forever by an
+        # old cached answer. 0 disables expiry (LFU eviction only).
+        if ttl_seconds is None:
+            ttl_seconds = int(os.getenv("REDIS_CACHE_TTL_SECONDS", str(7 * 24 * 3600)))
+        self.ttl_seconds = max(0, int(ttl_seconds))
         
         self._client = None
         self._index_created = False
         
         logger.info(
             f"RedisVectorCache initialized: url={self._mask_url(self.redis_url)}, "
-            f"index={self.index_name}, dim={self.dimension}, threshold={self.threshold}"
+            f"index={self.index_name}, dim={self.dimension}, threshold={self.threshold}, "
+            f"ttl={self.ttl_seconds}s"
         )
     
     def _mask_url(self, url: str) -> str:
@@ -240,6 +262,22 @@ class RedisVectorCache:
         Returns:
             Tuple of (response, sources) if cache hit, None if miss
         """
+        entry = await self.get_entry(query_vector, k=k)
+        if entry is None:
+            return None
+        return entry.response, entry.sources
+
+    async def get_entry(
+        self,
+        query_vector: List[float],
+        k: int = 1,
+    ) -> Optional[CacheEntry]:
+        """
+        Search cache for similar query and return the full entry.
+
+        Unlike `get`, this preserves `is_grounded` so a cached web-supplemented
+        answer is replayed with the same provenance flag it was stored with.
+        """
         import time
         start_time = time.time()
         
@@ -256,7 +294,7 @@ class RedisVectorCache:
             
             q = (
                 Query(f"*=>[KNN {k} @embedding $vec AS score]")
-                .return_fields("query", "response", "sources", "score")
+                .return_fields("query", "response", "sources", "is_grounded", "score")
                 .sort_by("score")
                 .dialect(2)
             )
@@ -301,15 +339,30 @@ class RedisVectorCache:
             if isinstance(response, bytes):
                 response = response.decode("utf-8")
             
-            sources_raw = best_match.sources
+            sources_raw = getattr(best_match, "sources", None)
             if isinstance(sources_raw, bytes):
                 sources_raw = sources_raw.decode("utf-8")
             sources = json.loads(sources_raw) if sources_raw else []
+
+            grounded_raw = getattr(best_match, "is_grounded", None)
+            if isinstance(grounded_raw, bytes):
+                grounded_raw = grounded_raw.decode("utf-8")
+            is_grounded = str(grounded_raw or "0") == "1"
+
+            query_raw = getattr(best_match, "query", "")
+            if isinstance(query_raw, bytes):
+                query_raw = query_raw.decode("utf-8")
             
             logger.debug(
-                f"Cache hit (similarity {similarity:.3f}) in {latency:.3f}s"
+                f"Cache hit (similarity {similarity:.3f}, grounded={is_grounded}) in {latency:.3f}s"
             )
-            return response, sources
+            return CacheEntry(
+                query=query_raw or "",
+                response=response,
+                sources=sources,
+                similarity=similarity,
+                is_grounded=is_grounded,
+            )
             
         except Exception as e:
             logger.error(f"Redis cache get error: {e}")
@@ -323,6 +376,7 @@ class RedisVectorCache:
         query_text: str,
         response: str,
         sources: List[Dict[str, Any]],
+        is_grounded: bool = False,
     ) -> bool:
         """
         Store entry in cache.
@@ -332,6 +386,7 @@ class RedisVectorCache:
             query_text: Original query text (for debugging)
             response: Response to cache
             sources: Source documents
+            is_grounded: Whether the answer used web search grounding
             
         Returns:
             True if stored successfully, False otherwise
@@ -343,6 +398,7 @@ class RedisVectorCache:
             
             # Serialize sources
             sources_json = json.dumps(sources, default=str)
+            payload_ids = _payload_ids_from_sources(sources)
             
             # Store as hash with vector
             await client.hset(
@@ -352,8 +408,12 @@ class RedisVectorCache:
                     "query": query_text.encode("utf-8"),
                     "response": response.encode("utf-8"),
                     "sources": sources_json.encode("utf-8"),
+                    "is_grounded": b"1" if is_grounded else b"0",
+                    "payload_ids": " ".join(payload_ids).encode("utf-8"),
                 },
             )
+            if self.ttl_seconds > 0:
+                await client.expire(key, self.ttl_seconds)
             
             logger.debug(f"Cached response for query: {query_text[:50]}...")
             return True
@@ -361,6 +421,43 @@ class RedisVectorCache:
         except Exception as e:
             logger.error(f"Redis cache set error: {e}")
             return False
+
+    async def invalidate_by_payload_id(self, payload_id: str) -> int:
+        """
+        Delete every cached answer that cited the given Payload CMS document.
+
+        Called from the CMS webhook on update/unpublish/delete so a corrected
+        article is never shadowed by a stale cached answer.
+
+        Returns:
+            Number of entries removed.
+        """
+        if not payload_id:
+            return 0
+        target = str(payload_id)
+        removed = 0
+        try:
+            client = await self._get_client()
+            async for key in client.scan_iter(match=f"{self.KEY_PREFIX}*"):
+                raw = await client.hget(key, "payload_ids")
+                if not raw:
+                    continue
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="ignore")
+                if target in raw.split():
+                    await client.delete(key)
+                    removed += 1
+            if removed:
+                logger.info(
+                    "Invalidated %d semantic cache entr%s citing payload_id=%s",
+                    removed,
+                    "y" if removed == 1 else "ies",
+                    target,
+                )
+            return removed
+        except Exception as e:
+            logger.error(f"Redis cache invalidate error for payload_id={target}: {e}")
+            return removed
     
     async def delete(self, query_vector: List[float]) -> bool:
         """Delete entry from cache."""

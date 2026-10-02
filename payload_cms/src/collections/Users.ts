@@ -10,6 +10,11 @@ export const Users: CollectionConfig = {
     tokenExpiration: 7200, // 2 hours
     useSessions: true, // Use sessions for better cookie handling
     useAPIKey: true,
+    cookies: {
+      sameSite: 'Lax',
+      // NODE_ENV=production would otherwise set Secure cookies that localhost HTTP drops.
+      secure: (process.env.PAYLOAD_PUBLIC_SERVER_URL || '').startsWith('https://'),
+    },
   },
   access: {
     create: ({ req }) => {

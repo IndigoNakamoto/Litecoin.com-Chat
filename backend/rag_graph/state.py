@@ -50,6 +50,17 @@ class RAGState(TypedDict, total=False):
     context_docs: List[Document]
     published_sources: List[Document]
     retrieval_failed: bool
+    # True when the top vector hit is above RAG_ABSTAIN_L2_DISTANCE (KB does not cover this).
+    low_similarity: bool
+    # Set by the pipeline when it declined to generate ("knowledge base does not cover this yet").
+    abstained: bool
+    abstain_reason: Optional[str]
+
+    # Audience router label (newcomer | holder | merchant | developer | journalist)
+    audience: Optional[str]
+
+    # Incident override served from Redis admin:incident_pin
+    incident_pin_id: Optional[str]
 
     # Generation (non-stream; streaming callers set skip_generation)
     generated_answer: Optional[str]

@@ -60,4 +60,7 @@ services:
     environment:
       # Force Payload to use local MongoDB service
       - DATABASE_URI=mongodb://${MONGO_INITDB_ROOT_USERNAME_ENCODED:-admin}:${MONGO_INITDB_ROOT_PASSWORD_ENCODED}@mongodb:27017/payload_cms?authSource=admin
+      # Admin JS must call this origin. Prod env_file sets cms.lite.space, which
+      # CORS-blocks http://localhost:3001 → "Fetching user failed: Failed to fetch".
+      - PAYLOAD_PUBLIC_SERVER_URL=http://localhost:3001
 

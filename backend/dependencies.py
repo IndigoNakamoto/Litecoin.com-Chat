@@ -133,6 +133,26 @@ async def get_knowledge_candidates_collection() -> AsyncIOMotorCollection:
         raise ConnectionError(f"Error accessing knowledge candidates collection: {e}")
 
 
+ANSWER_FEEDBACK_COLLECTION_NAME = os.getenv("ANSWER_FEEDBACK_COLLECTION_NAME", "answer_feedback")
+
+async def get_answer_feedback_collection() -> AsyncIOMotorCollection:
+    """
+    Dependency function to get the MongoDB collection for reader thumbs up/down feedback.
+    """
+    try:
+        client = await get_mongo_client()
+        if client is None:
+            raise ConnectionError("MongoDB client is not available.")
+
+        database = client[MONGO_DATABASE_NAME]
+        return database[ANSWER_FEEDBACK_COLLECTION_NAME]
+    except ConnectionError as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error accessing answer feedback collection: {e}", exc_info=True)
+        raise ConnectionError(f"Error accessing answer feedback collection: {e}")
+
+
 async def close_mongo_connection():
     """
     Closes the Motor MongoDB client connection.
