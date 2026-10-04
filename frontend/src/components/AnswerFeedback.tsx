@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { ThumbsUp, ThumbsDown, Check } from "lucide-react";
 import { getFingerprint } from "@/lib/utils/fingerprint";
+import { apiUrl } from "@/lib/apiBase";
 
 type Verdict = "up" | "down";
 
@@ -40,7 +41,7 @@ export default function AnswerFeedback({ requestId, sourcePayloadIds }: AnswerFe
       } catch {
         /* fingerprint is best-effort */
       }
-      await fetch("/api/v1/chat/feedback", {
+      await fetch(apiUrl("/api/v1/chat/feedback"), {
         method: "POST",
         headers,
         body: JSON.stringify({

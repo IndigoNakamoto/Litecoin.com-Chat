@@ -25,6 +25,7 @@ load_dotenv()
 # Import the RAG chain constructor and data models
 from backend.rag_pipeline import RAGPipeline, LLM_MODEL_NAME, GENERIC_USER_ERROR_MESSAGE
 from backend.rag_context_format import serialize_sources_for_client, serialize_web_sources
+from backend.services.article_index import get_known_payload_ids
 from backend.data_models import ChatRequest, ChatMessage, UserQuestion, LLMRequestLog
 from backend.api.v1.sync.payload import router as payload_sync_router
 from backend.api.v1.admin.usage import router as admin_router
@@ -38,6 +39,7 @@ from backend.api.v1.admin.knowledge_candidates import router as admin_knowledge_
 from backend.api.v1.admin.jobs import router as admin_jobs_router
 from backend.api.v1.admin.incident import router as admin_incident_router
 from backend.api.v1.feedback import public_router as feedback_public_router, admin_router as feedback_admin_router
+from backend.api.v1.articles import router as public_articles_router
 from backend.dependencies import get_user_questions_collection, get_llm_request_logs_collection
 from bson import ObjectId
 from fastapi.encoders import jsonable_encoder # Import jsonable_encoder
@@ -615,6 +617,7 @@ app.include_router(admin_users_router, prefix="/api/v1/admin/users", tags=["Admi
 app.include_router(admin_knowledge_candidates_router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(admin_jobs_router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(feedback_public_router, prefix="/api/v1", tags=["Feedback"])
+app.include_router(public_articles_router, prefix="/api/v1", tags=["Articles"])
 app.include_router(feedback_admin_router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(admin_incident_router, prefix="/api/v1/admin", tags=["Admin"])
 
@@ -1267,7 +1270,9 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                         cache_type = "suggested_question"
                         
                         # Structured source chips (title / URL / updated_at) for the trust surface.
-                        source_chips = serialize_sources_for_client(published_sources)
+                        source_chips = serialize_sources_for_client(
+                            published_sources, known_ids=await get_known_payload_ids()
+                        )
                         if source_chips:
                             yield f"data: {json.dumps({'status': 'sources', 'sources': source_chips, 'isComplete': False})}\n\n"
                         
@@ -1351,7 +1356,9 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                     ]
                     sources_count = len(published_docs)
                     # Forward structured chips only (title / URL / updated_at), never raw chunk text.
-                    source_chips = serialize_sources_for_client(published_docs)
+                    source_chips = serialize_sources_for_client(
+                        published_docs, known_ids=await get_known_payload_ids()
+                    )
                     if source_chips:
                         payload = {
                             "status": "sources",

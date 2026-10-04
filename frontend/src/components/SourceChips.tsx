@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { BookOpen, Globe, AlertTriangle, ExternalLink, PlayCircle, X } from "lucide-react";
+import ArticleModal from "@/components/ArticleModal";
 
 export interface SourceChip {
   payload_id?: string | null;
@@ -92,11 +93,12 @@ function Chip({
 /**
  * Structured provenance under an assistant answer.
  *
- * Knowledge-base chips link to the article's origin (litecoin.com page, YouTube
- * video, or our own reader page). A YouTube source opens an inline player instead
- * of leaving the page. A past-review-window doc is labelled "needs review". Web
- * chips are a separate group marked unverified so search grounding is never
- * confused with the Foundation's own content.
+ * Knowledge-base chips: a litecoin.com source opens that page; a YouTube source
+ * opens an inline player; an editor-authored article opens in an in-chat modal
+ * (the chat is embedded on litecoin.com, so readers are never sent elsewhere).
+ * A past-review-window doc is labelled "needs review". Web chips are a separate
+ * group marked unverified so search grounding is never confused with the
+ * Foundation's own content.
  */
 export default function SourceChips({
   sources,
@@ -108,6 +110,7 @@ export default function SourceChips({
   const kb = sources ?? [];
   const web = webSources ?? [];
   const [openVideo, setOpenVideo] = useState<SourceChip | null>(null);
+  const [openArticle, setOpenArticle] = useState<SourceChip | null>(null);
   if (kb.length === 0 && web.length === 0) return null;
 
   return (
@@ -122,11 +125,12 @@ export default function SourceChips({
             const updated = formatDate(s.updated_at);
             const reviewed = formatDate(s.last_reviewed_at);
             const isVideo = s.kind === "youtube" && !!s.video_id;
+            const isArticle = s.kind === "article" && !!s.payload_id;
             const tone: keyof typeof TONES = isVideo ? "youtube" : s.stale ? "stale" : "kb";
             const host = s.kind === "external" ? hostLabel(s.url) : null;
             const tooltip = [
               s.title,
-              isVideo ? "Watch video" : host ? `Open on ${host}` : s.url ? "Open article" : null,
+              isVideo ? "Watch video" : isArticle ? "Read article" : host ? `Open on ${host}` : s.url ? "Open article" : null,
               updated ? `Updated ${updated}` : null,
               reviewed ? `Last reviewed ${reviewed}` : null,
               s.stale ? "Past its review window" : null,
@@ -136,8 +140,14 @@ export default function SourceChips({
             return (
               <Chip
                 key={s.payload_id || s.slug || s.title}
-                href={isVideo ? undefined : s.url}
-                onClick={isVideo ? () => setOpenVideo((cur) => (cur?.video_id === s.video_id ? null : s)) : undefined}
+                href={isVideo || isArticle ? undefined : s.url}
+                onClick={
+                  isVideo
+                    ? () => setOpenVideo((cur) => (cur?.video_id === s.video_id ? null : s))
+                    : isArticle
+                      ? () => setOpenArticle(s)
+                      : undefined
+                }
                 tone={tone}
                 title={tooltip}
               >
@@ -182,6 +192,12 @@ export default function SourceChips({
           </div>
         </div>
       )}
+
+      <ArticleModal
+        articleId={openArticle?.payload_id ?? null}
+        title={openArticle?.title}
+        onClose={() => setOpenArticle(null)}
+      />
 
       {web.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">

@@ -125,7 +125,10 @@ def _is_stale(last_reviewed: Any, updated_at: Any, review_interval_days: Any) ->
 
 
 def serialize_sources_for_client(
-    docs: List[Document], published_only: bool = True, max_chips: Optional[int] = None
+    docs: List[Document],
+    published_only: bool = True,
+    max_chips: Optional[int] = None,
+    known_ids: Optional[set] = None,
 ) -> List[Dict[str, Any]]:
     """
     Structured source chips for the chat UI.
@@ -152,6 +155,10 @@ def serialize_sources_for_client(
         payload_id = md.get("payload_id")
         slug = md.get("slug")
         title = md.get("doc_title") or md.get("title") or "Untitled"
+        # Drop chips for articles that no longer exist (stale cache entries seeded
+        # from another environment, deleted articles). Pinned sources have no id.
+        if known_ids is not None and payload_id and str(payload_id) not in known_ids and not md.get("pinned_url"):
+            continue
         key = str(payload_id or slug or title)
         if key in seen:
             continue

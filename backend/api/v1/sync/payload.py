@@ -366,7 +366,16 @@ async def receive_payload_webhook(request: Request, background_tasks: Background
         logger.info(f"📝 Processing doc ID '{payload_doc.id}' with status '{payload_doc.status}' and operation '{operation}'")
         logger.info(f"📖 Document title: '{payload_doc.title}'" if hasattr(payload_doc, 'title') and payload_doc.title else "📖 No title found")
 
-        # Any change to a document invalidates answers that cited it.
+        # Any change to a document invalidates answers that cited it, and the
+        # known-article set used to filter source chips.
+        try:
+            from backend.api.v1.articles import invalidate_article
+            from backend.services.article_index import invalidate_known_payload_ids
+
+            invalidate_known_payload_ids()
+            invalidate_article(payload_doc.id)
+        except Exception:
+            pass
         invalidated = await invalidate_cached_answers_for(payload_doc.id)
         if invalidated:
             logger.info("♻️ Invalidated %d cached answer(s) for doc ID '%s'", invalidated, payload_doc.id)

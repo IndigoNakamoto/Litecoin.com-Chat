@@ -69,6 +69,19 @@ def test_serialize_sources_link_precedence_and_kind(monkeypatch):
     assert by["lc"]["reader_url"] == "https://chat.example/chat/articles/lc"
 
 
+def test_serialize_sources_drops_articles_not_in_known_ids():
+    """Cache entries seeded from another environment carried ids that 404; filter them."""
+    docs = [
+        _doc(payload_id="691b88621923fff808be3d8b", doc_title="Stale"),
+        _doc(payload_id="6a93live", doc_title="Live"),
+        Document(page_content="", metadata={"status": "published", "doc_title": "Pin", "pinned_url": "https://x/n", "payload_id": None}),
+    ]
+    chips = serialize_sources_for_client(docs, known_ids={"6a93live"})
+    assert [c["title"] for c in chips] == ["Live", "Pin"]
+    # known_ids=None means "don't filter" (Mongo unavailable)
+    assert len(serialize_sources_for_client(docs, known_ids=None)) == 3
+
+
 def test_serialize_sources_caps_chip_count_in_relevance_order(monkeypatch):
     monkeypatch.setenv("SOURCE_CHIPS_MAX", "3")
     docs = [_doc(payload_id=str(i), doc_title=f"T{i}") for i in range(8)]
