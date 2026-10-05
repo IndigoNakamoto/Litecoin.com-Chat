@@ -31,11 +31,14 @@ async def fetch_suggested_questions(
     # Build query parameters
     query_params = {
         "sort": "order",
-        "limit": "100"
+        "limit": "500",
     }
     
     if active_only:
-        query_params["where"] = '{"isActive":{"equals":true}}'
+        # Payload 3 ignores a JSON-string `where` (it returned every row, so the
+        # cache warm-up pre-generated answers for inactive questions); the
+        # bracket form is the one its REST API parses.
+        query_params["where[isActive][equals]"] = "true"
     
     # Construct URL
     url = f"{payload_url}/api/suggested-questions"
@@ -47,6 +50,9 @@ async def fetch_suggested_questions(
             
             data = response.json()
             questions = data.get("docs", [])
+            if active_only:
+                # Belt and braces: never hand an inactive question to the pre-cache.
+                questions = [q for q in questions if q.get("isActive") is not False]
             
             logger.info(f"Fetched {len(questions)} suggested questions from Payload CMS at {url}")
             return questions

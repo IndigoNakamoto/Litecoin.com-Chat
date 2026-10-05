@@ -5,9 +5,12 @@ Screen suggested questions against the running backend before activating them.
 For each question the script runs the public chat endpoint (fingerprint challenge
 + SSE stream, exactly like the frontend) and classifies the outcome:
 
-    PASS      knowledge answer with at least one KB source chip
+    PASS      knowledge answer with at least one KB source chip (check the chips
+              with --show-chips: a thin KB can attach unrelated articles)
     WEB_ONLY  answered only from the web tier (no KB chips)   -> keep inactive
     LIVE      routed to a live Litecoin Space / litview card  -> fine for "Live Network Data", not pre-cached
+    CACHED    a replayed answer (suggested / exact / vector cache); clear the
+              caches and screen again before trusting it      -> never activated
     REFUSE / ESCALATE / PIN / ABSTAIN / ERROR                 -> keep inactive
 
 Questions come from Payload (default: inactive ones) or from --questions. With
@@ -124,7 +127,12 @@ async def screen_one(client: httpx.AsyncClient, fp_hash: str, question: str) -> 
                     out.web_sources = len(ev.get("webSources") or [])
                     abstained = bool(ev.get("abstained"))
                     et = out.early_type or ""
-                    if ev.get("incidentPinId") or et == "incident_pin":
+                    from_cache = ev.get("fromCache")
+                    if from_cache or et in ("exact_redis", "redis_vector", "semantic", "exact"):
+                        # A replayed answer says nothing about today's KB; clear the
+                        # caches (admin cache/response/clear) and screen again.
+                        out.verdict = "CACHED"
+                    elif ev.get("incidentPinId") or et == "incident_pin":
                         out.verdict = "PIN"
                     elif et == "intent_refuse":
                         out.verdict = "REFUSE"

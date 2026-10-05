@@ -221,3 +221,44 @@ async def test_suggested_question_cache_cached_flags_pipelines_exists():
     assert set(flags) == {"What is MWEB?", "What is Litecoin?"}
     assert all(isinstance(v, bool) for v in flags.values())
     assert await c.cached_flags([]) == {}
+
+
+@pytest.mark.asyncio
+async def test_fetch_suggested_questions_active_only_uses_bracket_where_and_filters(monkeypatch):
+    """Payload 3 ignores a JSON-string `where`; the warm-up must never see inactive rows."""
+    import backend.utils.suggested_questions as usq
+
+    seen: Dict[str, Any] = {}
+
+    class _Client:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def get(self, url, params=None):
+            seen["url"], seen["params"] = url, dict(params or {})
+            # Emulate a server that ignored the filter and returned everything.
+            body = {"docs": [
+                {"id": "1", "question": "Active one", "isActive": True},
+                {"id": "2", "question": "Inactive one", "isActive": False},
+                {"id": "3", "question": "Legacy row without flag"},
+            ]}
+            r = _Resp(200, body)
+            r.raise_for_status = lambda: None
+            return r
+
+    monkeypatch.setattr(usq.httpx, "AsyncClient", _Client)
+
+    active = await usq.fetch_suggested_questions(payload_url="http://cms", active_only=True)
+    assert seen["url"] == "http://cms/api/suggested-questions"
+    assert seen["params"]["where[isActive][equals]"] == "true" and "where" not in seen["params"]
+    assert [q["id"] for q in active] == ["1", "3"]
+
+    everything = await usq.fetch_suggested_questions(payload_url="http://cms", active_only=False)
+    assert "where[isActive][equals]" not in seen["params"]
+    assert [q["id"] for q in everything] == ["1", "2", "3"]
