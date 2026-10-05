@@ -45,7 +45,9 @@ def make_pipeline(state, chunks=None, follow_ups=None):
 
 
 @pytest.mark.asyncio
-async def test_astream_query_emits_follow_ups_before_complete():
+async def test_astream_query_emits_follow_ups_after_complete():
+    """Follow-ups are a second LLM call and must trail `complete` so the
+    client can unlock the composer as soon as the answer is done."""
     sources = [
         Document(
             page_content="Litecoin was created by Charlie Lee in 2011.",
@@ -70,12 +72,15 @@ async def test_astream_query_emits_follow_ups_before_complete():
     events = [event async for event in pipeline.astream_query("What is Litecoin?", [])]
     event_types = [event["type"] for event in events]
 
-    assert event_types == ["sources", "chunk", "chunk", "follow_ups", "metadata", "complete"]
-    assert events[3]["questions"] == [
+    # "writing" stage marker precedes the first LLM chunk (graph double has no astream,
+    # so no retrieval-stage markers here).
+    assert event_types == ["sources", "stage", "chunk", "chunk", "metadata", "complete", "follow_ups"]
+    assert events[1]["stage"] == "writing"
+    assert events[-1]["questions"] == [
         "How is Litecoin different from Bitcoin?",
         "Who created Litecoin?",
     ]
-    assert events[-1]["from_cache"] is False
+    assert events[5]["from_cache"] is False
     pipeline.agenerate_follow_up_questions.assert_awaited_once()
     pipeline.query_cache.set.assert_called_once()
 
@@ -104,7 +109,7 @@ async def test_astream_query_emits_follow_ups_for_early_answer_cache_path():
     metadata_index = event_types.index("metadata")
     complete_index = event_types.index("complete")
 
-    assert follow_up_index < metadata_index < complete_index
+    assert metadata_index < complete_index < follow_up_index
     assert events[follow_up_index]["questions"] == [
         "When was Litecoin launched?",
         "What problem was it designed to solve?",

@@ -1,11 +1,13 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Send, Sparkles, AlertCircle } from "lucide-react";
+import { Send, Sparkles, AlertCircle, Square } from "lucide-react";
 
 interface InputBoxProps {
   onSendMessage: (message: string) => void;
   isLoading: boolean;
   showConversationActions?: boolean;
   onClearConversation?: () => void;
+  /** Cancel the in-flight answer, keeping whatever has streamed so far. */
+  onStopGeneration?: () => void;
 }
 
 const MAX_QUERY_LENGTH = 400;
@@ -15,6 +17,7 @@ const InputBox: React.FC<InputBoxProps> = ({
   isLoading,
   showConversationActions = false,
   onClearConversation,
+  onStopGeneration,
 }) => {
   const [input, setInput] = useState("");
   const [isFocused, setIsFocused] = useState(false);
@@ -126,14 +129,26 @@ const InputBox: React.FC<InputBoxProps> = ({
             }}
           />
           <div className="flex items-end pb-2 pr-2">
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || isLoading}
-              className="h-10 w-10 rounded-xl bg-gradient-to-r from-primary to-primary/80 border border-primary/20 text-white shadow-lg hover:shadow-xl hover:shadow-primary/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 flex items-center justify-center"
-              aria-label="Send message"
-            >
-              <Send className="h-4 w-4" />
-            </button>
+            {isLoading && onStopGeneration ? (
+              <button
+                type="button"
+                onClick={onStopGeneration}
+                className="h-10 w-10 rounded-xl bg-[#222222] border border-black/20 text-white shadow-lg hover:bg-black transition-all duration-300 shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 flex items-center justify-center"
+                aria-label="Stop generating"
+                data-testid="stop-generation"
+              >
+                <Square className="h-3.5 w-3.5 fill-current" />
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || isLoading}
+                className="h-10 w-10 rounded-xl bg-gradient-to-r from-primary to-primary/80 border border-primary/20 text-white shadow-lg hover:shadow-xl hover:shadow-primary/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 flex items-center justify-center"
+                aria-label="Send message"
+              >
+                <Send className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
         {showWarning && (

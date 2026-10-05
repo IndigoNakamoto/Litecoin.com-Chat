@@ -1,5 +1,7 @@
 # backend/data_models.py
 
+import re
+
 from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 from typing import List, Literal, Optional, Dict, Any
@@ -76,6 +78,13 @@ class ChatRequest(BaseModel):
     query: str = Field(..., description="The user's current query.")
     chat_history: List[ChatMessage] = Field([], description="A list of previous chat messages in the conversation.")
     turnstile_token: Optional[str] = Field(None, description="Optional Cloudflare Turnstile verification token.")
+    category_hint: Optional[str] = Field(
+        None,
+        description=(
+            "Payload category id of the landing-page topic the user clicked through "
+            "(optional). Logged with the question; retrieval may use it as a soft signal."
+        ),
+    )
     
     @field_validator('query')
     @classmethod
@@ -84,6 +93,19 @@ class ChatRequest(BaseModel):
         if not v:
             return v
         return sanitize_query_input(v, MAX_QUERY_LENGTH)
+
+    @field_validator('category_hint')
+    @classmethod
+    def sanitize_category_hint(cls, v: Optional[str]) -> Optional[str]:
+        """Category ids are opaque CMS ids: keep only a safe identifier charset, drop junk."""
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", v):
+            return None
+        return v
 
     class Config:
         json_schema_extra = {
@@ -165,6 +187,8 @@ class UserQuestion(BaseModel):
     chat_history_length: int = Field(0, description="Number of previous messages in the conversation.")
     endpoint_type: Literal["chat", "stream"] = Field(..., description="Which endpoint was used (chat or stream).")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="When the question was asked.")
+    # Landing-page topic the user clicked through (Payload category id), if any.
+    category_hint: Optional[str] = Field(None, description="Payload category id chosen on the landing page, if any.")
     # Fields for future LLM categorization/analysis
     category: Optional[str] = Field(None, description="Category assigned by LLM analysis (to be populated later).")
     tags: List[str] = Field(default_factory=list, description="Tags assigned by LLM analysis (to be populated later).")

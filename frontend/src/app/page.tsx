@@ -10,6 +10,8 @@ import SuggestedQuestions from "@/components/SuggestedQuestions";
 import { getFingerprintWithChallenge, getFingerprint } from "@/lib/utils/fingerprint";
 import { useScrollContext } from "@/contexts/ScrollContext";
 import type { SourceChip, WebSourceChip } from "@/components/SourceChips";
+import type { StreamStage } from "@/components/StreamingMessage";
+import type { QuestionClickMeta } from "@/components/landing/types";
 
 interface GroundingSource {
   url?: string;
@@ -26,6 +28,8 @@ interface Message {
   content: string;
   followUpQuestions?: string[];
   status?: "thinking" | "streaming" | "complete" | "error";
+  /** Progress marker from the backend while status is "thinking". */
+  stage?: StreamStage;
   isStreamActive?: boolean;
   id?: string;
   isGrounded?: boolean;
@@ -34,6 +38,8 @@ interface Message {
   webSources?: WebSourceChip[];
   abstained?: boolean;
   requestId?: string;
+  /** User pressed Stop; content is a partial answer. */
+  stopped?: boolean;
   blockchainData?: BlockchainData;
   retryInfo?: {
     retryAfterSeconds: number;
@@ -65,8 +71,63 @@ interface ErrorResponseData {
   violation_count?: number;
 }
 
+// Conversation survives a reload for the current tab only (sessionStorage).
+const SESSION_STORAGE_KEY = "lkh:chat:messages:v1";
+const SESSION_MAX_MESSAGES = 60;
+
+type PersistedMessage = Pick<
+  Message,
+  | "role" | "content" | "id" | "followUpQuestions" | "isGrounded" | "sources"
+  | "webSources" | "abstained" | "requestId" | "blockchainData" | "stopped"
+>;
+
+function loadPersistedMessages(): Message[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (m): m is PersistedMessage =>
+        !!m && typeof m === "object" && (m as Message).role !== undefined && typeof (m as Message).content === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persistMessages(messages: Message[]) {
+  if (typeof window === "undefined") return;
+  try {
+    if (messages.length === 0) {
+      window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      return;
+    }
+    const slim: PersistedMessage[] = messages.slice(-SESSION_MAX_MESSAGES).map((m) => ({
+      role: m.role,
+      content: m.content,
+      id: m.id,
+      followUpQuestions: m.followUpQuestions,
+      isGrounded: m.isGrounded,
+      sources: m.sources,
+      webSources: m.webSources,
+      abstained: m.abstained,
+      requestId: m.requestId,
+      blockchainData: m.blockchainData,
+      stopped: m.stopped,
+    }));
+    window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(slim));
+  } catch (e) {
+    // Quota or privacy mode: persistence is best-effort.
+    console.debug("Could not persist conversation:", e);
+  }
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
+  // Hydrate from sessionStorage after mount (avoids an SSR/CSR markup mismatch).
+  const [hydrated, setHydrated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<Message | null>(null);
   const [usageWarning, setUsageWarning] = useState<UsageStatus | null>(null);
@@ -77,6 +138,12 @@ export default function Home() {
   const activeStreamIdRef = useRef(0);
   const chatWindowRef = useRef<ChatWindowRef>(null);
   const lastUserMessageIdRef = useRef<string | null>(null);
+  // One unconsumed challenge kept ready so a send does not pay a challenge RTT.
+  // Challenges are one-time use with a 300 s TTL; we re-arm right after each send.
+  const spareChallengeRef = useRef<{ fp: string; expiresAt: number } | null>(null);
+  const prefetchInFlightRef = useRef<Promise<void> | null>(null);
+  const prefetchRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const baseFingerprintRef = useRef<string | null>(null);
   const { setScrollPosition, setPinnedMessageId, resetPinningContext, pinnedMessageId } = useScrollContext();
   
   const getChatApiBaseUrl = useCallback(() => {
@@ -85,7 +152,85 @@ export default function Home() {
     }
     return process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
   }, []);
-  
+
+  const CHALLENGE_DEFAULT_TTL_SECONDS = 300;
+  const CHALLENGE_SAFETY_MARGIN_SECONDS = 20;
+
+  /** Take the spare challenge if it is still valid; otherwise null. */
+  const takeSpareChallenge = (): string | null => {
+    const spare = spareChallengeRef.current;
+    spareChallengeRef.current = null;
+    if (spare && spare.expiresAt > Date.now()) return spare.fp;
+    return null;
+  };
+
+  /**
+   * Fetch one challenge in the background and keep it as the spare.
+   * Silent on failure: the next send simply falls back to fetch-on-send.
+   */
+  const prefetchChallenge = useCallback((): Promise<void> => {
+    const existing = spareChallengeRef.current;
+    if (existing && existing.expiresAt > Date.now()) return Promise.resolve();
+    if (prefetchInFlightRef.current) return prefetchInFlightRef.current;
+
+    const run = (async () => {
+      try {
+        let baseFp = baseFingerprintRef.current;
+        if (!baseFp) {
+          baseFp = await getFingerprint();
+          baseFingerprintRef.current = baseFp;
+        }
+        const headers: Record<string, string> = {};
+        if (baseFp) headers["X-Fingerprint"] = baseFp;
+        const response = await fetch(`${getChatApiBaseUrl()}/api/v1/auth/challenge`, { headers });
+
+        if (response.ok) {
+          const data = await response.json();
+          const challengeId = data?.challenge;
+          const ttlSeconds = Number(data?.expires_in_seconds) || CHALLENGE_DEFAULT_TTL_SECONDS;
+          if (challengeId && challengeId !== "disabled") {
+            const fp = await getFingerprintWithChallenge(challengeId, baseFp);
+            spareChallengeRef.current = {
+              fp,
+              expiresAt: Date.now() + Math.max(0, ttlSeconds - CHALLENGE_SAFETY_MARGIN_SECONDS) * 1000,
+            };
+            setFingerprint(fp);
+          } else {
+            // Challenge-response disabled server-side: the base fingerprint is enough.
+            setFingerprint(baseFp);
+          }
+          return;
+        }
+
+        if (response.status === 429) {
+          // The challenge endpoint allows one new challenge every few seconds. On a plain
+          // rate limit, re-arm after the server's hint; on a ban (too_many_challenges) do not.
+          let errorType: string | undefined;
+          let retryAfter = 3;
+          try {
+            const body = await response.json();
+            const detail = body?.detail ?? body;
+            errorType = detail?.error;
+            retryAfter = Number(detail?.retry_after_seconds) || retryAfter;
+          } catch {
+            // ignore parse errors
+          }
+          if (errorType !== "too_many_challenges" && !prefetchRetryTimerRef.current && retryAfter <= 30) {
+            prefetchRetryTimerRef.current = setTimeout(() => {
+              prefetchRetryTimerRef.current = null;
+              void prefetchChallenge();
+            }, (retryAfter + 0.5) * 1000);
+          }
+        }
+      } catch (e) {
+        console.debug("Challenge prefetch failed (will fetch on send):", e);
+      } finally {
+        prefetchInFlightRef.current = null;
+      }
+    })();
+    prefetchInFlightRef.current = run;
+    return run;
+  }, [getChatApiBaseUrl]);
   
   const clearConversation = useCallback(() => {
     // Invalidate any in-flight stream loop so it stops updating state.
@@ -160,13 +305,24 @@ export default function Home() {
 
   // Helper function to ensure we have a fresh challenge and fingerprint
   const ensureFreshFingerprint = async (): Promise<string | null> => {
+    // Fast path: use the prefetched spare (saves one round trip per send).
+    if (prefetchInFlightRef.current) {
+      try { await prefetchInFlightRef.current; } catch { /* fall through */ }
+    }
+    const spare = takeSpareChallenge();
+    if (spare) {
+      console.debug("Using prefetched challenge");
+      return spare;
+    }
+
     // Extract base fingerprint from current state (removing challenge prefix if present)
-    let baseFp = extractBaseFingerprint(_fingerprint);
+    let baseFp = baseFingerprintRef.current || extractBaseFingerprint(_fingerprint);
     if (!baseFp) {
       // Generate a base fingerprint immediately if state is not yet ready
       console.debug("Generated base fingerprint for challenge request (state was null)");
       baseFp = await getFingerprint();
     }
+    baseFingerprintRef.current = baseFp;
     
     try {
       const backendUrl = getChatApiBaseUrl();
@@ -320,62 +476,46 @@ export default function Home() {
 
   const MAX_QUERY_LENGTH = 400;
   
-  // Fetch challenge and generate fingerprint on mount
+  // Restore the conversation for this tab, then mirror every change back.
   useEffect(() => {
-    const fetchChallengeAndGenerateFingerprint = async () => {
-      // Extract base fingerprint (will be null on first mount)
-      let baseFp = extractBaseFingerprint(_fingerprint);
-      if (!baseFp) {
-        // Generate a base fingerprint immediately if state is not yet ready
-        console.debug("Generated base fingerprint for challenge request on mount (state was null)");
-        baseFp = await getFingerprint();
-      }
-      
-      try {
-        const backendUrl = getChatApiBaseUrl();
-        
-        // Always send base fingerprint in X-Fingerprint header so backend uses hash instead of IP
-        const headers: Record<string, string> = {};
-        if (baseFp) {
-          headers["X-Fingerprint"] = baseFp;
-        }
-        
-        const response = await fetch(`${backendUrl}/api/v1/auth/challenge`, {
-          headers,
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          const challengeId = data.challenge;
-          
-          if (challengeId && challengeId !== "disabled") {
-            // Generate fingerprint with challenge using the same base hash we sent to the challenge endpoint
-            const fp = await getFingerprintWithChallenge(challengeId, baseFp);
-            setFingerprint(fp);
-            // Note: No background refresh needed - challenges are fetched on-demand before each request
-            // via ensureFreshFingerprint() in handleSendMessage()
-          } else {
-            // Challenge disabled, generate fingerprint without challenge (backward compatibility)
-            const fp = baseFp || await getFingerprint();
-            setFingerprint(fp);
-          }
-        } else {
-          // Challenge fetch failed, generate fingerprint without challenge (backward compatibility)
-          const fp = baseFp || await getFingerprint();
-          setFingerprint(fp);
-        }
-      } catch (error) {
-        console.debug("Failed to fetch challenge:", error);
-        // Generate fingerprint without challenge (backward compatibility)
-        const fp = baseFp || await getFingerprint();
-        setFingerprint(fp);
+    const restored = loadPersistedMessages();
+    if (restored.length > 0) setMessages(restored);
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    persistMessages(messages);
+  }, [messages, hydrated]);
+
+  /** Stop the in-flight answer; keep what has streamed so far as the message. */
+  const handleStopGeneration = useCallback(() => {
+    activeStreamIdRef.current += 1;
+    try {
+      streamReaderRef.current?.cancel();
+    } catch (e) {
+      console.debug("Failed to cancel stream reader on stop (safe to ignore):", e);
+    } finally {
+      streamReaderRef.current = null;
+    }
+    setStreamingMessage((prev) => {
+      if (!prev) return null;
+      if (!prev.content.trim()) return null; // nothing arrived yet: just drop the placeholder
+      return { ...prev, status: "complete", isStreamActive: false, stopped: true };
+    });
+    setIsLoading(false);
+  }, []);
+
+  // Arm the spare challenge on mount so the first send is a single round trip.
+  useEffect(() => {
+    void prefetchChallenge();
+    return () => {
+      if (prefetchRetryTimerRef.current) {
+        clearTimeout(prefetchRetryTimerRef.current);
+        prefetchRetryTimerRef.current = null;
       }
     };
-
-    fetchChallengeAndGenerateFingerprint();
-    // _fingerprint is intentionally excluded - we only want to fetch on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [prefetchChallenge]);
 
 
   // Retry handler for failed messages
@@ -408,7 +548,10 @@ export default function Home() {
     await handleSendMessage(originalMessage);
   };
 
-  const handleSendMessage = async (message: string, _metadata?: { fromFeelingLit?: boolean; originalQuestion?: string }) => {
+  const handleSendMessage = async (message: string, metadata?: QuestionClickMeta) => {
+    // Landing-page topic the question came from (Payload category id); the backend
+    // logs it and may use it as a soft retrieval signal.
+    const categoryHint = metadata?.categoryId || undefined;
     // Validate message length
     if (message.length > MAX_QUERY_LENGTH) {
       alert(`Message is too long. Maximum length is ${MAX_QUERY_LENGTH} characters. Your message is ${message.length} characters.`);
@@ -469,6 +612,14 @@ export default function Home() {
       // Close any existing connection
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
+      }
+      // A previous stream may still be reading its trailing follow-ups; drop it.
+      try {
+        streamReaderRef.current?.cancel();
+      } catch (e) {
+        console.debug("Failed to cancel previous stream reader (safe to ignore):", e);
+      } finally {
+        streamReaderRef.current = null;
       }
 
       const backendUrl = getChatApiBaseUrl();
@@ -577,11 +728,20 @@ export default function Home() {
         headers["X-Fingerprint"] = currentFingerprint;
       }
       
+      const requestBody = JSON.stringify({
+        query: trimmedMessage,
+        chat_history: chatHistoryForBackend,
+        ...(categoryHint ? { category_hint: categoryHint } : {}),
+      });
       let response = await fetch(`${backendUrl}/api/v1/chat/stream`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ query: trimmedMessage, chat_history: chatHistoryForBackend }),
+        body: requestBody,
       });
+
+      // The server has consumed this challenge by the time headers arrive: re-arm the
+      // spare now, off the critical path, so the next send is again one round trip.
+      void prefetchChallenge();
 
       // Handle HTTP errors explicitly so we can surface clear messages (e.g., rate limiting)
       if (!response.ok) {
@@ -599,8 +759,9 @@ export default function Home() {
                 const retryResponse = await fetch(`${backendUrl}/api/v1/chat/stream`, {
                   method: "POST",
                   headers,
-                  body: JSON.stringify({ query: trimmedMessage, chat_history: chatHistoryForBackend }),
+                  body: requestBody,
                 });
+                void prefetchChallenge();
                 
                 if (retryResponse.ok) {
                   // Retry succeeded, replace response with retryResponse and continue
@@ -880,6 +1041,9 @@ export default function Home() {
       let buffer = "";
       let shouldBreak = false;
       let isGroundedResponse = false;
+      // Set on `complete`; trailing `follow_ups` are attached to this message.
+      let completedRequestId: string | undefined;
+      let postCompleteTimer: ReturnType<typeof setTimeout> | null = null;
 
       // Render streamed text as it arrives. Chunks are coalesced to one state
       // update per animation frame: cached answers are replayed character by
@@ -909,10 +1073,10 @@ export default function Home() {
 
       // Type for SSE data objects
       type SSEData = 
-        | { status: 'thinking' }
+        | { status: 'thinking'; stage?: StreamStage }
         | { status: 'streaming'; chunk: string }
         | { status: 'sources'; sources?: SourceChip[] }
-        | { status: 'follow_ups'; questions?: string[] }
+        | { status: 'follow_ups'; questions?: string[]; requestId?: string }
         | { status: 'complete'; isGrounded?: boolean; webSources?: WebSourceChip[]; abstained?: boolean; requestId?: string }
         | { status: 'error'; error?: string }
         | { status: 'usage_status'; usage_status?: { status: string; warning_level: string | null } }
@@ -936,7 +1100,14 @@ export default function Home() {
             setUsageWarning(null);
           }
         } else if (data.status === 'thinking') {
-          setStreamingMessage(prev => prev ? { ...prev, status: 'thinking' } : null);
+          // Stage markers (searching / checking_live_data / writing) label the wait.
+          // Once text is flowing, a late marker must not flip the status back.
+          const stage = data.stage;
+          setStreamingMessage(prev => {
+            if (!prev) return null;
+            if (prev.status === 'streaming' && accumulatedContent) return stage ? { ...prev, stage } : prev;
+            return { ...prev, status: 'thinking', stage: stage ?? prev.stage };
+          });
         } else if (data.status === 'streaming') {
           accumulatedContent += data.chunk;
           scheduleFlush();
@@ -956,12 +1127,29 @@ export default function Home() {
             sources: data.sources || [],
           } : null);
         } else if (data.status === 'follow_ups') {
-          setStreamingMessage(prev => prev ? {
-            ...prev,
-            followUpQuestions: data.questions || []
-          } : null);
+          // Follow-ups arrive *after* `complete` (they are a second LLM call).
+          // By then the message may still be the streaming message, or it may
+          // already have been moved into `messages` — handle both, matching on
+          // requestId so an older answer is never decorated by mistake.
+          const questions = data.questions || [];
+          const targetRequestId = data.requestId || completedRequestId;
+          setStreamingMessage(prev => prev ? { ...prev, followUpQuestions: questions } : prev);
+          if (targetRequestId) {
+            setMessages(prev => {
+              for (let i = prev.length - 1; i >= 0; i--) {
+                const m = prev[i];
+                if (m.role !== 'ai') continue;
+                if (m.requestId !== targetRequestId) break;
+                const updated = [...prev];
+                updated[i] = { ...m, followUpQuestions: questions };
+                return updated;
+              }
+              return prev;
+            });
+          }
         } else if (data.status === 'complete') {
           isGroundedResponse = data.isGrounded === true;
+          completedRequestId = data.requestId;
           setStreamingMessage(prev => prev ? {
             ...prev,
             content: accumulatedContent,
@@ -972,7 +1160,14 @@ export default function Home() {
             abstained: data.abstained === true,
             requestId: data.requestId,
           } : null);
-          shouldBreak = true;
+          // The answer is done: unlock the composer now. Keep reading for the
+          // trailing `follow_ups` event, but never hang on it.
+          setIsLoading(false);
+          postCompleteTimer = setTimeout(() => {
+            if (streamId === activeStreamIdRef.current) {
+              try { streamReader.cancel(); } catch { /* ignore */ }
+            }
+          }, 20000);
         } else if (data.status === 'error') {
           setStreamingMessage(prev => prev ? {
             ...prev,
@@ -1044,7 +1239,8 @@ export default function Home() {
           }
         } catch (error) {
           // If the conversation was cleared (or a newer stream started), swallow any errors from canceling/abandoning.
-          if (streamId === activeStreamIdRef.current) {
+          // Errors after `complete` (e.g. the follow-ups read being cancelled) must not clobber a finished answer.
+          if (streamId === activeStreamIdRef.current && !completedRequestId) {
             console.error('Stream processing error:', error);
             setStreamingMessage(prev => prev ? {
               ...prev,
@@ -1053,6 +1249,8 @@ export default function Home() {
               isStreamActive: false
             } : null);
           }
+        } finally {
+          if (postCompleteTimer) clearTimeout(postCompleteTimer);
         }
       };
 
@@ -1095,12 +1293,14 @@ export default function Home() {
       setMessages(prev => [...prev, {
         role: streamingMessage.role,
         content: streamingMessage.content,
+        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
         followUpQuestions: streamingMessage.followUpQuestions,
         isGrounded: streamingMessage.isGrounded,
         sources: streamingMessage.sources,
         webSources: streamingMessage.webSources,
         abstained: streamingMessage.abstained,
         requestId: streamingMessage.requestId,
+        stopped: streamingMessage.stopped,
         blockchainData: streamingMessage.blockchainData,
       }]);
       setStreamingMessage(null);
@@ -1144,7 +1344,10 @@ export default function Home() {
         </div>
       )}
       <div className="flex-1 min-h-0 overflow-hidden relative z-10 flex flex-col">
-        {messages.length === 0 && !streamingMessage && !isLoading ? (
+        {!hydrated ? (
+          // One tick while the tab's conversation is restored; avoids flashing the landing page.
+          <div className="flex-1 min-h-0" aria-hidden />
+        ) : messages.length === 0 && !streamingMessage && !isLoading ? (
           <div className="flex-1 min-h-0 overflow-y-auto relative z-10">
             <div className="flex min-h-full items-center justify-center py-8">
               <SuggestedQuestions onQuestionClick={handleSendMessage} />
@@ -1169,6 +1372,7 @@ export default function Home() {
                 webSources={msg.webSources}
                 abstained={msg.abstained}
                 requestId={msg.requestId}
+                stopped={msg.stopped}
                 blockchainData={msg.blockchainData}
                 retryInfo={msg.retryInfo}
                 onFollowUpClick={handleSendMessage}
@@ -1179,6 +1383,7 @@ export default function Home() {
               <StreamingMessage
                 content={streamingMessage.content}
                 status={streamingMessage.status || "thinking"}
+                stage={streamingMessage.stage}
                 isStreamActive={streamingMessage.isStreamActive || false}
               />
             )}
@@ -1190,6 +1395,7 @@ export default function Home() {
           isLoading={isLoading}
           showConversationActions={messages.length > 0 || !!streamingMessage || isLoading}
           onClearConversation={clearConversation}
+          onStopGeneration={handleStopGeneration}
         />
       </div>
       

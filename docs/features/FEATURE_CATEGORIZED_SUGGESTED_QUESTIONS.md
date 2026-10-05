@@ -4,11 +4,11 @@
 
 This feature adds **category-based organization** to suggested questions, allowing users to first select a category and then view questions specific to that category. This improves discoverability and helps users find relevant questions more easily by organizing them into logical groups.
 
-**Status**: 📋 **Planned**
+**Status**: ✅ **Implemented** (2026-10-05) — single optional `category` relationship on `suggested-questions`; the chat UI loads `GET /api/v1/suggested-questions` (categories + questions + `cached` flags) and renders `landing/TopicPicker.tsx` → `landing/QuestionGrid.tsx`, falling back to the flat grid when no category has questions. Sub-categories roll up to their top-level parent. Clicking a question sends `category_hint` with the chat request. Production was seeded on 2026-10-05 with six top-level categories (Litecoin Basics, Privacy & MWEB, Fees/Payments & Everyday Use, Mining & Network Security, Live Network Data, Ecosystem & Foundation) and 39 questions, each screened live against the backend before activation; live-data questions are intentionally not pre-cached (`is_precacheable_answer` in `backend/main.py`). The sections below are the original design; where they differ, the code is the reference.
 
 **Priority**: Medium - Enhances user experience and content organization
 
-**Last Updated**: 2025-01-XX
+**Last Updated**: 2026-10-05
 
 ---
 

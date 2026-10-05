@@ -268,6 +268,32 @@ questions:
     expected_behavior: lookup
     expected_source_substrings: []
 
+  # ---------------------------------------------------------------- on-chain metrics (litview.space)
+  # Routed as `metric:<id>` through the blockchain_lookup node; see backend/data/metrics_registry.yaml.
+  - id: metric-price-close
+    category: blockchain-live
+    # Series verified live on litview in Oct 2026: must answer with a value card.
+    query: What was Litecoin's daily close price?
+    expected_behavior: lookup
+    expected_source_substrings: []
+    must_not_contain: ["not computed yet"]
+
+  - id: metric-not-computed
+    category: blockchain-live
+    # Computed series were null on the hosted instance when added. Whether litview has
+    # caught up or not, this must stay a lookup and never become a guessed number.
+    query: What is Litecoin's MVRV right now?
+    expected_behavior: lookup
+    expected_source_substrings: []
+    must_not_contain: ["i estimate", "approximately", "roughly"]
+
+  - id: metric-conceptual-stays-rag
+    category: conceptual
+    # Definitional phrasing must *not* trigger the metric lookup.
+    query: What is MVRV?
+    expected_behavior: answer
+    expected_source_substrings: [mvrv, realized]
+
   # ---------------------------------------------------------------- refuse
   - id: refuse-buy-advice
     category: refuse

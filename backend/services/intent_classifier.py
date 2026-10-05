@@ -430,6 +430,14 @@ class IntentClassifier:
             not live_signal and bool(self._DEFINITIONAL_RE.match(query_lower))
         )
 
+        # On-chain metrics from litview.space (MVRV, realized price, supply, ...).
+        # A registry phrase that *contains* a Litecoin Space keyword ("realized price",
+        # "hashrate trend") is more specific than the generic route below and wins now;
+        # all other metric phrases are checked last so Space routes keep precedence.
+        metric_match = None if conceptual else self._match_metric(query_lower)
+        if metric_match and self._metric_phrase_is_specific(metric_match[1]):
+            return f"metric:{metric_match[0]}"
+
         # Keyword-based lookups (check longest matches first)
         if any(kw in query_lower for kw in self._PRICE_KEYWORDS):
             return "price"
@@ -452,7 +460,43 @@ class IntentClassifier:
         if not conceptual and self._wants_live_difficulty_or_adjustment_stats(query_lower):
             return "hashrate"
 
+        if metric_match:
+            return f"metric:{metric_match[0]}"
+
         return None
+
+    _metrics_registry_failed: bool = False
+    _SPACE_KEYWORDS_IN_PHRASE = ("price", "hashrate", "hash rate", "difficulty", "fee", "mempool", "block")
+
+    @classmethod
+    def _metric_phrase_is_specific(cls, phrase: str) -> bool:
+        """True when the registry phrase embeds a Space keyword and so should beat the generic route."""
+        return any(k in phrase for k in cls._SPACE_KEYWORDS_IN_PHRASE)
+
+    def _match_metric(self, query_lower: str) -> Optional[Tuple[str, str]]:
+        """
+        Registry match for live on-chain metric questions.
+
+        Returns (metric_id, matched_phrase) or None when disabled / unavailable /
+        no match. The registry applies its own explain-vs-lookup gate.
+        """
+        if os.getenv("USE_LITVIEW_METRICS", "true").lower() != "true":
+            return None
+        if self._metrics_registry_failed:
+            return None
+        try:
+            from backend.services.metrics_registry import get_registry
+
+            reg = get_registry()
+            spec = reg.match(query_lower)
+            if not spec:
+                return None
+            phrase = reg.matched_phrase(query_lower, spec) or spec.phrases[0]
+            return spec.id, phrase
+        except Exception as e:  # noqa: BLE001 - a bad registry must never break intent routing
+            logger.warning("metrics registry unavailable; metric intents disabled: %s", e)
+            type(self)._metrics_registry_failed = True
+            return None
 
     def _wants_live_difficulty_or_adjustment_stats(self, query_lower: str) -> bool:
         """True when the user asks for timing or current difficulty values, not how it works."""

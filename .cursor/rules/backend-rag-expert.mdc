@@ -29,13 +29,17 @@ Never duplicate retrieval logic outside the graph. Never put generation logic in
 | safety_gate | `nodes/safety_gate.py` | Incident pin (Redis `admin:incident_pin`), REFUSE/ESCALATE via `services/safety_router.py`, audience label. Early-exits before cache/retrieval. |
 | route | `nodes/route.py` | Complexity classification, history dependency detection |
 | prechecks | `nodes/prechecks.py` | Intent classification, FAQ/cache lookup, query expansion |
-| semantic_cache | `nodes/semantic_cache.py` | Embedding generation, vector cache lookup |
+| semantic_cache | `nodes/semantic_cache.py` | Exact normalised-text cache (empty history, no embedding; `services/exact_answer_cache.py`), then embedding generation + vector cache lookup |
 | decompose | `nodes/decompose.py` | Compound query splitting |
 | retrieve | `nodes/retrieve.py` | Hybrid vector + BM25 retrieval, reranking |
 | resolve_parents | `nodes/resolve_parents.py` | Parent-document pattern for FAQ chunks |
 | spend_limit | `nodes/spend_limit.py` | Cost estimation, budget enforcement |
 | generate | `nodes/generate.py` | Thin wrapper around `backend/rag/generate.py` (non-stream) |
-| blockchain_lookup | `nodes/blockchain_lookup.py` | Live Litecoin Space API (fees, price, pools) |
+| blockchain_lookup | `nodes/blockchain_lookup.py` | Live Litecoin Space API (fees, price, pools) and, for `metric:<id>` entities, litview.space on-chain metrics (`services/litview_client.py`, curated `data/metrics_registry.yaml`). A series litview has not computed yet is a first-class `not_computed` answer, never a guessed number. |
+
+### Streaming progress
+
+`astream_query` runs the graph through `_run_graph_with_stages` (LangGraph `updates`+`values` stream modes) and yields `{"type": "stage", ...}` markers (`checking_live_data` after `prechecks` routes to the live node, `searching` after a cache miss, `writing` right before generation). `main.py` forwards them as `thinking` events with a `stage` field. `follow_ups` are emitted **after** `complete` so the client can unlock the composer as soon as the answer is done; `main.py` must not `break` on `complete`.
 
 ### Conditional Exits
 
@@ -57,8 +61,10 @@ Four points can short-circuit to END: after `safety_gate` (pin / refuse / escala
 ### Public Routes (in `main.py`)
 
 - `GET /api/v1/auth/challenge` — fingerprint challenge for rate limiting
-- `POST /api/v1/chat/stream` — streaming SSE chat responses (events: `sources` chips, `complete` with `requestId`/`webSources`/`abstained`)
+- `POST /api/v1/chat/stream` — streaming SSE chat responses (events: `thinking` with optional `stage`, `sources` chips, `complete` with `requestId`/`webSources`/`abstained`, then trailing `follow_ups`). Body may carry `category_hint` (landing-page topic id; logged on `UserQuestion`, copied to graph state).
 - `POST /api/v1/chat/feedback` — thumbs up/down filed against cited `source_payload_ids` (`api/v1/feedback.py`)
+- `GET /api/v1/suggested-questions` — landing-page categories + questions with `cached` flags (`api/v1/suggested_questions.py`; in-process TTL in front of Payload)
+- `GET /api/v1/articles/{id}` — public reader for the in-chat article modal (`api/v1/articles.py`)
 
 ### Admin Routes (in `api/v1/admin/`)
 

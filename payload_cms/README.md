@@ -62,6 +62,35 @@ Alternatively, you can use [Docker](https://www.docker.com) to spin up this temp
 
 That's it! The Docker instance will help you get up and running quickly while also standardizing the development environment across your teams.
 
+### Regenerating `src/payload-types.ts`
+
+Run this after any collection schema change (the production image is a Next standalone build, so it has to run on the host):
+
+```bash
+cd payload_cms
+corepack pnpm install --frozen-lockfile   # once; sharp needs its native build (no --ignore-scripts)
+
+# Admin components are imported directly into collection configs, which drags a .css file
+# into the Node loader chain and makes `payload generate:types` fail with
+# ERR_UNKNOWN_FILE_EXTENSION ".css". A no-op CSS loader works around it:
+mkdir -p /tmp/css-noop
+cat > /tmp/css-noop/loader.mjs <<'EOF'
+export async function load(url, context, nextLoad) {
+  if (/\.(css|scss|sass)(\?.*)?$/.test(url)) return { format: 'module', shortCircuit: true, source: 'export default {};' };
+  return nextLoad(url, context);
+}
+EOF
+cat > /tmp/css-noop/register.mjs <<'EOF'
+import { register } from 'node:module'; register('./loader.mjs', import.meta.url);
+EOF
+
+PAYLOAD_SECRET=typegen-only DATABASE_URI=mongodb://127.0.0.1:1/typegen \
+NODE_OPTIONS="--no-deprecation --import /tmp/css-noop/register.mjs" \
+corepack pnpm exec payload generate:types
+```
+
+`generate:types` does not connect to the database; the dummy `DATABASE_URI` only satisfies config loading. Switching the admin component references to import-map strings (Payload 3 style) would remove the need for the loader.
+
 ## Questions
 
 If you have any issues or questions, reach out to us on [Discord](https://discord.com/invite/payload) or start a [GitHub discussion](https://github.com/payloadcms/payload/discussions).

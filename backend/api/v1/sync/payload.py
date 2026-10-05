@@ -64,6 +64,12 @@ async def invalidate_cached_answers_for(payload_id: str) -> int:
         query_cache = getattr(pipeline, "query_cache", None) if pipeline is not None else None
         if query_cache is not None and hasattr(query_cache, "invalidate_by_payload_id"):
             removed += int(query_cache.invalidate_by_payload_id(payload_id) or 0)
+
+        exact_cache = None
+        if pipeline is not None and hasattr(pipeline, "get_exact_answer_cache"):
+            exact_cache = pipeline.get_exact_answer_cache()
+        if exact_cache is not None and hasattr(exact_cache, "invalidate_by_payload_id"):
+            removed += int(await exact_cache.invalidate_by_payload_id(payload_id) or 0)
     except Exception as e:
         logger.warning("Cache invalidation failed for payload_id=%s: %s", payload_id, e)
     return removed

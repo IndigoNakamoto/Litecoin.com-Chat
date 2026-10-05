@@ -9,6 +9,7 @@ import MempoolStatus from "./MempoolStatus";
 import NetworkStats from "./NetworkStats";
 import MiningPoolsCard, { type MiningPoolRow } from "./MiningPoolsCard";
 import MiningPoolCard from "./MiningPoolCard";
+import MetricCard, { type MetricCardProps } from "./MetricCard";
 import ProvenanceFooter, { type LiveDataProvenance } from "./ProvenanceFooter";
 
 interface BlockchainDataRendererProps {
@@ -112,6 +113,10 @@ function renderCard(dataType: string, data: Record<string, unknown>): React.Reac
           reportedHashrate={data.reportedHashrate as number | string | null | undefined}
         />
       );
+
+    case "metric":
+      // On-chain metric from litview.space (see backend/data/metrics_registry.yaml).
+      return <MetricCard {...(data as unknown as MetricCardProps)} />;
 
     default:
       return null;

@@ -55,18 +55,21 @@ Chat responses use `ReadableStream` + `TextDecoder` with SSE-style JSON lines:
 
 ```
 data: {"status": "thinking", ...}\n
+data: {"status": "thinking", "stage": "searching" | "checking_live_data" | "writing"}\n
 data: {"status": "streaming", "chunk": "chunk..."}\n
-data: {"status": "follow_ups", "questions": [...]}\n
-data: {"status": "complete", ...}\n
+data: {"status": "complete", "requestId": "...", ...}\n
+data: {"status": "follow_ups", "questions": [...], "requestId": "..."}\n   # trails complete
 ```
 
 Event types to handle: `thinking`, `streaming`, `sources`, `follow_ups`, `complete`, `error`, `usage_status`, `blockchain_data`.
 
+- `thinking` may carry `stage`; `StreamingMessage.tsx` shows the label beside the dots. Do not flip a `streaming` message back to `thinking` on a late marker.
+- `complete` comes **before** `follow_ups` (follow-ups are a second LLM call). Unlock the composer on `complete`, keep reading, and attach `follow_ups` to the message whose `requestId` matches (it may already have moved from the streaming slot into `messages`).
 - `sources` carries structured chips `{payload_id, title, url, updated_at, last_reviewed_at, stale, tier}` built server-side from retrieval metadata (`SourceChips.tsx`). Never parse citations out of the answer text.
 - `complete` carries `isGrounded`, `webSources` (unverified web chips), `abstained`, `requestId` (needed by `AnswerFeedback.tsx` to POST `/api/v1/chat/feedback`), `earlyType`, `incidentPinId`.
-- `blockchain_data.data._provenance` = `{source, endpoint, fetched_at}`; `BlockchainDataRenderer` renders it under every live card.
+- `blockchain_data.data._provenance` = `{source, endpoint, fetched_at}`; `BlockchainDataRenderer` renders it under every live card. `data_type: "metric"` is a litview.space on-chain metric (`MetricCard.tsx` + `Sparkline.tsx`); `status: "not_computed"` must render as "no value yet", never as 0.
 
-On 403 `invalid_challenge`, fetch a new challenge from `/api/v1/auth/challenge` and retry once.
+Challenges are one-time use: `page.tsx` keeps one prefetched spare (`spareChallengeRef`), uses it at send, and re-arms right after the POST returns. On 403 `invalid_challenge`, fetch a new challenge from `/api/v1/auth/challenge` and retry once. The conversation is mirrored to `sessionStorage` (`lkh:chat:messages:v1`); the chat body may include `category_hint` (landing-page topic id).
 
 ### Authentication
 
@@ -79,7 +82,7 @@ There is no login page, no user accounts, no `localStorage` tokens in this front
 
 ### Content Sources
 
-- **Suggested questions**: Fetched from Payload CMS REST API at `NEXT_PUBLIC_PAYLOAD_URL/api/suggested-questions`
+- **Suggested questions + categories**: `GET /api/v1/suggested-questions` on the backend (one request via the `/api/v1` rewrite; returns `categories`, `questions` with `cached` flags). `SuggestedQuestions.tsx` orchestrates `landing/TopicPicker.tsx` → `landing/QuestionGrid.tsx`; it falls back to the flat grid when there are no categories. Do not call Payload directly from the browser.
 - **Chat responses**: Streamed from backend via `/api/v1/chat/stream`
 
 ### CMS Components

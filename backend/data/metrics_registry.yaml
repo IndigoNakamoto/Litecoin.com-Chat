@@ -1,0 +1,193 @@
+# Curated on-chain metrics served live from litview.space (Litecoin Research Kit).
+#
+# Each entry maps user phrasing -> one litview series. The intent classifier
+# routes a matching *live-value* question ("Litecoin MVRV right now") to the
+# `blockchain_lookup` node, which fetches the series and renders a MetricCard.
+# Conceptual questions ("what is MVRV?", "how is MVRV calculated?") never match:
+# they stay with RAG so the answer comes from the knowledge base.
+#
+# Series names were verified with `GET https://litview.space/api/series/search`
+# on 2026-10-05 (LRK v0.11.2). `verified_live` records whether the hosted
+# instance had a *computed* current value that day; the node handles `null`
+# at runtime regardless, so entries can be added before litview catches up.
+#
+# Fields
+#   id             stable identifier used in the intent entity ("metric:<id>")
+#   series         litview series name
+#   index          aggregation index (default day1)
+#   label          card headline
+#   unit           usd | ltc | percent | ratio | count | raw   (formatting)
+#   description    one sentence used in the narration
+#   phrases        lowercase substrings that trigger the lookup (longest wins)
+#   chart_url      explicit litview chart link (optional; falls back to site root)
+#   spark_points   sparkline length (default 30)
+#   change_windows % change windows in index points (default [7, 30])
+#   verified_live  informational, see above
+
+metrics:
+  - id: price_close
+    series: price_close
+    index: day1
+    label: Daily close price
+    unit: usd
+    description: The LTC/USD price at the end of each UTC day, from exchange data.
+    phrases:
+      - daily close
+      - closing price
+      - close price
+      - daily closing price
+    verified_live: true
+
+  - id: difficulty_trend
+    series: difficulty
+    index: day1
+    label: Mining difficulty
+    unit: raw
+    description: The proof-of-work difficulty target the network is mining against, by day.
+    phrases:
+      - difficulty history
+      - difficulty trend
+      - difficulty chart
+      - difficulty over the
+      - difficulty over time
+      - difficulty change over
+    verified_live: true
+
+  - id: hashrate_trend
+    series: hash_rate
+    index: day1
+    label: Network hashrate
+    unit: raw
+    description: Estimated total Scrypt hashing power securing the network, by day.
+    phrases:
+      - hashrate history
+      - hashrate trend
+      - hash rate trend
+      - hashrate chart
+      - hashrate over the
+      - hashrate over time
+    verified_live: true
+
+  - id: circulating_supply
+    series: circulating_supply
+    index: day1
+    label: Circulating supply
+    unit: ltc
+    description: Litecoin already mined and in circulation (the maximum is 84 million).
+    phrases:
+      - circulating supply
+      - coins in circulation
+      - ltc in circulation
+      - litecoin in circulation
+      - supply in circulation
+    verified_live: false
+
+  - id: market_cap
+    series: market_cap
+    index: day1
+    label: Market capitalization
+    unit: usd
+    description: Circulating supply multiplied by the current LTC/USD price.
+    phrases:
+      - market cap
+      - market capitalization
+      - market capitalisation
+      - marketcap
+    verified_live: false
+
+  - id: realized_price
+    series: realized_price
+    index: day1
+    label: Realized price
+    unit: usd
+    description: Average price at which every coin in circulation last moved on-chain; a long-run cost basis for the network.
+    phrases:
+      - realized price
+      - realised price
+      - realized cap price
+    verified_live: false
+
+  - id: mvrv
+    series: mvrv
+    index: day1
+    label: MVRV ratio
+    unit: ratio
+    description: Market value divided by realized value; above 1 the average holder is in profit, below 1 in loss.
+    phrases:
+      - mvrv
+      - market value to realized value
+      - market-value-to-realized-value
+    verified_live: false
+
+  - id: puell_multiple
+    series: puell_multiple
+    index: day1
+    label: Puell Multiple
+    unit: ratio
+    description: Daily miner revenue in USD divided by its one-year moving average; gauges miner profitability versus the past year.
+    phrases:
+      - puell multiple
+      - puell
+    verified_live: false
+
+  - id: nvt
+    series: nvt
+    index: day1
+    label: NVT ratio
+    unit: ratio
+    description: Network value divided by on-chain transaction volume; a valuation ratio sometimes compared to a P/E.
+    phrases:
+      - nvt ratio
+      - nvt
+      - network value to transactions
+    verified_live: false
+
+  - id: stock_to_flow
+    series: stock_to_flow
+    index: day1
+    label: Stock-to-flow
+    unit: ratio
+    description: Existing supply divided by annual new issuance; higher means scarcer relative to production.
+    phrases:
+      - stock to flow
+      - stock-to-flow
+      - s2f
+    verified_live: false
+
+  - id: inflation_rate
+    series: inflation_rate
+    index: day1
+    label: Supply inflation rate
+    unit: percent
+    description: Annualized growth of the circulating supply from newly mined coins.
+    phrases:
+      - inflation rate
+      - annual inflation
+      - issuance rate
+      - supply inflation
+    verified_live: false
+
+  - id: sopr
+    series: sopr_1w
+    index: day1
+    label: SOPR (1-week)
+    unit: ratio
+    description: Spent Output Profit Ratio over a one-week window; above 1 coins are being spent at a profit on average.
+    phrases:
+      - sopr
+      - spent output profit ratio
+    verified_live: false
+
+  - id: address_count
+    series: addr_count
+    index: day1
+    label: Addresses with a balance
+    unit: count
+    description: Number of distinct addresses currently holding a non-zero LTC balance.
+    phrases:
+      - addresses with a balance
+      - funded addresses
+      - number of addresses
+      - address count
+      - how many addresses
+    verified_live: false

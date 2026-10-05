@@ -261,6 +261,30 @@ These variables configure the local-first RAG pipeline with cloud spillover. See
 | `REDIS_CACHE_INDEX_NAME` | `cache:index` | Index name for vector cache |
 | `REDIS_CACHE_SIMILARITY_THRESHOLD` | `0.90` | Similarity threshold for cache hits (0.90 = 90% similarity required) |
 
+#### Exact-Text Answer Cache (plain Redis, in front of the vector cache)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `USE_EXACT_ANSWER_CACHE` | `true` | Serve repeat empty-history questions by normalised text, with no embedding call. Invalidated by the CMS webhook like the other answer caches. |
+| `EXACT_CACHE_TTL_SECONDS` | `REDIS_CACHE_TTL_SECONDS` (7 days) | Per-entry TTL |
+
+#### Landing Page (suggested questions + categories)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SUGGESTED_QUESTIONS_CACHE_SECONDS` | `60` | In-process TTL for the combined Payload fetch behind `GET /api/v1/suggested-questions` |
+| `SUGGESTED_QUESTIONS_RATE_LIMIT_PER_MINUTE` / `_PER_HOUR` | `60` / `600` | Public rate limit for that endpoint |
+
+#### On-chain Metrics (litview.space / Litecoin Research Kit)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `USE_LITVIEW_METRICS` | `true` | Route live metric questions (MVRV, realized price, supply, ...) to litview via `backend/data/metrics_registry.yaml` |
+| `LITVIEW_API_URL` | `https://litview.space` | Series API base (self-hosted LRK works too) |
+| `LITVIEW_CHART_URL` | `https://litview.space` | Link target on metric cards when a registry entry has no `chart_url` |
+| `LITVIEW_TIMEOUT_SECONDS` | `10` | HTTP timeout; the `litview` circuit breaker opens after 3 failures |
+| `LITVIEW_CACHE_TTL_LATEST` / `_SYNC` / `_META` | `600` / `300` / `21600` | Redis TTLs (seconds) for latest values, sync status, and series metadata/search |
+
 **Where to set:** Root-level `.env.*` files or in `docker-compose.prod.yml` environment section
 
 ## Setup Instructions

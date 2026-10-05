@@ -26,6 +26,47 @@ def make_semantic_cache_node(pipeline: Any):
 
         rewritten_query = state.get("rewritten_query_for_cache") or state.get("rewritten_query") or ""
 
+        # === 0) Exact normalised-text cache (empty history only) ===
+        # Cheapest tier: no embedding call. Keyed on the sanitized question text, so
+        # it only applies when there is no conversation context to resolve.
+        if getattr(pipeline, "use_exact_answer_cache", False) and not state.get("chat_history_pairs"):
+            exact_cache = pipeline.get_exact_answer_cache() if hasattr(pipeline, "get_exact_answer_cache") else None
+            exact_key_text = state.get("sanitized_query") or state.get("raw_query") or ""
+            if exact_cache and exact_key_text:
+                try:
+                    import time as _time
+
+                    _t0 = _time.perf_counter()
+                    entry = await exact_cache.get(exact_key_text)
+                    metadata["t_exact_cache_ms"] = round((_time.perf_counter() - _t0) * 1000, 1)
+                    if entry and entry.answer:
+                        cached_sources = [
+                            Document(page_content=src.get("page_content", ""), metadata=src.get("metadata", {}))
+                            for src in entry.sources
+                            if isinstance(src, dict)
+                        ]
+                        state.update(
+                            {
+                                "early_answer": entry.answer,
+                                "early_sources": cached_sources,
+                                "early_cache_type": "exact_redis",
+                            }
+                        )
+                        metadata.update(
+                            {
+                                "input_tokens": 0,
+                                "output_tokens": 0,
+                                "cost_usd": 0.0,
+                                "cache_hit": True,
+                                "cache_type": "exact_redis",
+                                "is_grounded": bool(entry.is_grounded),
+                            }
+                        )
+                        state["metadata"] = metadata
+                        return state
+                except Exception as e:
+                    logger.warning("Exact answer cache lookup failed: %s", e)
+
         # === 1) Embedding generation (Infinity) ===
         query_vector = None
         query_sparse = None

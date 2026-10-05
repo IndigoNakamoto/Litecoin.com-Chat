@@ -223,3 +223,77 @@ class TestExplainVsLookup:
     def test_live_value_questions_route_to_lookup(self, classifier, query, entity):
         intent, got, _ = classifier.classify(query)
         assert intent == Intent.BLOCKCHAIN_LOOKUP and got == entity, (query, intent, got)
+
+
+class TestMetricIntent:
+    """On-chain metrics (litview.space) ride the blockchain_lookup intent as `metric:<id>`."""
+
+    @pytest.fixture
+    def classifier(self):
+        return IntentClassifier(faq_questions=[])
+
+    @pytest.mark.parametrize(
+        "query,metric_id",
+        [
+            ("What is Litecoin's MVRV right now?", "mvrv"),
+            ("litecoin mvrv", "mvrv"),
+            ("current realized price of LTC", "realized_price"),   # beats the generic "price of ltc" route
+            ("litecoin realized price", "realized_price"),
+            ("closing price of litecoin today", "price_close"),      # beats "price of litecoin"
+            ("hashrate trend over the last month", "hashrate_trend"),  # beats the bare "hashrate" route
+            ("What's the Litecoin market cap today?", "market_cap"),
+            ("show me the puell multiple", "puell_multiple"),
+            ("circulating supply of litecoin", "circulating_supply"),
+            ("How many addresses hold litecoin?", "address_count"),
+            ("ltc sopr this week", "sopr"),
+            ("daily close price", "price_close"),
+        ],
+    )
+    def test_live_metric_questions_route_to_metric_lookup(self, classifier, query, metric_id):
+        intent, entity, _ = classifier.classify(query)
+        assert intent == Intent.BLOCKCHAIN_LOOKUP, (query, intent, entity)
+        assert entity == f"metric:{metric_id}"
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "What is MVRV?",
+            "How is the realized price calculated?",
+            "Explain the Puell Multiple",
+            "What does SOPR mean?",
+            "Why is the inflation rate falling over time?",
+        ],
+    )
+    def test_conceptual_metric_questions_stay_with_rag(self, classifier, query):
+        intent, entity, _ = classifier.classify(query)
+        assert intent == Intent.SEARCH, (query, intent, entity)
+
+    @pytest.mark.parametrize(
+        "query,entity",
+        [
+            # Existing Litecoin Space routes keep precedence over the registry.
+            ("What is the current Litecoin price?", "price"),
+            ("What is the current Litecoin hashrate?", "hashrate"),
+            ("current network difficulty", "hashrate"),
+        ],
+    )
+    def test_space_routes_keep_precedence(self, classifier, query, entity):
+        intent, got, _ = classifier.classify(query)
+        assert intent == Intent.BLOCKCHAIN_LOOKUP and got == entity
+
+    def test_metric_intents_can_be_disabled(self, classifier, monkeypatch):
+        monkeypatch.setenv("USE_LITVIEW_METRICS", "false")
+        intent, entity, _ = classifier.classify("litecoin mvrv right now")
+        assert intent == Intent.SEARCH and entity is None
+
+    def test_broken_registry_does_not_break_routing(self, classifier, monkeypatch):
+        import backend.services.metrics_registry as mr
+
+        monkeypatch.setattr(type(classifier), "_metrics_registry_failed", False)
+        monkeypatch.setattr(mr, "get_registry", lambda: (_ for _ in ()).throw(RuntimeError("bad yaml")))
+        intent, entity, _ = classifier.classify("litecoin mvrv right now")
+        assert intent == Intent.SEARCH and entity is None
+        # and plain lookups still work
+        intent, entity, _ = classifier.classify("What is the current Litecoin price?")
+        assert intent == Intent.BLOCKCHAIN_LOOKUP and entity == "price"
+        monkeypatch.setattr(type(classifier), "_metrics_registry_failed", False)

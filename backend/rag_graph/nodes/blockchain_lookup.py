@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from ..state import RAGState
 
@@ -32,6 +32,8 @@ _ENDPOINT_BY_TYPE: Dict[str, str] = {
     "mining_pools": "/api/v1/mining/pools/{period}",
     "mining_pool": "/api/v1/mining/pool/{slug}",
     "price": "/api/v1/prices",
+    # On-chain metrics come from litview.space (Litecoin Research Kit), not Litecoin Space.
+    "metric": "/api/series/{series}/{index}",
 }
 
 SPACE_UNAVAILABLE_MESSAGE = (
@@ -41,18 +43,221 @@ SPACE_UNAVAILABLE_MESSAGE = (
     "check [Litecoin Space](https://litecoinspace.org) directly."
 )
 
+LITVIEW_UNAVAILABLE_MESSAGE = (
+    "**On-chain metrics are temporarily unavailable**\n\n"
+    "litview.space (the Litecoin Research Kit) is not responding right now, so I "
+    "can't fetch a current value for this metric. I won't guess at live numbers. "
+    "Please try again in a minute, or check [litview.space](https://litview.space) directly."
+)
 
-def _stamp_provenance(data: Any, lookup_type: str) -> Any:
+
+def _stamp_provenance(
+    data: Any,
+    lookup_type: str,
+    source: str = "Litecoin Space",
+    endpoint: Optional[str] = None,
+) -> Any:
     """Attach `_provenance` (fetched_at, endpoint, source) to a card payload."""
     if not isinstance(data, dict):
         return data
     stamped = dict(data)
     stamped["_provenance"] = {
-        "source": "Litecoin Space",
-        "endpoint": _ENDPOINT_BY_TYPE.get(lookup_type, "/api"),
+        "source": source,
+        "endpoint": endpoint or _ENDPOINT_BY_TYPE.get(lookup_type, "/api"),
         "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     return stamped
+
+
+def _finish_early(
+    state: RAGState,
+    metadata: Dict[str, Any],
+    *,
+    answer: str,
+    entity: str,
+    cache_type: str,
+    start: float,
+    extra_metadata: Optional[Dict[str, Any]] = None,
+) -> RAGState:
+    """Common tail for live lookups: early answer, no sources, lookup metadata."""
+    state["early_answer"] = answer
+    state["early_sources"] = []
+    state["early_cache_type"] = cache_type
+    metadata.update({
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cost_usd": 0.0,
+        "cache_hit": False,
+        "cache_type": cache_type,
+        "intent": "blockchain_lookup",
+        "blockchain_entity": entity,
+        "blockchain_lookup_duration": time.time() - start,
+    })
+    if extra_metadata:
+        metadata.update(extra_metadata)
+    state["metadata"] = metadata
+    return state
+
+
+def _fmt_as_of(ts: Optional[int]) -> str:
+    if not ts:
+        return ""
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError):
+        return ""
+
+
+async def _metric_lookup(
+    entity: str,
+    state: RAGState,
+    metadata: Dict[str, Any],
+    redis_client: Any,
+    start: float,
+) -> RAGState:
+    """
+    `metric:<id>` -> litview.space series snapshot rendered as a MetricCard.
+
+    Three honest outcomes:
+      ok            value + sparkline + % changes
+      not_computed  litview has not computed this series up to now (say so, no guess)
+      error         litview unreachable / series missing (tool-down message)
+    Results are never written to the answer caches (same rule as other live cards).
+    """
+    import httpx as _httpx
+
+    from backend.services.circuit_breaker import CircuitOpen
+    from backend.services.litview_client import (
+        LITVIEW_CHART_URL,
+        LitviewClient,
+        LitviewError,
+        MetricNotComputed,
+        format_metric_value,
+        format_pct_change,
+    )
+    from backend.services.metrics_registry import get_registry
+
+    metric_id = entity.split(":", 1)[1].strip()
+    spec = get_registry().get(metric_id)
+    if spec is None:
+        logger.warning("Unknown metric id in entity: %s", entity)
+        return _finish_early(
+            state, metadata, entity=entity, start=start, cache_type="blockchain_lookup_error",
+            answer="**Unknown metric**\n\nI don't have that on-chain metric wired up yet.",
+        )
+
+    chart_url = spec.chart_url or LITVIEW_CHART_URL
+    endpoint = _ENDPOINT_BY_TYPE["metric"].format(series=spec.series, index=spec.index)
+    base_card: Dict[str, Any] = {
+        "metric_id": spec.id,
+        "label": spec.label,
+        "unit": spec.unit,
+        "series": spec.series,
+        "index": spec.index,
+        "description": spec.description,
+        "chart_url": chart_url,
+    }
+
+    client = LitviewClient(redis_client=redis_client)
+    try:
+        try:
+            snap = await client.get_metric_snapshot(
+                spec.series, spec.index, points=spec.spark_points, change_windows=spec.change_windows
+            )
+        except MetricNotComputed as nc:
+            computed_h = f"{nc.computed_height:,}" if nc.computed_height else "an earlier height"
+            tip_h = f"{nc.tip_height:,}" if nc.tip_height else "the current tip"
+            through = f" ({nc.computed_at})" if nc.computed_at else ""
+            answer = (
+                f"**{spec.label}: not computed yet on litview.space**\n\n"
+                f"{spec.description}\n\n"
+                f"litview.space has indexed the Litecoin chain to block {tip_h} but has only "
+                f"computed this series through block {computed_h}{through}, so there is no current "
+                f"value to report and I won't estimate one. Check back later or "
+                f"[explore the series on litview.space]({chart_url})."
+            )
+            card = {
+                **base_card,
+                "status": "not_computed",
+                "value": None,
+                "value_formatted": None,
+                "as_of": None,
+                "points": [],
+                "changes": {},
+                "computed_height": nc.computed_height,
+                "computed_at": nc.computed_at,
+                "tip_height": nc.tip_height,
+            }
+            state["blockchain_data"] = _stamp_provenance(card, "metric", source="litview.space", endpoint=endpoint)
+            state["blockchain_lookup_type"] = "metric"
+            return _finish_early(
+                state, metadata, entity=entity, start=start, cache_type="blockchain_lookup",
+                answer=answer, extra_metadata={"metric_status": "not_computed"},
+            )
+
+        value_fmt = format_metric_value(snap.value, spec.unit)
+        as_of = _fmt_as_of(snap.as_of)
+        header = f"**{spec.label}: {value_fmt}**" + (f" _(as of {as_of} UTC)_" if as_of else "")
+        lines = [header, "", spec.description, ""]
+        for w in spec.change_windows:
+            unit_word = "day" if spec.index == "day1" else spec.index
+            lines.append(f"- **{w}-{unit_word} change:** {format_pct_change(snap.changes_pct.get(w))}")
+        lines.append("")
+        lines.append(f"Data from [litview.space]({chart_url}) (Litecoin Research Kit).")
+        answer = "\n".join(lines)
+
+        card = {
+            **base_card,
+            "status": "ok",
+            "value": snap.value,
+            "value_formatted": value_fmt,
+            "as_of": snap.as_of,
+            "points": [{"t": p.t, "v": p.v} for p in snap.points],
+            "changes": {str(w): snap.changes_pct.get(w) for w in spec.change_windows},
+            "stamp": snap.stamp,
+        }
+        state["blockchain_data"] = _stamp_provenance(card, "metric", source="litview.space", endpoint=endpoint)
+        state["blockchain_lookup_type"] = "metric"
+        return _finish_early(
+            state, metadata, entity=entity, start=start, cache_type="blockchain_lookup",
+            answer=answer, extra_metadata={"metric_status": "ok"},
+        )
+
+    except Exception as e:  # noqa: BLE001
+        logger.error("Metric lookup failed for %s: %s", entity, e, exc_info=True)
+        try:
+            from backend.monitoring.metrics import tool_error_total
+
+            tool_error_total.labels(tool="litview").inc()
+        except Exception:
+            pass
+
+        is_down = isinstance(e, (CircuitOpen, _httpx.ConnectError, _httpx.TimeoutException)) or (
+            isinstance(e, _httpx.HTTPStatusError) and e.response.status_code >= 500
+        )
+        if is_down:
+            answer = LITVIEW_UNAVAILABLE_MESSAGE
+            metadata["tool_unavailable"] = "litview"
+        elif isinstance(e, LitviewError):
+            answer = (
+                f"**{spec.label} unavailable**\n\n"
+                f"litview.space did not recognise the series `{spec.series}` ({spec.index}) right now, "
+                f"so I can't report a value. You can [browse litview.space]({chart_url}) directly."
+            )
+        else:
+            answer = (
+                "**On-chain metric lookup error**\n\n"
+                "Unable to fetch this metric from litview.space right now. Please try again in a moment."
+            )
+        return _finish_early(
+            state, metadata, entity=entity, start=start, cache_type="blockchain_lookup_error",
+            answer=answer, extra_metadata={"metric_status": "error"},
+        )
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            pass
 
 
 def make_blockchain_lookup_node(pipeline: Any):
@@ -76,8 +281,13 @@ def make_blockchain_lookup_node(pipeline: Any):
             except Exception:
                 pass
 
-        client = LitecoinSpaceClient(redis_client=redis_client)
         start = time.time()
+
+        # On-chain metrics are served by litview.space, not Litecoin Space.
+        if entity.startswith("metric:"):
+            return await _metric_lookup(entity, state, metadata, redis_client, start)
+
+        client = LitecoinSpaceClient(redis_client=redis_client)
 
         try:
             if entity.startswith("tx:"):

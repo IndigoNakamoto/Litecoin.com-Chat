@@ -3,6 +3,7 @@ import FollowUpQuestions from "@/components/FollowUpQuestions";
 import BlockchainDataRenderer from "@/components/blockchain/BlockchainDataRenderer";
 import SourceChips, { type SourceChip, type WebSourceChip } from "@/components/SourceChips";
 import AnswerFeedback from "@/components/AnswerFeedback";
+import CopyAnswerButton from "@/components/CopyAnswerButton";
 import React, { useState, useEffect, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -17,6 +18,8 @@ interface MessageProps {
   webSources?: WebSourceChip[];
   abstained?: boolean;
   requestId?: string;
+  /** True when the user pressed Stop; the content is a partial answer. */
+  stopped?: boolean;
   blockchainData?: {
     dataType: string;
     data: Record<string, unknown>;
@@ -42,6 +45,7 @@ const Message: React.FC<MessageProps> = ({
   webSources,
   abstained,
   requestId,
+  stopped,
   blockchainData,
   messageId,
   retryInfo,
@@ -233,6 +237,11 @@ const Message: React.FC<MessageProps> = ({
             <span>This question has been logged so the knowledge base can be extended.</span>
           </div>
         )}
+        {stopped && (
+          <div className="mt-3 text-xs text-gray-500" data-testid="stopped-notice">
+            Generation stopped.
+          </div>
+        )}
         <SourceChips sources={sources} webSources={webSources} />
         {isGrounded && (
           <div className="flex items-center gap-1.5 mt-3 text-xs text-gray-500" data-testid="grounded-badge">
@@ -244,11 +253,16 @@ const Message: React.FC<MessageProps> = ({
             </span>
           </div>
         )}
-        {requestId && !abstained && content && (
-          <AnswerFeedback
-            requestId={requestId}
-            sourcePayloadIds={(sources ?? []).map((s) => s.payload_id).filter((id): id is string => Boolean(id))}
-          />
+        {content && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+            {requestId && !abstained && !stopped && (
+              <AnswerFeedback
+                requestId={requestId}
+                sourcePayloadIds={(sources ?? []).map((s) => s.payload_id).filter((id): id is string => Boolean(id))}
+              />
+            )}
+            <CopyAnswerButton text={content} />
+          </div>
         )}
         {followUpQuestions && followUpQuestions.length > 0 && onFollowUpClick && (
           <FollowUpQuestions

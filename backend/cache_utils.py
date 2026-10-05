@@ -610,6 +610,26 @@ class SuggestedQuestionCache:
         except Exception as e:
             logger.warning(f"Error checking Suggested Question Cache: {e}")
             return False
+
+    async def cached_flags(self, questions: List[str]) -> Dict[str, bool]:
+        """
+        Batch `is_cached` for the landing page: one pipelined round trip for
+        all questions instead of one EXISTS per question.
+        """
+        if not questions:
+            return {}
+        redis_client = await self._get_redis_client()
+        if redis_client is None:
+            return {q: False for q in questions}
+        try:
+            pipe = redis_client.pipeline()
+            for q in questions:
+                pipe.exists(f"suggested_question:{self._generate_key(q)}")
+            results = await pipe.execute()
+            return {q: bool(r) for q, r in zip(questions, results)}
+        except Exception as e:
+            logger.warning(f"Error batch-checking Suggested Question Cache: {e}")
+            return {q: False for q in questions}
     
     async def clear(self) -> None:
         """

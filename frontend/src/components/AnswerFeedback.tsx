@@ -67,7 +67,7 @@ export default function AnswerFeedback({ requestId, sourcePayloadIds }: AnswerFe
 
   if (submitted) {
     return (
-      <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-gray-500" data-testid="feedback-thanks">
+      <div className="inline-flex items-center gap-1.5 text-xs text-gray-500" data-testid="feedback-thanks">
         <Check className="h-3.5 w-3.5 text-green-600" aria-hidden />
         Thanks — your feedback was recorded.
       </div>
@@ -75,7 +75,7 @@ export default function AnswerFeedback({ requestId, sourcePayloadIds }: AnswerFe
   }
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-500" data-testid="answer-feedback">
+    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500" data-testid="answer-feedback">
       <span>Was this helpful?</span>
       <button
         type="button"

@@ -153,9 +153,12 @@ async def test_webhook_helper_invalidates_every_cache_layer():
     legacy.invalidate_by_payload_id = MagicMock(return_value=1)
     qc = MagicMock()
     qc.invalidate_by_payload_id = MagicMock(return_value=3)
+    exact = MagicMock()
+    exact.invalidate_by_payload_id = AsyncMock(return_value=4)
 
     pipeline = MagicMock()
     pipeline.get_redis_vector_cache = MagicMock(return_value=redis_cache)
+    pipeline.get_exact_answer_cache = MagicMock(return_value=exact)
     pipeline.semantic_cache = legacy
     pipeline.query_cache = qc
 
@@ -166,10 +169,11 @@ async def test_webhook_helper_invalidates_every_cache_layer():
     finally:
         sync_payload._global_rag_pipeline = previous
 
-    assert removed == 6
+    assert removed == 10
     redis_cache.invalidate_by_payload_id.assert_awaited_once_with("doc-7")
     legacy.invalidate_by_payload_id.assert_called_once_with("doc-7")
     qc.invalidate_by_payload_id.assert_called_once_with("doc-7")
+    exact.invalidate_by_payload_id.assert_awaited_once_with("doc-7")
 
 
 @pytest.mark.asyncio

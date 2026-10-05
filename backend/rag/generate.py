@@ -200,6 +200,12 @@ async def generate_answer(pipeline: Any, state: RAGState) -> RAGState:
     semantic_cache = getattr(pipeline, "semantic_cache", None)
     if semantic_cache and not getattr(pipeline, "use_redis_cache", False) and not kb_insufficient:
         semantic_cache.set(rewritten_query, [], answer, published_sources)
+    store_exact = getattr(pipeline, "_store_exact_answer", None)
+    if callable(store_exact):
+        try:
+            await store_exact(state, answer, published_sources, is_grounded, kb_insufficient)
+        except Exception as e:
+            logger.warning("Exact answer cache storage failed: %s", e)
 
     metadata.update(
         {

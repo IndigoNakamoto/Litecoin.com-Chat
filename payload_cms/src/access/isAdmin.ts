@@ -1,4 +1,5 @@
 import type { Access } from 'payload'
+import { isServiceRequest } from './isServiceRequest'
 
 export const isAdmin: Access = ({ req: { user } }) => {
   // Require authentication - fail securely if no user
@@ -9,7 +10,17 @@ export const isAdmin: Access = ({ req: { user } }) => {
   return roles.includes('admin')
 }
 
-export const isAdminOrPublisher: Access = ({ req: { user } }) => {
+/**
+ * Admin or publisher users, plus the backend's trusted service key
+ * (`PAYLOAD_API_KEY`, see isServiceRequest). The same credential already
+ * creates/updates Articles; allowing it here lets the backend seed and
+ * maintain categories and suggested questions. Deletes stay admin-only.
+ */
+export const isAdminOrPublisher: Access = ({ req }) => {
+  if (isServiceRequest(req as any)) {
+    return true
+  }
+  const user = req.user
   // Require authentication - fail securely if no user
   if (!user) {
     return false

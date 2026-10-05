@@ -192,3 +192,133 @@ class TestBlockchainLookupNode:
 
         assert result.get("early_answer") is None
         assert result.get("error_message") is None
+
+
+class TestMetricLookupBranch:
+    """`metric:<id>` entities are served by litview.space via the same node."""
+
+    @pytest.fixture
+    def mock_pipeline(self):
+        pipeline = MagicMock()
+        pipeline.get_redis_client = AsyncMock(return_value=None)
+        return pipeline
+
+    def _state(self, entity="metric:mvrv", query="litecoin mvrv right now"):
+        return {"intent": "blockchain_lookup", "matched_faq": entity, "sanitized_query": query, "metadata": {}}
+
+    @pytest.mark.asyncio
+    async def test_metric_ok_renders_card_and_narration(self, mock_pipeline):
+        from backend.rag_graph.nodes.blockchain_lookup import make_blockchain_lookup_node
+        from backend.services.litview_client import MetricSnapshot, SeriesPoint
+
+        snap = MetricSnapshot(
+            series="price_close", index="day1", value=71.67, as_of=1791158400,
+            points=[SeriesPoint(t=1791072000, v=70.19), SeriesPoint(t=1791158400, v=71.67)],
+            changes_pct={7: 1.5, 30: 28.27}, stamp="2026-10-05T19:23:03Z",
+            endpoint="/api/series/price_close/day1",
+        )
+        node = make_blockchain_lookup_node(mock_pipeline)
+        with patch("backend.services.litview_client.LitviewClient") as MockClient:
+            instance = AsyncMock()
+            instance.get_metric_snapshot = AsyncMock(return_value=snap)
+            MockClient.return_value = instance
+            result = await node(self._state("metric:price_close", "daily close price"))
+
+        assert result["blockchain_lookup_type"] == "metric"
+        assert result["early_cache_type"] == "blockchain_lookup"
+        card = result["blockchain_data"]
+        assert card["status"] == "ok"
+        assert card["metric_id"] == "price_close" and card["unit"] == "usd"
+        assert card["value"] == 71.67 and card["value_formatted"] == "$71.67"
+        assert card["points"] == [{"t": 1791072000, "v": 70.19}, {"t": 1791158400, "v": 71.67}]
+        assert card["changes"] == {"7": 1.5, "30": 28.27}
+        assert card["_provenance"]["source"] == "litview.space"
+        assert card["_provenance"]["endpoint"] == "/api/series/price_close/day1"
+        answer = result["early_answer"]
+        assert "**Daily close price: $71.67**" in answer
+        assert "+1.5%" in answer and "+28.3%" in answer
+        assert "litview.space" in answer
+        assert result["metadata"]["metric_status"] == "ok"
+        instance.get_metric_snapshot.assert_awaited_once_with("price_close", "day1", points=30, change_windows=(7, 30))
+
+    @pytest.mark.asyncio
+    async def test_metric_not_computed_says_so_without_guessing(self, mock_pipeline):
+        from backend.rag_graph.nodes.blockchain_lookup import make_blockchain_lookup_node
+        from backend.services.litview_client import MetricNotComputed
+
+        node = make_blockchain_lookup_node(mock_pipeline)
+        with patch("backend.services.litview_client.LitviewClient") as MockClient:
+            instance = AsyncMock()
+            instance.get_metric_snapshot = AsyncMock(
+                side_effect=MetricNotComputed("mvrv", "day1", computed_height=2520000,
+                                              computed_at="2023-08-02", tip_height=3189505)
+            )
+            MockClient.return_value = instance
+            result = await node(self._state())
+
+        card = result["blockchain_data"]
+        assert card["status"] == "not_computed"
+        assert card["value"] is None and card["points"] == []
+        assert card["computed_height"] == 2520000 and card["tip_height"] == 3189505
+        answer = result["early_answer"]
+        assert "not computed yet" in answer
+        assert "2,520,000" in answer and "3,189,505" in answer and "2023-08-02" in answer
+        assert "won't estimate" in answer
+        # An honest answer, not a tool error — but still never cached (early_cache_type is excluded upstream)
+        assert result["early_cache_type"] == "blockchain_lookup"
+        assert result["metadata"]["metric_status"] == "not_computed"
+
+    @pytest.mark.asyncio
+    async def test_metric_litview_down_is_tool_unavailable(self, mock_pipeline):
+        import httpx
+        from backend.rag_graph.nodes.blockchain_lookup import LITVIEW_UNAVAILABLE_MESSAGE, make_blockchain_lookup_node
+
+        node = make_blockchain_lookup_node(mock_pipeline)
+        with patch("backend.services.litview_client.LitviewClient") as MockClient:
+            instance = AsyncMock()
+            instance.get_metric_snapshot = AsyncMock(side_effect=httpx.ConnectError("down"))
+            MockClient.return_value = instance
+            result = await node(self._state())
+
+        assert result["early_answer"] == LITVIEW_UNAVAILABLE_MESSAGE
+        assert result["early_cache_type"] == "blockchain_lookup_error"
+        assert result["metadata"]["tool_unavailable"] == "litview"
+        assert result["metadata"]["intent"] == "blockchain_lookup"
+
+    @pytest.mark.asyncio
+    async def test_metric_5xx_is_tool_unavailable_too(self, mock_pipeline):
+        import httpx
+        from backend.rag_graph.nodes.blockchain_lookup import LITVIEW_UNAVAILABLE_MESSAGE, make_blockchain_lookup_node
+
+        req = httpx.Request("GET", "https://litview.space/api/server/sync")
+        err = httpx.HTTPStatusError("504", request=req, response=httpx.Response(504, request=req))
+        node = make_blockchain_lookup_node(mock_pipeline)
+        with patch("backend.services.litview_client.LitviewClient") as MockClient:
+            instance = AsyncMock()
+            instance.get_metric_snapshot = AsyncMock(side_effect=err)
+            MockClient.return_value = instance
+            result = await node(self._state())
+        assert result["early_answer"] == LITVIEW_UNAVAILABLE_MESSAGE
+
+    @pytest.mark.asyncio
+    async def test_metric_series_not_found_is_graceful(self, mock_pipeline):
+        from backend.rag_graph.nodes.blockchain_lookup import make_blockchain_lookup_node
+        from backend.services.litview_client import LitviewSeriesNotFound
+
+        node = make_blockchain_lookup_node(mock_pipeline)
+        with patch("backend.services.litview_client.LitviewClient") as MockClient:
+            instance = AsyncMock()
+            instance.get_metric_snapshot = AsyncMock(side_effect=LitviewSeriesNotFound("mvrv"))
+            MockClient.return_value = instance
+            result = await node(self._state())
+        assert "did not recognise the series `mvrv`" in result["early_answer"]
+        assert result["early_cache_type"] == "blockchain_lookup_error"
+
+    @pytest.mark.asyncio
+    async def test_unknown_metric_id(self, mock_pipeline):
+        from backend.rag_graph.nodes.blockchain_lookup import make_blockchain_lookup_node
+
+        node = make_blockchain_lookup_node(mock_pipeline)
+        result = await node(self._state("metric:does_not_exist", "x"))
+        assert "Unknown metric" in result["early_answer"]
+        assert result["early_cache_type"] == "blockchain_lookup_error"

@@ -1,159 +1,149 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { 
-  ChevronRight,
-  Flame
-} from "lucide-react";
-
-const useIsMobile = () => {
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768); // md breakpoint in Tailwind
-    };
-
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
-  }, []);
-
-  return isMobile;
-};
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { apiUrl } from "@/lib/apiBase";
+import TopicPicker from "@/components/landing/TopicPicker";
+import QuestionGrid from "@/components/landing/QuestionGrid";
+import type { LandingCategory, LandingData, LandingQuestion, QuestionClickMeta } from "@/components/landing/types";
 
 interface SuggestedQuestionsProps {
-  onQuestionClick: (question: string, metadata?: { fromFeelingLit?: boolean; originalQuestion?: string }) => void;
-  onQuestionsLoaded?: (questions: SuggestedQuestion[]) => void;
+  onQuestionClick: (question: string, metadata?: QuestionClickMeta) => void;
+  onQuestionsLoaded?: (questions: LandingQuestion[]) => void;
 }
 
-interface SuggestedQuestion {
-  id: string;
-  question: string;
-  order: number;
-  isActive: boolean;
+/** Shown only when the backend endpoint itself is unreachable. */
+const FALLBACK_QUESTIONS: LandingQuestion[] = [
+  { id: "1", question: "What is Litecoin and how does it differ from Bitcoin?", order: 0, isActive: true },
+  { id: "2", question: "How do I buy Litecoin?", order: 1, isActive: true },
+  { id: "3", question: "What are the benefits of Litecoin's faster transactions?", order: 2, isActive: true },
+  { id: "4", question: "How does Litecoin mining work?", order: 3, isActive: true },
+  { id: "5", question: "Does Litecoin have privacy features?", order: 4, isActive: true },
+  { id: "6", question: "What are the scalability solutions for Litecoin?", order: 5, isActive: true },
+];
+
+/** Walk `parentId` links up to the top-level category (bounded, cycle-safe). */
+function topLevelOf(categoryId: string, byId: Map<string, LandingCategory>): string {
+  let current = categoryId;
+  for (let i = 0; i < 6; i++) {
+    const cat = byId.get(current);
+    if (!cat || !cat.parentId || !byId.has(cat.parentId)) return current;
+    current = cat.parentId;
+  }
+  return current;
 }
 
-interface PayloadResponse {
-  docs: SuggestedQuestion[];
-  totalDocs: number;
-  limit: number;
-  totalPages: number;
-  page: number;
-  pagingCounter: number;
-  hasPrevPage: boolean;
-  hasNextPage: boolean;
-  prevPage: number | null;
-  nextPage: number | null;
-}
-
+/**
+ * Landing experience: topic picker -> question grid.
+ *
+ * Data comes from `GET /api/v1/suggested-questions` (one request, via the app's
+ * own `/api/v1/*` rewrite). If the CMS has no categories, or the request fails,
+ * this degrades to the flat question grid the page always had.
+ */
 const SuggestedQuestions: React.FC<SuggestedQuestionsProps> = ({ onQuestionClick, onQuestionsLoaded }) => {
-  const [questions, setQuestions] = useState<SuggestedQuestion[]>([]);
-  const [allQuestions, setAllQuestions] = useState<SuggestedQuestion[]>([]);
-  const [currentPage, setCurrentPage] = useState(0);
+  const [data, setData] = useState<LandingData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const isMobile = useIsMobile();
+  // undefined = topic picker; null = "All topics"; string = a category id
+  const [selectedCategory, setSelectedCategory] = useState<string | null | undefined>(undefined);
 
   useEffect(() => {
-    const fetchQuestions = async () => {
+    let cancelled = false;
+    const load = async () => {
       try {
         setIsLoading(true);
         setError(null);
-
-        // Get Payload CMS URL from environment variable, default to localhost:3001 for development
-        const payloadUrl = process.env.NEXT_PUBLIC_PAYLOAD_URL || "https://cms.lite.space";
-        
-        // Fetch active questions for display
-        const activeQueryParams = new URLSearchParams({
-          where: JSON.stringify({
-            isActive: {
-              equals: true
-            }
-          }),
-          sort: 'order',
-          limit: '100'
-        });
-        
-        const activeResponse = await fetch(
-          `${payloadUrl}/api/suggested-questions?${activeQueryParams.toString()}`
-        );
-
-        // Fetch all questions (active + inactive) for "I'm Feeling Lit" random selection
-        const allQueryParams = new URLSearchParams({
-          sort: 'order',
-          limit: '100'
-        });
-        
-        const allResponse = await fetch(
-          `${payloadUrl}/api/suggested-questions?${allQueryParams.toString()}`
-        );
-
-        if (!activeResponse.ok) {
-          const errorText = await activeResponse.text();
-          let errorMessage = `Failed to fetch questions: ${activeResponse.status}`;
-          try {
-            const errorJson = JSON.parse(errorText);
-            errorMessage = errorJson.message || errorJson.errors?.[0]?.message || errorMessage;
-          } catch {
-            // If response isn't JSON, use the text or status
-            errorMessage = errorText || errorMessage;
-          }
-          console.error("API Error:", {
-            status: activeResponse.status,
-            statusText: activeResponse.statusText
-          });
-          throw new Error(errorMessage);
-        }
-
-        const activeData: PayloadResponse = await activeResponse.json();
-        
-        // Sort by order (ascending) as a fallback
-        const sortedActiveQuestions = activeData.docs.sort((a, b) => a.order - b.order);
-        setQuestions(sortedActiveQuestions);
-
-        // Also fetch all questions for random selection
-        if (allResponse.ok) {
-          const allData: PayloadResponse = await allResponse.json();
-          const sortedAllQuestions = allData.docs.sort((a, b) => a.order - b.order);
-          setAllQuestions(sortedAllQuestions);
-          // Notify parent component about loaded questions for finding similar ones
-          if (onQuestionsLoaded) {
-            onQuestionsLoaded(sortedAllQuestions);
-          }
-        } else {
-          // If all questions fetch fails, use active questions as fallback
-          setAllQuestions(sortedActiveQuestions);
-          if (onQuestionsLoaded) {
-            onQuestionsLoaded(sortedActiveQuestions);
-          }
-        }
+        const res = await fetch(apiUrl("/api/v1/suggested-questions"), { headers: { Accept: "application/json" } });
+        if (!res.ok) throw new Error(`Failed to load suggested questions (${res.status})`);
+        const body = (await res.json()) as LandingData;
+        if (cancelled) return;
+        const safe: LandingData = {
+          categories: Array.isArray(body.categories) ? body.categories : [],
+          questions: Array.isArray(body.questions) ? body.questions : [],
+          fallback: body.fallback,
+        };
+        setData(safe);
+        onQuestionsLoaded?.(safe.questions);
       } catch (err) {
+        if (cancelled) return;
         console.error("Error fetching suggested questions:", err);
-        const errorMessage = err instanceof Error ? err.message : "Failed to load suggested questions";
-        setError(errorMessage);
-        // Fallback to default questions if API fails
-        const fallbackQuestions = [
-          { id: "1", question: "What is Litecoin and how does it differ from Bitcoin?", order: 0, isActive: true },
-          { id: "2", question: "How do I buy Litecoin?", order: 1, isActive: true },
-          { id: "3", question: "What are the benefits of Litecoin's faster transactions?", order: 2, isActive: true },
-          { id: "4", question: "How does Litecoin mining work?", order: 3, isActive: true },
-          { id: "5", question: "Does Litecoin have privacy features?", order: 4, isActive: true },
-          { id: "6", question: "What are the scalability solutions for Litecoin?", order: 5, isActive: true },
-        ];
-        setQuestions(fallbackQuestions);
-        setAllQuestions(fallbackQuestions);
-        if (onQuestionsLoaded) {
-          onQuestionsLoaded(fallbackQuestions);
-        }
+        setError(err instanceof Error ? err.message : "Failed to load suggested questions");
+        setData({ categories: [], questions: FALLBACK_QUESTIONS, fallback: true });
+        onQuestionsLoaded?.(FALLBACK_QUESTIONS);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
-
-    fetchQuestions();
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, [onQuestionsLoaded]);
+
+  const allQuestions = useMemo(() => data?.questions ?? [], [data]);
+  const activeQuestions = useMemo(() => allQuestions.filter((q) => q.isActive), [allQuestions]);
+
+  const categoryById = useMemo(() => {
+    const m = new Map<string, LandingCategory>();
+    (data?.categories ?? []).forEach((c) => m.set(c.id, c));
+    return m;
+  }, [data]);
+
+  // Active question counts rolled up to the top-level category.
+  const countsByTopCategory = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const q of activeQuestions) {
+      if (!q.categoryId || !categoryById.has(q.categoryId)) continue;
+      const top = topLevelOf(q.categoryId, categoryById);
+      counts[top] = (counts[top] ?? 0) + 1;
+    }
+    return counts;
+  }, [activeQuestions, categoryById]);
+
+  // Top-level categories that actually have questions. If none do, there is no
+  // picker to show: fall back to the flat grid.
+  const topCategories = useMemo(
+    () =>
+      (data?.categories ?? [])
+        .filter((c) => !c.parentId || !categoryById.has(c.parentId))
+        .filter((c) => (countsByTopCategory[c.id] ?? 0) > 0)
+        .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)),
+    [data, categoryById, countsByTopCategory],
+  );
+  const hasPicker = topCategories.length > 0;
+
+  const visibleQuestions = useMemo(() => {
+    if (!selectedCategory) return activeQuestions; // null (All topics) or undefined (no picker)
+    return activeQuestions.filter(
+      (q) => q.categoryId && categoryById.has(q.categoryId) && topLevelOf(q.categoryId, categoryById) === selectedCategory,
+    );
+  }, [activeQuestions, selectedCategory, categoryById]);
+
+  const selectedCategoryObj = selectedCategory ? categoryById.get(selectedCategory) ?? null : null;
+
+  const handleQuestion = useCallback(
+    (q: LandingQuestion, extra?: Partial<QuestionClickMeta>) => {
+      const catId = q.categoryId && categoryById.has(q.categoryId) ? topLevelOf(q.categoryId, categoryById) : selectedCategory ?? null;
+      const catName = catId ? categoryById.get(catId)?.name ?? null : null;
+      onQuestionClick(q.question, { categoryId: catId, categoryName: catName, ...extra });
+    },
+    [categoryById, onQuestionClick, selectedCategory],
+  );
+
+  // "I'm Feeling Lit" draws from the whole pool (active + inactive, as before),
+  // scoped to the current category when one is selected.
+  const handleFeelingLit = useCallback(() => {
+    let pool = allQuestions;
+    if (selectedCategory) {
+      const scoped = allQuestions.filter(
+        (q) => q.categoryId && categoryById.has(q.categoryId) && topLevelOf(q.categoryId, categoryById) === selectedCategory,
+      );
+      if (scoped.length > 0) pool = scoped;
+    }
+    if (pool.length === 0) return;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    handleQuestion(pick, { fromFeelingLit: true, originalQuestion: pick.question });
+  }, [allQuestions, selectedCategory, categoryById, handleQuestion]);
 
   if (isLoading) {
     return (
@@ -166,7 +156,7 @@ const SuggestedQuestions: React.FC<SuggestedQuestionsProps> = ({ onQuestionClick
     );
   }
 
-  if (questions.length === 0 && !error) {
+  if (activeQuestions.length === 0 && !error) {
     return (
       <div className="w-full max-w-4xl mx-auto px-4 py-8">
         <div className="text-center mb-6">
@@ -177,148 +167,49 @@ const SuggestedQuestions: React.FC<SuggestedQuestionsProps> = ({ onQuestionClick
     );
   }
 
-  const handleShowMore = () => {
-    setCurrentPage((prev) => prev + 1);
-  };
-
-  const handleFeelingLit = () => {
-    if (allQuestions.length === 0) return;
-    const randomIndex = Math.floor(Math.random() * allQuestions.length);
-    const randomQuestion = allQuestions[randomIndex];
-    onQuestionClick(randomQuestion.question, { 
-      fromFeelingLit: true, 
-      originalQuestion: randomQuestion.question 
-    });
-  };
-
-
-  const QUESTIONS_PER_PAGE = isMobile ? 3 : 7;
-  const startIndex = currentPage * QUESTIONS_PER_PAGE;
-  const endIndex = startIndex + QUESTIONS_PER_PAGE;
-  const visibleQuestions = questions.slice(startIndex, endIndex);
-  const hasMoreQuestions = endIndex < questions.length;
-
-  // Animation variants for questions
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.05,
-      },
-    },
-  };
-
-  const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: {
-      opacity: 1,
-      y: 0,
-      transition: {
-        duration: 0.3,
-        ease: [0.4, 0, 0.2, 1] as const,
-      },
-    },
-    exit: {
-      opacity: 0,
-      y: -10,
-      transition: {
-        duration: 0.2,
-      },
-    },
-  };
+  const showPicker = hasPicker && selectedCategory === undefined;
 
   return (
-    <div className="w-full max-w-4xl mx-auto px-4 py-8 relative z-10">
-      <div className="text-center mb-8">
-        <h2 className="font-space-grotesk text-[32px] md:text-[36px] font-bold mb-3 bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">
-          Get started with Litecoin
-        </h2>
-        <p className="text-lg text-muted-foreground">Choose a question below or ask your own</p>
-        {error && (
-          <p className="text-sm text-destructive mt-2">{error}</p>
-        )}
-      </div>
-      <motion.div
-        className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr"
-        variants={containerVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <AnimatePresence mode="popLayout">
-          {visibleQuestions.map((item) => {
-            return (
-              <motion.div
-                key={item.id}
-                variants={itemVariants}
-                initial="hidden"
-                animate="visible"
-                exit="exit"
-                layout
-                className="flex"
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                <button
-                  onClick={() => onQuestionClick(item.question)}
-                  className="p-5 text-left bg-card border border-border rounded-xl hover:bg-accent/5 hover:border-primary/60 hover:shadow-xl hover:shadow-primary/10 transition-all duration-300 group w-full h-full flex items-start shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2"
-                  aria-label={`Ask: ${item.question}`}
-                >
-                  <span className="text-base font-semibold text-card-foreground group-hover:text-primary leading-relaxed">
-                    {item.question}
-                  </span>
-                </button>
-              </motion.div>
-            );
-          })}
-          {hasMoreQuestions && (
-            <motion.div
-              key="show-more"
-              variants={itemVariants}
-              initial="hidden"
-              animate="visible"
-              exit="exit"
-              layout
-              className="flex"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              <button
-                onClick={handleShowMore}
-                className="p-5 text-center bg-card/50 border border-border/50 rounded-xl hover:bg-accent/30 hover:border-primary/30 transition-all duration-300 group w-full h-full flex items-center justify-center gap-2 shadow-sm hover:shadow-xl hover:shadow-primary/10 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2"
-                aria-label="Show more questions"
-              >
-                <span className="text-base font-medium text-muted-foreground group-hover:text-primary leading-relaxed">
-                  Show me more
-                </span>
-                <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-transform duration-300" />
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
-      {allQuestions.length > 0 && (
+    <AnimatePresence mode="wait" initial={false}>
+      {showPicker ? (
         <motion.div
-          className="mt-8 flex justify-center"
-          initial={{ opacity: 0, y: 10 }}
+          key="picker"
+          className="w-full"
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2, duration: 0.3 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.2 }}
         >
-          <motion.button
-            onClick={handleFeelingLit}
-            className="p-3 text-center bg-gradient-to-r from-primary to-primary/80 border border-primary/20 rounded-xl transition-all duration-300 group max-w-xs w-full shadow-lg hover:shadow-xl hover:shadow-primary/10 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 relative overflow-hidden"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onHoverStart={() => {}}
-          >
-            <span className="text-base font-semibold text-white leading-relaxed flex items-center justify-center gap-2 relative z-10">
-              <Flame className="h-4 w-4 group-hover:animate-fire-burst" />
-              I&apos;m Feeling Lit
-            </span>
-          </motion.button>
+          <TopicPicker
+            categories={topCategories}
+            totalQuestions={activeQuestions.length}
+            countsByCategory={countsByTopCategory}
+            onSelect={(id) => setSelectedCategory(id)}
+            onFeelingLit={allQuestions.length > 0 ? handleFeelingLit : undefined}
+          />
+        </motion.div>
+      ) : (
+        <motion.div
+          key={`grid-${selectedCategory ?? "all"}`}
+          className="w-full"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.2 }}
+        >
+          <QuestionGrid
+            title={selectedCategoryObj ? `${selectedCategoryObj.icon ? `${selectedCategoryObj.icon} ` : ""}${selectedCategoryObj.name}` : "Get started with Litecoin"}
+            subtitle={selectedCategoryObj?.description || undefined}
+            questions={visibleQuestions}
+            resetKey={selectedCategory ?? "all"}
+            onQuestionClick={(q) => handleQuestion(q)}
+            onBack={hasPicker ? () => setSelectedCategory(undefined) : undefined}
+            onFeelingLit={allQuestions.length > 0 ? handleFeelingLit : undefined}
+            error={error}
+          />
         </motion.div>
       )}
-    </div>
+    </AnimatePresence>
   );
 };
 

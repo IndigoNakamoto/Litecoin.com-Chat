@@ -393,7 +393,16 @@ async def get_response_cache_stats(request: Request) -> Dict[str, Any]:
         result: Dict[str, Any] = {
             "query_cache": query_cache.stats(),
             "semantic_cache": None,
+            "exact_cache": None,
         }
+
+        try:
+            from backend.rag_pipeline import _get_exact_answer_cache
+            exact_cache = _get_exact_answer_cache()
+            if exact_cache:
+                result["exact_cache"] = await exact_cache.stats()
+        except Exception as e:
+            logger.warning(f"Error getting exact answer cache stats: {e}")
 
         if USE_REDIS_CACHE:
             try:
@@ -451,6 +460,17 @@ async def clear_response_caches(request: Request) -> Dict[str, Any]:
         query_cache.clear()
         cleared.append(f"Query cache ({query_size} entries)")
         logger.info(f"Admin cleared query cache ({query_size} entries)")
+
+        # 1b. Exact normalised-text cache (Redis)
+        try:
+            from backend.rag_pipeline import _get_exact_answer_cache
+            exact_cache = _get_exact_answer_cache()
+            if exact_cache:
+                removed = await exact_cache.clear()
+                cleared.append(f"Exact answer cache ({removed} entries)")
+                logger.info(f"Admin cleared exact answer cache ({removed} entries)")
+        except Exception as e:
+            logger.warning(f"Error clearing exact answer cache: {e}")
 
         # 2. Semantic cache (Redis or legacy)
         if USE_REDIS_CACHE:

@@ -29,7 +29,7 @@ Payload CMS is the content management system for the Litecoin Knowledge Hub. Con
 | Media | `media` | File uploads |
 | Article | `articles` | Knowledge base articles (title, content, category, status, author) |
 | Category | `categories` | Hierarchical article categories |
-| SuggestedQuestions | `suggested-questions` | Chat UI suggested questions (question, order, isActive) |
+| SuggestedQuestions | `suggested-questions` | Chat UI suggested questions (question, optional `category` → `categories`, order, isActive). Served to the chat UI via the backend `GET /api/v1/suggested-questions`; uncategorised questions only show under "All topics". |
 | KnowledgeBase | `knowledge-base` | Internal KB content (title, slug, status, content) |
 
 ## Critical: Webhook Sync Hooks
@@ -64,3 +64,4 @@ Configured for: `chat.lite.space`, `cms.lite.space`, `litecoin.com` (see `payloa
 - After collection changes, run `reindex_vectors.py` or `reindex_with_faq.py` from `scripts/`
 - Localized fields must support all 3 locales (en, es, fr)
 - User roles gate content operations — respect the access control in collection configs
+- The backend's shared `PAYLOAD_API_KEY` (`access/isServiceRequest.ts`, sent as `X-Payload-Service-Key` / `users API-Key`) is a trusted service credential for Article create/read/update and for `isAdminOrPublisher` (categories, suggested questions). Deletes always require a real admin user.

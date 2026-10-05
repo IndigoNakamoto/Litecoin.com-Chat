@@ -3,19 +3,31 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { normalizeMarkdown } from "@/lib/markdownUtils";
 
+/** Progress markers sent by the backend on `thinking` events. */
+export type StreamStage = "searching" | "checking_live_data" | "writing";
+
+const STAGE_LABELS: Record<StreamStage, string> = {
+  searching: "Searching the knowledge base",
+  checking_live_data: "Checking live network data",
+  writing: "Writing answer",
+};
+
 interface StreamingMessageProps {
   content: string;
   status: "thinking" | "streaming" | "complete" | "error";
+  stage?: StreamStage;
   isStreamActive: boolean;
 }
 
 const StreamingMessage: React.FC<StreamingMessageProps> = ({
   content,
   status,
+  stage,
   isStreamActive
 }) => {
   // Normalize markdown to fix LLM output issues (missing newlines before headings)
   const normalizedContent = useMemo(() => normalizeMarkdown(content), [content]);
+  const stageLabel = stage ? STAGE_LABELS[stage] : undefined;
 
   const getStatusColor = () => {
     switch (status) {
@@ -34,12 +46,22 @@ const StreamingMessage: React.FC<StreamingMessageProps> = ({
     <div className={`w-full transition-all duration-300 ${status === "streaming" && isStreamActive ? "animate-stream-pulse" : ""}`}>
       {/* Status indicator */}
       {status !== "complete" && (
-        <div className={`text-sm ${getStatusColor()} flex items-center gap-3 mb-3 transition-opacity duration-300`}>
+        <div
+          className={`text-sm ${getStatusColor()} flex items-center gap-3 mb-3 transition-opacity duration-300`}
+          role="status"
+          aria-live="polite"
+          data-testid="stream-status"
+        >
           <div className="flex gap-1.5 items-center">
             <div className="w-2 h-2 bg-current rounded-full animate-bounce [animation-delay:-0.3s]"></div>
             <div className="w-2 h-2 bg-current rounded-full animate-bounce [animation-delay:-0.15s]"></div>
             <div className="w-2 h-2 bg-current rounded-full animate-bounce"></div>
           </div>
+          {status === "thinking" && stageLabel && (
+            <span className="text-muted-foreground" data-testid="stream-stage">
+              {stageLabel}
+            </span>
+          )}
         </div>
       )}
 

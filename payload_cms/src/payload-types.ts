@@ -71,6 +71,9 @@ export interface Config {
     media: Media;
     articles: Article;
     categories: Category;
+    'suggested-questions': SuggestedQuestion;
+    'knowledge-base': KnowledgeBase;
+    'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
     'payload-migrations': PayloadMigration;
@@ -81,6 +84,9 @@ export interface Config {
     media: MediaSelect<false> | MediaSelect<true>;
     articles: ArticlesSelect<false> | ArticlesSelect<true>;
     categories: CategoriesSelect<false> | CategoriesSelect<true>;
+    'suggested-questions': SuggestedQuestionsSelect<false> | SuggestedQuestionsSelect<true>;
+    'knowledge-base': KnowledgeBaseSelect<false> | KnowledgeBaseSelect<true>;
+    'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
     'payload-migrations': PayloadMigrationsSelect<false> | PayloadMigrationsSelect<true>;
@@ -128,6 +134,9 @@ export interface User {
   authorizedCategories?: (string | Category)[] | null;
   updatedAt: string;
   createdAt: string;
+  enableAPIKey?: boolean | null;
+  apiKey?: string | null;
+  apiKeyIndex?: string | null;
   email: string;
   resetPasswordToken?: string | null;
   resetPasswordExpiration?: string | null;
@@ -135,6 +144,13 @@ export interface User {
   hash?: string | null;
   loginAttempts?: number | null;
   lockUntil?: string | null;
+  sessions?:
+    | {
+        id: string;
+        createdAt?: string | null;
+        expiresAt: string;
+      }[]
+    | null;
   password?: string | null;
 }
 /**
@@ -197,6 +213,22 @@ export interface Article {
   author?: (string | null) | User;
   publishedDate?: string | null;
   /**
+   * Canonical origin of this content. Source chips in the chat link here: a litecoin.com page opens the page, a YouTube URL (youtube.com/watch?v=… or youtu.be/…) opens an inline player. Leave empty for editor-authored articles; they link to the Hub reader page.
+   */
+  sourceUrl?: string | null;
+  /**
+   * Source hierarchy tier. Pinned docs are authoritative references ingested on a schedule.
+   */
+  sourceTier?: ('cms' | 'pinned' | 'web') | null;
+  /**
+   * When an editor last confirmed this article is still accurate. Shown on source chips.
+   */
+  lastReviewedAt?: string | null;
+  /**
+   * Review window in days. Past this since the last review (or update) the article is flagged stale. 0 disables.
+   */
+  reviewIntervalDays?: number | null;
+  /**
    * Select categories that best describe your article content
    */
   category?: (string | Category)[] | null;
@@ -204,7 +236,7 @@ export interface Article {
     root: {
       type: string;
       children: {
-        type: string;
+        type: any;
         version: number;
         [k: string]: unknown;
       }[];
@@ -219,6 +251,77 @@ export interface Article {
   status?: ('draft' | 'published') | null;
   updatedAt: string;
   createdAt: string;
+}
+/**
+ * Manage suggested questions displayed to users on the chat interface. Assign a category so the question appears under that topic on the landing page; uncategorised questions only appear under "All topics".
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "suggested-questions".
+ */
+export interface SuggestedQuestion {
+  id: string;
+  /**
+   * The question text to display to users
+   */
+  question: string;
+  /**
+   * Topic this question belongs to on the landing page (optional)
+   */
+  category?: (string | null) | Category;
+  /**
+   * Display order (lower numbers appear first)
+   */
+  order: number;
+  /**
+   * Whether this question should be displayed
+   */
+  isActive?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "knowledge-base".
+ */
+export interface KnowledgeBase {
+  id: string;
+  title: string;
+  slug: string;
+  status?: ('draft' | 'in_review' | 'published') | null;
+  content: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  };
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payload-kv".
+ */
+export interface PayloadKv {
+  id: string;
+  key: string;
+  data:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -242,6 +345,14 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'categories';
         value: string | Category;
+      } | null)
+    | ({
+        relationTo: 'suggested-questions';
+        value: string | SuggestedQuestion;
+      } | null)
+    | ({
+        relationTo: 'knowledge-base';
+        value: string | KnowledgeBase;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -295,6 +406,9 @@ export interface UsersSelect<T extends boolean = true> {
   authorizedCategories?: T;
   updatedAt?: T;
   createdAt?: T;
+  enableAPIKey?: T;
+  apiKey?: T;
+  apiKeyIndex?: T;
   email?: T;
   resetPasswordToken?: T;
   resetPasswordExpiration?: T;
@@ -302,6 +416,13 @@ export interface UsersSelect<T extends boolean = true> {
   hash?: T;
   loginAttempts?: T;
   lockUntil?: T;
+  sessions?:
+    | T
+    | {
+        id?: T;
+        createdAt?: T;
+        expiresAt?: T;
+      };
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -329,6 +450,10 @@ export interface ArticlesSelect<T extends boolean = true> {
   title?: T;
   author?: T;
   publishedDate?: T;
+  sourceUrl?: T;
+  sourceTier?: T;
+  lastReviewedAt?: T;
+  reviewIntervalDays?: T;
   category?: T;
   content?: T;
   markdown?: T;
@@ -347,6 +472,38 @@ export interface CategoriesSelect<T extends boolean = true> {
   order?: T;
   audienceLevel?: T;
   icon?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "suggested-questions_select".
+ */
+export interface SuggestedQuestionsSelect<T extends boolean = true> {
+  question?: T;
+  category?: T;
+  order?: T;
+  isActive?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "knowledge-base_select".
+ */
+export interface KnowledgeBaseSelect<T extends boolean = true> {
+  title?: T;
+  slug?: T;
+  status?: T;
+  content?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payload-kv_select".
+ */
+export interface PayloadKvSelect<T extends boolean = true> {
+  key?: T;
+  data?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

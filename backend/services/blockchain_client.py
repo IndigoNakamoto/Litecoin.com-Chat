@@ -167,6 +167,8 @@ class BlockchainLookupType(str, Enum):
     MINING_POOL = "mining_pool"
     PRICE = "price"
     DIFFICULTY = "difficulty"
+    # On-chain metric from litview.space (Litecoin Research Kit); see metrics_registry.yaml
+    METRIC = "metric"
 
 
 # ---------------------------------------------------------------------------

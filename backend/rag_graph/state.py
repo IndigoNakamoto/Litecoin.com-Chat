@@ -17,6 +17,9 @@ class RAGState(TypedDict, total=False):
     # Inputs
     raw_query: str
     chat_history_pairs: List[Tuple[str, str]]
+    # Landing-page topic (Payload category id) the user clicked through, if any.
+    # Carried for logging / future soft retrieval boost; no node depends on it yet.
+    category_hint: Optional[str]
 
     # Sanitized + normalized
     sanitized_query: str

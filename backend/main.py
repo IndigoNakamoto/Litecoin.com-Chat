@@ -40,6 +40,7 @@ from backend.api.v1.admin.jobs import router as admin_jobs_router
 from backend.api.v1.admin.incident import router as admin_incident_router
 from backend.api.v1.feedback import public_router as feedback_public_router, admin_router as feedback_admin_router
 from backend.api.v1.articles import router as public_articles_router
+from backend.api.v1.suggested_questions import router as public_suggested_questions_router
 from backend.dependencies import get_user_questions_collection, get_llm_request_logs_collection
 from bson import ObjectId
 from fastapi.encoders import jsonable_encoder # Import jsonable_encoder
@@ -618,6 +619,7 @@ app.include_router(admin_knowledge_candidates_router, prefix="/api/v1/admin", ta
 app.include_router(admin_jobs_router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(feedback_public_router, prefix="/api/v1", tags=["Feedback"])
 app.include_router(public_articles_router, prefix="/api/v1", tags=["Articles"])
+app.include_router(public_suggested_questions_router, prefix="/api/v1", tags=["Suggested Questions"])
 app.include_router(feedback_admin_router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(admin_incident_router, prefix="/api/v1/admin", tags=["Admin"])
 
@@ -632,6 +634,27 @@ from backend.monitoring.metrics import (
     suggested_question_cache_misses_total,
     suggested_question_cache_lookup_duration_seconds,
 )
+
+_NON_PRECACHEABLE_TYPES = ("incident_pin", "intent_refuse", "intent_escalate")
+
+
+def is_precacheable_answer(metadata: Optional[Dict[str, Any]]) -> bool:
+    """
+    True when a pipeline answer is a knowledge answer that may be pre-generated for the
+    suggested-question cache. Live lookups (Litecoin Space / litview cards), refusals,
+    escalations, incident pins and abstentions must always be computed per request.
+    """
+    md = metadata or {}
+    cache_type = str(md.get("cache_type") or "")
+    early_type = str(md.get("early_cache_type") or "")
+    if md.get("intent") == "blockchain_lookup" or cache_type.startswith("blockchain_lookup") or early_type.startswith("blockchain_lookup"):
+        return False
+    if cache_type in _NON_PRECACHEABLE_TYPES or early_type in _NON_PRECACHEABLE_TYPES:
+        return False
+    if md.get("abstained") or md.get("tool_unavailable"):
+        return False
+    return True
+
 
 async def refresh_suggested_question_cache():
     """
@@ -692,6 +715,17 @@ async def refresh_suggested_question_cache():
                         f"skipping cache for question: {question_text[:50]}..."
                     )
                     suggested_question_cache_refresh_errors_total.inc()
+                    continue
+
+                # Answers that must stay live are never pre-generated: a cached price /
+                # fee / metric narration would be served stale and without its data card,
+                # and refusals, escalations, pins and abstentions are not knowledge answers.
+                if not is_precacheable_answer(metadata):
+                    skipped_count += 1
+                    logger.info(
+                        "Not pre-caching live/non-knowledge answer (cache_type=%s intent=%s) for: %s...",
+                        (metadata or {}).get("cache_type"), (metadata or {}).get("intent"), question_text[:50],
+                    )
                     continue
                 
                 # Store in Suggested Question Cache
@@ -901,7 +935,12 @@ async def challenge_endpoint(request: Request):
     
     return JSONResponse(content=challenge_data)
 
-async def log_user_question(question: str, chat_history_length: int, endpoint_type: str):
+async def log_user_question(
+    question: str,
+    chat_history_length: int,
+    endpoint_type: str,
+    category_hint: Optional[str] = None,
+):
     """
     Helper function to log user questions to MongoDB for later analysis.
     This runs asynchronously and won't block the main request.
@@ -911,7 +950,8 @@ async def log_user_question(question: str, chat_history_length: int, endpoint_ty
         user_question = UserQuestion(
             question=question,
             chat_history_length=chat_history_length,
-            endpoint_type=endpoint_type
+            endpoint_type=endpoint_type,
+            category_hint=category_hint,
         )
         await collection.insert_one(user_question.model_dump())
         
@@ -1158,7 +1198,8 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
         log_user_question,
         question=request.query,
         chat_history_length=len(request.chat_history),
-        endpoint_type="stream"
+        endpoint_type="stream",
+        category_hint=request.category_hint,
     )
 
     # Convert ChatMessage list to the (human_message, ai_message) tuple format expected by RAGPipeline
@@ -1193,6 +1234,7 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
         is_grounded = False
         abstained = False
         early_type_seen: Optional[str] = None
+        complete_sent = False
         
         try:
             # Check usage status and include in stream if not ok
@@ -1286,21 +1328,8 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                             yield f"data: {json.dumps(payload)}\n\n"
                             await asyncio.sleep(0)
 
-                        follow_up_questions = await rag_pipeline_instance.agenerate_follow_up_questions(
-                            request.query,
-                            answer,
-                            published_sources,
-                            paired_chat_history,
-                        )
-                        if follow_up_questions:
-                            payload = {
-                                "status": "follow_ups",
-                                "questions": follow_up_questions,
-                                "isComplete": False,
-                            }
-                            yield f"data: {json.dumps(payload)}\n\n"
-                        
-                        # Signal completion with cache flag
+                        # Signal completion with cache flag. Follow-ups trail this event
+                        # (second LLM call) so the client can unlock the composer now.
                         payload = {
                             "status": "complete",
                             "chunk": "",
@@ -1322,6 +1351,21 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                             "cache_hit": True,
                             "cache_type": "suggested_question",
                         }
+
+                        follow_up_questions = await rag_pipeline_instance.agenerate_follow_up_questions(
+                            request.query,
+                            answer,
+                            published_sources,
+                            paired_chat_history,
+                        )
+                        if follow_up_questions:
+                            payload = {
+                                "status": "follow_ups",
+                                "questions": follow_up_questions,
+                                "requestId": request_id,
+                                "isComplete": True,
+                            }
+                            yield f"data: {json.dumps(payload)}\n\n"
                         return
 
                 # Cache miss - fall through to QueryCache → RAG pipeline
@@ -1330,8 +1374,20 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
 
             # Get streaming response from RAG pipeline
             # This will check QueryCache internally, then run RAG pipeline if needed
-            async for chunk_data in rag_pipeline_instance.astream_query(request.query, paired_chat_history):
-                if chunk_data["type"] == "blockchain_data":
+            async for chunk_data in rag_pipeline_instance.astream_query(
+                request.query, paired_chat_history, category_hint=request.category_hint
+            ):
+                if chunk_data["type"] == "stage":
+                    # Progress marker (searching / checking_live_data / writing) so the
+                    # client can label the wait instead of showing bare dots.
+                    payload = {
+                        "status": "thinking",
+                        "stage": chunk_data.get("stage"),
+                        "chunk": "",
+                        "isComplete": False,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+                elif chunk_data["type"] == "blockchain_data":
                     payload = {
                         "status": "blockchain_data",
                         "data_type": chunk_data.get("data_type", "unknown"),
@@ -1374,10 +1430,13 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                     is_grounded = metadata.get("is_grounded", False)
                     abstained = bool(metadata.get("abstained", False))
                 elif chunk_data["type"] == "follow_ups":
+                    # Arrives after `complete`; requestId lets the client attach the
+                    # chips to the right (already finalized) message.
                     payload = {
                         "status": "follow_ups",
                         "questions": chunk_data.get("questions", []),
-                        "isComplete": False,
+                        "requestId": request_id,
+                        "isComplete": complete_sent,
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
                 elif chunk_data["type"] == "complete":
@@ -1404,7 +1463,9 @@ async def chat_stream_endpoint(request: ChatRequest, background_tasks: Backgroun
                         "incidentPinId": chunk_data.get("incident_pin_id"),
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
-                    break
+                    complete_sent = True
+                    # Do not break: the pipeline may still emit trailing `follow_ups`.
+                    # The generator ends on its own right after.
                 elif chunk_data["type"] == "error":
                     status = "error"
                     error_message = chunk_data.get("error", "Unknown error")

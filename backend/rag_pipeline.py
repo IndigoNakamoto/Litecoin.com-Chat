@@ -39,6 +39,8 @@ from backend.rag.history_dependency import STRONG_AMBIGUOUS_TOKENS, STRONG_PREFI
 USE_LOCAL_REWRITER = os.getenv("USE_LOCAL_REWRITER", "false").lower() == "true"
 USE_INFINITY_EMBEDDINGS = os.getenv("USE_INFINITY_EMBEDDINGS", "false").lower() == "true"
 USE_REDIS_CACHE = os.getenv("USE_REDIS_CACHE", "false").lower() == "true"
+# Exact normalised-text answer cache in front of the vector cache (no embedding needed).
+USE_EXACT_ANSWER_CACHE = os.getenv("USE_EXACT_ANSWER_CACHE", "true").lower() == "true"
 
 # --- Advanced RAG Feature Flags ---
 USE_INTENT_CLASSIFICATION = os.getenv("USE_INTENT_CLASSIFICATION", "true").lower() == "true"
@@ -130,6 +132,22 @@ def _get_redis_vector_cache():
         except Exception as e:
             logging.getLogger(__name__).warning(f"Failed to initialize RedisVectorCache: {e}")
     return _redis_vector_cache
+
+
+_exact_answer_cache = None
+
+
+def _get_exact_answer_cache():
+    """Lazy-load the exact normalised-text answer cache (plain Redis)."""
+    global _exact_answer_cache
+    if _exact_answer_cache is None and USE_EXACT_ANSWER_CACHE:
+        try:
+            from backend.services.exact_answer_cache import ExactAnswerCache
+            _exact_answer_cache = ExactAnswerCache()
+            logging.getLogger(__name__).info("ExactAnswerCache initialized (ttl=%ss)", _exact_answer_cache.ttl_seconds)
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Failed to initialize ExactAnswerCache: {e}")
+    return _exact_answer_cache
 
 def _get_intent_classifier():
     """Lazy-load intent classifier for query routing."""
@@ -506,6 +524,7 @@ class RAGPipeline:
         self.use_local_rewriter = USE_LOCAL_REWRITER
         self.use_infinity_embeddings = USE_INFINITY_EMBEDDINGS
         self.use_redis_cache = USE_REDIS_CACHE
+        self.use_exact_answer_cache = USE_EXACT_ANSWER_CACHE
         self.use_intent_classification = USE_INTENT_CLASSIFICATION
         self.use_faq_indexing = USE_FAQ_INDEXING
         self.use_short_query_expansion = USE_SHORT_QUERY_EXPANSION
@@ -542,12 +561,80 @@ class RAGPipeline:
             self._rag_graph = build_rag_graph(nodes)
         return self._rag_graph
 
+    async def _run_graph_with_stages(self, graph_input: Dict[str, Any]):
+        """
+        Run the graph, yielding ("stage", name) progress markers as nodes complete
+        and finally ("state", final_state).
+
+        Stages are derived from node completions (LangGraph `updates` stream mode):
+        - after `prechecks` routes to the live-data node  -> "checking_live_data"
+        - after `semantic_cache` misses (retrieval next)  -> "searching"
+        The "writing" stage is emitted by the caller right before generation.
+        Graph doubles that only implement `ainvoke` get no stage markers.
+        """
+        graph = self._get_rag_graph()
+        if not hasattr(graph, "astream"):
+            yield ("state", await graph.ainvoke(graph_input))
+            return
+
+        state: Dict[str, Any] = {}
+        try:
+            async for item in graph.astream(graph_input, stream_mode=["updates", "values"]):
+                if not (isinstance(item, tuple) and len(item) == 2):
+                    continue
+                mode, chunk = item
+                if mode == "values" and isinstance(chunk, dict):
+                    state = chunk
+                    continue
+                if mode != "updates" or not isinstance(chunk, dict):
+                    continue
+                for node_name, update in chunk.items():
+                    merged = {**state, **(update if isinstance(update, dict) else {})}
+                    if merged.get("early_answer") is not None or merged.get("error_message") is not None:
+                        continue
+                    if node_name == "prechecks" and merged.get("intent") == "blockchain_lookup":
+                        yield ("stage", "checking_live_data")
+                    elif node_name == "semantic_cache":
+                        yield ("stage", "searching")
+        except TypeError:
+            # Older LangGraph without multi-mode streaming: plain invoke.
+            state = await graph.ainvoke(graph_input)
+        yield ("state", state)
+
     # --- LangGraph helper accessors (wrap existing lazy global getters) ---
     def get_infinity_embeddings(self):
         return _get_infinity_embeddings()
 
     def get_redis_vector_cache(self):
         return _get_redis_vector_cache()
+
+    def get_exact_answer_cache(self):
+        return _get_exact_answer_cache()
+
+    async def _store_exact_answer(
+        self,
+        state: Dict[str, Any],
+        answer: str,
+        published_sources: List[Document],
+        is_grounded: bool,
+        kb_insufficient: bool,
+    ) -> None:
+        """Write-back for the exact-text cache: empty-history, KB-grounded answers only."""
+        if kb_insufficient or not answer or state.get("chat_history_pairs"):
+            return
+        if not getattr(self, "use_exact_answer_cache", False):
+            return
+        cache = self.get_exact_answer_cache()
+        if not cache:
+            return
+        key_text = state.get("sanitized_query") or state.get("raw_query") or ""
+        if not key_text:
+            return
+        try:
+            sources_data = [{"page_content": d.page_content, "metadata": d.metadata} for d in published_sources]
+            await cache.set(key_text, answer, sources_data, is_grounded=is_grounded)
+        except Exception as e:
+            logger.warning("Exact answer cache storage failed: %s", e)
 
     def get_intent_classifier(self):
         return _get_intent_classifier()
@@ -1285,6 +1372,10 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             # Early return (intent/static or cache hits)
             if state.get("early_answer") is not None:
                 metadata.setdefault("duration_seconds", time.time() - start_time)
+                # Surface the early-exit kind so callers (e.g. the suggested-question
+                # pre-generator) can tell live lookups / refusals / pins from knowledge answers.
+                if state.get("early_cache_type"):
+                    metadata.setdefault("early_cache_type", state.get("early_cache_type"))
                 return state.get("early_answer") or "", state.get("early_sources") or [], metadata
 
             context_docs: List[Document] = state.get("context_docs") or []
@@ -1359,28 +1450,39 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             logger.error("Error during async RAG query execution: %s", e, exc_info=True)
             return self.generic_user_error_message, [], metadata
 
-    async def astream_query(self, query_text: str, chat_history: List[Tuple[str, str]]):
+    async def astream_query(
+        self,
+        query_text: str,
+        chat_history: List[Tuple[str, str]],
+        category_hint: Optional[str] = None,
+    ):
         """
         Streaming version of aquery that yields response chunks progressively.
 
         Args:
             query_text: The user's current query.
             chat_history: A list of (human_message, ai_message) tuples representing the conversation history.
+            category_hint: Landing-page topic (Payload category id) the user clicked through, if any.
 
         Yields:
             Dict with streaming data: {"type": "chunk", "content": "..."} or {"type": "sources", "sources": [...]} or {"type": "complete"}
         """
         start_time = time.time()
         try:
-            graph = self._get_rag_graph()
-            state = await graph.ainvoke(
-                {
-                    "raw_query": query_text,
-                    "chat_history_pairs": chat_history,
-                    "metadata": {},
-                    "skip_generation": True,
-                }
-            )
+            state: Dict[str, Any] = {}
+            graph_input: Dict[str, Any] = {
+                "raw_query": query_text,
+                "chat_history_pairs": chat_history,
+                "metadata": {},
+                "skip_generation": True,
+            }
+            if category_hint:
+                graph_input["category_hint"] = category_hint
+            async for kind, payload in self._run_graph_with_stages(graph_input):
+                if kind == "stage":
+                    yield {"type": "stage", "stage": payload}
+                else:
+                    state = payload or {}
             metadata: Dict[str, Any] = state.get("metadata") or {}
 
             # Early returns (intent/static or cache hits)
@@ -1402,14 +1504,6 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                 for i in range(0, len(answer_text), 64):
                     yield {"type": "chunk", "content": answer_text[i : i + 64]}
                     await asyncio.sleep(0)
-                follow_up_questions = await self.agenerate_follow_up_questions(
-                    query_text,
-                    answer_text,
-                    sources,
-                    chat_history,
-                )
-                if follow_up_questions:
-                    yield {"type": "follow_ups", "questions": follow_up_questions}
                 metadata.setdefault("duration_seconds", time.time() - start_time)
                 early_cache_type = state.get("early_cache_type") or ""
                 # Pins, refusals, escalations and live lookups are early answers but not cache hits.
@@ -1424,6 +1518,16 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                     "early_type": early_cache_type or None,
                     "incident_pin_id": state.get("incident_pin_id"),
                 }
+                # Follow-ups are a second LLM call; they trail `complete` so the client
+                # can unlock the composer as soon as the answer itself is done.
+                follow_up_questions = await self.agenerate_follow_up_questions(
+                    query_text,
+                    answer_text,
+                    sources,
+                    chat_history,
+                )
+                if follow_up_questions:
+                    yield {"type": "follow_ups", "questions": follow_up_questions}
                 return
 
             context_docs: List[Document] = state.get("context_docs") or []
@@ -1521,6 +1625,7 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             logged_first_token = False
             from backend.services.llm_resilience import astream_with_breaker
 
+            yield {"type": "stage", "stage": "writing"}
             async for chunk in astream_with_breaker(
                 active_chain,
                 {"input": sanitized_query, "context": context_text,
@@ -1650,15 +1755,7 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
                         logger.warning("Redis cache storage failed in stream: %s", e)
             if self.semantic_cache and not self.use_redis_cache and not kb_insufficient:
                 self.semantic_cache.set(rewritten_query, [], full_answer, published_sources)
-
-            follow_up_questions = await self.agenerate_follow_up_questions(
-                sanitized_query,
-                full_answer,
-                [] if low_similarity else published_sources,
-                chat_history,
-            )
-            if follow_up_questions:
-                yield {"type": "follow_ups", "questions": follow_up_questions}
+            await self._store_exact_answer(state, full_answer, published_sources, is_grounded, kb_insufficient)
 
             metadata.update(
                 {
@@ -1677,6 +1774,17 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             )
             yield {"type": "metadata", "metadata": metadata}
             yield {"type": "complete", "from_cache": False, "abstained": bool(metadata.get("abstained", False))}
+
+            # Follow-ups are a second LLM call; they trail `complete` so the client
+            # can unlock the composer as soon as the answer itself is done.
+            follow_up_questions = await self.agenerate_follow_up_questions(
+                sanitized_query,
+                full_answer,
+                [] if low_similarity else published_sources,
+                chat_history,
+            )
+            if follow_up_questions:
+                yield {"type": "follow_ups", "questions": follow_up_questions}
         except HTTPException as he:
             # Preserve previous streaming behavior: emit an error event instead of raising.
             if getattr(he, "status_code", None) == 429:
