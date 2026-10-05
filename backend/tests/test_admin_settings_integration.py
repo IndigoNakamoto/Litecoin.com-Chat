@@ -42,7 +42,6 @@ def admin_headers():
 @pytest.fixture
 def admin_client(mock_redis, mock_motor_client, mock_llm, monkeypatch):
     """FastAPI TestClient with mocked dependencies and admin token configured."""
-    from backend.main import app
     from backend import dependencies
     from backend import redis_client
     

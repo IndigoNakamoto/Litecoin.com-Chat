@@ -22,6 +22,8 @@ import httpx
 from typing import List, Tuple, Optional
 from pathlib import Path
 
+pytestmark = pytest.mark.integration
+
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -613,7 +615,6 @@ class TestPerformance:
     async def test_ollama_concurrent_requests(self):
         """Test Ollama handles concurrent requests."""
         import time
-        import asyncio
         
         os.environ["OLLAMA_URL"] = "http://localhost:11434"
         from backend.services.rewriter import LocalRewriter

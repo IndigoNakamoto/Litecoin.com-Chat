@@ -1,0 +1,14 @@
+# Lint gate for CI. Scoped to rules that catch broken code rather than style,
+# because the codebase predates linting and a full style sweep would bury the
+# signal. Pinning the selection also keeps a new ruff release from turning the
+# build red on rules nobody opted into.
+#
+# E9   syntax and IO errors
+# F821 undefined name
+# F811 redefinition of an unused name
+# F601 repeated dict key literal
+# F632 identity comparison against a literal
+exclude = [".venv", "faiss_index", "faiss_index_1024", "monitoring/data"]
+
+[lint]
+select = ["E9", "F821", "F811", "F601", "F632"]

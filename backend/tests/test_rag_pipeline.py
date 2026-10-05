@@ -72,6 +72,7 @@ TEST_METADATA_AUTHOR = "Test Author"
 TEST_METADATA_TAG = "testing"
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_hierarchical_chunking_and_retrieval():
     """

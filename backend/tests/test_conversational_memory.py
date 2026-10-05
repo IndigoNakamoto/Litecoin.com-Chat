@@ -32,6 +32,10 @@ from backend.rag_pipeline import RAGPipeline
 from backend.data_ingestion.vector_store_manager import VectorStoreManager
 from langchain_core.documents import Document
 
+# Builds a real FAISS index from a downloaded sentence-transformers model and
+# exercises the full retrieval stack, so it needs live services rather than CI.
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def rag_pipeline(test_vector_store, mock_llm, monkeypatch):
@@ -39,6 +43,9 @@ def rag_pipeline(test_vector_store, mock_llm, monkeypatch):
     # Create VectorStoreManager that uses the test vector store
     vs_manager = VectorStoreManager()
     vs_manager.vector_store = test_vector_store
+    # Queries must be embedded with the same model that built the index, or FAISS
+    # aborts the process on the dimension mismatch instead of raising.
+    vs_manager.embeddings = test_vector_store.embeddings
     vs_manager.retriever = test_vector_store.as_retriever(
         search_type="similarity",
         search_kwargs={"k": 7}
