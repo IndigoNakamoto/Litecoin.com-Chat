@@ -198,7 +198,7 @@ const SuggestedQuestions: React.FC<SuggestedQuestionsProps> = ({ onQuestionClick
           transition={{ duration: 0.2 }}
         >
           <QuestionGrid
-            title={selectedCategoryObj ? `${selectedCategoryObj.icon ? `${selectedCategoryObj.icon} ` : ""}${selectedCategoryObj.name}` : "Get started with Litecoin"}
+            title={selectedCategoryObj ? selectedCategoryObj.name : "Get started with Litecoin"}
             subtitle={selectedCategoryObj?.description || undefined}
             questions={visibleQuestions}
             resetKey={selectedCategory ?? "all"}

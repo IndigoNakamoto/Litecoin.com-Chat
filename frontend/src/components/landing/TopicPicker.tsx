@@ -2,7 +2,7 @@
 
 import React from "react";
 import { motion } from "framer-motion";
-import { LayoutGrid, Flame, ArrowRight } from "lucide-react";
+import { Flame, ArrowRight } from "lucide-react";
 import type { LandingCategory } from "./types";
 
 interface TopicPickerProps {
@@ -81,15 +81,12 @@ export default function TopicPicker({
             aria-label="Browse all topics"
             data-testid="topic-all"
           >
-            <div className="flex items-center justify-between">
-              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <LayoutGrid className="h-5 w-5" aria-hidden />
-              </span>
-              <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-transform" aria-hidden />
-            </div>
-            <div>
-              <div className="text-base font-semibold text-card-foreground group-hover:text-primary">All topics</div>
-              <div className="text-sm text-muted-foreground mt-1">Every suggested question in one list</div>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold text-card-foreground group-hover:text-primary">All topics</div>
+                <div className="text-sm text-muted-foreground mt-1">Every suggested question in one list</div>
+              </div>
+              <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-transform" aria-hidden />
             </div>
             <div className="mt-auto text-xs text-muted-foreground">{totalQuestions} questions</div>
           </button>
@@ -106,17 +103,14 @@ export default function TopicPicker({
                 aria-label={`Browse ${cat.name} questions`}
                 data-testid={`topic-${cat.id}`}
               >
-                <div className="flex items-center justify-between">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-xl" aria-hidden>
-                    {cat.icon || "•"}
-                  </span>
-                  <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-transform" aria-hidden />
-                </div>
-                <div>
-                  <div className="text-base font-semibold text-card-foreground group-hover:text-primary">{cat.name}</div>
-                  {cat.description ? (
-                    <div className="text-sm text-muted-foreground mt-1 line-clamp-2">{cat.description}</div>
-                  ) : null}
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-base font-semibold text-card-foreground group-hover:text-primary">{cat.name}</div>
+                    {cat.description ? (
+                      <div className="text-sm text-muted-foreground mt-1 line-clamp-2">{cat.description}</div>
+                    ) : null}
+                  </div>
+                  <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-transform" aria-hidden />
                 </div>
                 <div className="mt-auto flex items-center justify-between gap-2">
                   <AudienceBadge level={cat.audienceLevel} />
