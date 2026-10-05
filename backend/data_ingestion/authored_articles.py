@@ -18,6 +18,10 @@ existing ones (matched by exact title) keep whatever status an editor set, and a
 article whose title/body are unchanged is left alone. Publishing stays a human
 action in the CMS.
 
+A trailing editor note — a final `---` rule followed by an italic paragraph that
+starts with "Editor note" — is kept in the repo file (sources, facts to verify)
+but stripped before the body is sent to the CMS, so it is never embedded.
+
     python scripts/seed_articles.py --dry-run
     python scripts/seed_articles.py --apply --only ordinals-lite-faq
 """
@@ -38,6 +42,16 @@ logger = logging.getLogger(__name__)
 CONTENT_DIR = Path(__file__).resolve().parents[2] / "content" / "articles"
 VALID_TIERS = ("cms", "pinned", "web")
 _FRONT_MATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+# "---" then an italic paragraph beginning "Editor note", at the very end of the file.
+_EDITOR_NOTE_RE = re.compile(r"\n+---\s*\n\s*\*Editor note\b.*\*\s*\Z", re.DOTALL | re.IGNORECASE)
+
+
+def strip_editor_note(body: str) -> tuple:
+    """(body without the trailing editor note, the note text or None)."""
+    m = _EDITOR_NOTE_RE.search(body)
+    if not m:
+        return body.rstrip(), None
+    return body[: m.start()].rstrip(), m.group(0).strip()
 
 
 class AuthoredArticleError(ValueError):
@@ -49,8 +63,9 @@ class AuthoredArticle:
     slug: str            # file stem, used by --only
     path: Path
     title: str
-    markdown: str
+    markdown: str        # body as sent to the CMS (editor note removed)
     category: Optional[str] = None
+    editor_note: Optional[str] = None
     source_url: Optional[str] = None
     tier: str = "cms"
     review_interval_days: int = 180
@@ -90,7 +105,7 @@ def parse_article_file(path: Path) -> AuthoredArticle:
         review = int(meta.get("reviewIntervalDays", 180))
     except (TypeError, ValueError) as e:
         raise AuthoredArticleError(f"{path}: reviewIntervalDays must be an integer") from e
-    body = text[m.end():].strip()
+    body, editor_note = strip_editor_note(text[m.end():].strip())
     if not body:
         raise AuthoredArticleError(f"{path}: empty body")
     heading = f"# {title}"
@@ -104,6 +119,7 @@ def parse_article_file(path: Path) -> AuthoredArticle:
         title=title,
         markdown=body,
         category=str(category).strip() if category else None,
+        editor_note=editor_note,
         source_url=str(source_url).strip() if source_url else None,
         tier=tier,
         review_interval_days=review,

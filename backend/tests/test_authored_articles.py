@@ -80,10 +80,23 @@ def test_repo_content_directory_is_well_formed():
     for a in articles:
         assert a.category in known, (a.slug, a.category)
         assert a.word_count >= 150, a.slug
-        assert "Editor note" in a.markdown, a.slug  # every draft ends with its sources note
+        # Every file carries a sources note for editors; it stays in git, never in the KB.
+        assert a.editor_note and a.editor_note.startswith("---"), a.slug
+        assert "Editor note" not in a.markdown, a.slug
+        assert not a.markdown.rstrip().endswith("---"), a.slug
     assert sum(1 for a in articles if a.slug.startswith(("what-are-ordinals", "inscriptions", "ordinals-lite", "litescribe", "collecting"))) == 6
     space = [a for a in articles if a.path.parent.name == "litecoin-space"]
     assert len(space) == 6 and all(a.tier == "pinned" and a.source_url.startswith("https://litecoinspace.org/") for a in space)
+
+
+def test_strip_editor_note_only_removes_trailing_note():
+    body = "# T\n\nBody.\n\n---\n*Editor note. Sources: x. Please verify y.*\n"
+    stripped, note = aa.strip_editor_note(body)
+    assert stripped == "# T\n\nBody." and note.startswith("---") and "verify y" in note
+    # A horizontal rule mid-article, or a note that is not last, is left alone.
+    keep = "# T\n\nIntro.\n\n---\n\n## Section\n\nMore."
+    assert aa.strip_editor_note(keep) == (keep, None)
+    assert aa.strip_editor_note("# T\n\nno note") == ("# T\n\nno note", None)
 
 
 @pytest.mark.asyncio
