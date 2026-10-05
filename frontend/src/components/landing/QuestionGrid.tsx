@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, ChevronRight, Flame, Zap } from "lucide-react";
+import { ArrowLeft, ChevronRight, Flame } from "lucide-react";
 import type { LandingQuestion } from "./types";
 
 interface QuestionGridProps {
@@ -114,22 +114,12 @@ export default function QuestionGrid({
                 <button
                   type="button"
                   onClick={() => onQuestionClick(item)}
-                  className="p-5 text-left bg-card border border-border rounded-xl hover:bg-accent/5 hover:border-primary/60 hover:shadow-xl hover:shadow-primary/10 transition-all duration-300 group w-full h-full flex items-start justify-between gap-3 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2"
+                  className="p-5 text-left bg-card border border-border rounded-xl hover:bg-accent/5 hover:border-primary/60 hover:shadow-xl hover:shadow-primary/10 transition-all duration-300 group w-full h-full flex items-start shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2"
                   aria-label={`Ask: ${item.question}`}
                 >
                   <span className="text-base font-semibold text-card-foreground group-hover:text-primary leading-relaxed">
                     {item.question}
                   </span>
-                  {item.cached && (
-                    <span
-                      className="shrink-0 inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
-                      title="Answers instantly"
-                      data-testid="instant-badge"
-                    >
-                      <Zap className="h-3 w-3" aria-hidden />
-                      Instant
-                    </span>
-                  )}
                 </button>
               </motion.div>
             ))}
