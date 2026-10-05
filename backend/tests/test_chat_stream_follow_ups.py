@@ -120,7 +120,7 @@ def test_chat_stream_suggested_cache_hit_emits_follow_ups_after_complete(client,
     class FakePipeline:
         async def astream_query(self, *_a, **_k):  # pragma: no cover - must not be reached
             raise AssertionError("cache hit must not run the pipeline")
-            yield  # noqa: unreachable, keeps this an async generator
+            yield  # unreachable on purpose: keeps this an async generator
 
         agenerate_follow_up_questions = AsyncMock(return_value=FOLLOW_UPS)
 

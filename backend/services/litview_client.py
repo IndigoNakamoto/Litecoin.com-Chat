@@ -373,10 +373,10 @@ class LitviewClient:
             self.get_range(series, index, span),
             return_exceptions=True,
         )
-        if isinstance(range_res, Exception):
+        if isinstance(range_res, BaseException):
             raise range_res
         rng: SeriesRange = range_res
-        latest: Optional[float] = None if isinstance(latest_res, Exception) else latest_res
+        latest: Optional[float] = None if isinstance(latest_res, BaseException) else latest_res
 
         last_pt = rng.last_non_null
         if latest is None and last_pt is None:
@@ -393,7 +393,7 @@ class LitviewClient:
                 tip_height=sync.tip_height,
             )
 
-        value = latest if latest is not None else last_pt.v  # type: ignore[union-attr]
+        value: float = latest if latest is not None else float(last_pt.v)  # type: ignore[union-attr, arg-type]
         as_of = (rng.points[-1].t if rng.points and latest is not None else None) or (last_pt.t if last_pt else None)
 
         # % changes vs N points back, measured from the last non-null point.
