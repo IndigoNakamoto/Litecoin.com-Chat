@@ -2,12 +2,12 @@
 Scheduled reference-doc ingestion driven by `doc_sources.yaml`.
 
 Generalizes the litecoin.com scraper into a registry: Litecoin Core docs and
-release notes, the MWEB LIPs, the Litecoin Space API reference, the Learning
-Center, and sitemap-driven sites such as the LitVM blog. Each source becomes
-Payload CMS drafts upserted by `sourceUrl`, tagged with `sourceTier`,
-`reviewIntervalDays`, an optional `category`, and a detected `publishedDate`.
-Publishing stays a human action: re-imports keep whatever status an editor
-set and skip articles whose content has not changed.
+release notes, the MWEB LIPs, the Litecoin Dev Kit and Ordinals Lite repos, the
+Learning Center and Foundation project pages, and sitemap-driven sites such as
+the LitVM blog. Each source becomes Payload CMS drafts upserted by `sourceUrl`,
+tagged with `sourceTier`, `reviewIntervalDays`, an optional `category`, and a
+detected `publishedDate`. Publishing stays a human action: re-imports keep
+whatever status an editor set and skip articles whose content has not changed.
 
 Run on a weekly ARQ cron (`ingest_doc_sources`) or by hand:
 
@@ -62,6 +62,8 @@ class SourceSpec:
     content_selector: Optional[str] = None
     # Payload category *name* to tag drafts with (resolved to an id at upsert time)
     category: Optional[str] = None
+    # kind: litecoin_com — site section (`learning_center` default, or `projects`)
+    section: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "SourceSpec":
@@ -161,10 +163,15 @@ def mediawiki_to_markdown(text: str) -> str:
 
 
 def _title_from_markdown(markdown: str, fallback: str) -> str:
-    for line in markdown.splitlines():
-        m = re.match(r"^#\s+(.+)$", line.strip())
+    """First H1 — ATX (`# Title`) or setext (`Title` over `====`) — minus code ticks."""
+    lines = markdown.splitlines()
+    for i, raw in enumerate(lines):
+        line = raw.strip()
+        m = re.match(r"^#\s+(.+)$", line)
         if m:
-            return m.group(1).strip()
+            return m.group(1).replace("`", "").strip()
+        if line and i + 1 < len(lines) and re.match(r"^={3,}\s*$", lines[i + 1].strip()):
+            return line.replace("`", "").strip()
     return fallback
 
 
@@ -353,7 +360,12 @@ async def fetch_github_markdown(spec: SourceSpec, client: _Client) -> List[Fetch
         if wc < spec.min_words:
             docs.append(FetchedDoc(spec.id, url, title, body, wc, spec.tier, spec.review_interval_days, skip_reason="thin"))
             continue
-        docs.append(FetchedDoc(spec.id, url, title, format_import_markdown(title, body, url, spec.tier), wc, spec.tier, spec.review_interval_days))
+        docs.append(
+            FetchedDoc(
+                spec.id, url, title, format_import_markdown(title, body, url, spec.tier), wc,
+                spec.tier, spec.review_interval_days, category=spec.category,
+            )
+        )
     return docs
 
 
@@ -433,23 +445,45 @@ async def fetch_sitemap_pages(spec: SourceSpec, client: _Client) -> List[Fetched
     return await _fetch_html_urls(spec, client, urls)
 
 
-async def fetch_litecoin_com(spec: SourceSpec, apply: bool) -> SourceReport:
-    """Delegate to the existing Learning Center scraper (it already upserts drafts)."""
-    from backend.data_ingestion.litecoin_com_scraper import run_ingest
+def _apply_title_prefix(title: str, markdown: str, prefix: Optional[str]) -> tuple:
+    """Prefix a scraped title and keep the body's leading H1 in step with it."""
+    if not prefix or title.lower().startswith(prefix.lower()):
+        return title, markdown
+    new_title = f"{prefix}: {title}"
+    old_heading = f"# {title}"
+    if markdown.startswith(old_heading):
+        markdown = f"# {new_title}" + markdown[len(old_heading):]
+    return new_title, markdown
 
-    report = SourceReport(source_id=spec.id)
-    try:
-        r = await run_ingest(apply=apply, min_words=spec.min_words)
-    except Exception as e:  # noqa: BLE001
-        report.errors.append(str(e))
-        return report
+
+async def fetch_litecoin_com(spec: SourceSpec) -> List[FetchedDoc]:
+    """
+    kind: litecoin_com — the Learning Center (default) or `/projects` listings via
+    the site scraper, fetch-only. Writes go through `upsert_drafts` like every other
+    kind, so weekly re-runs keep an editor's publish decision and skip unchanged
+    pages (the scraper's own `--apply` path resets imports to draft).
+    """
+    from backend.data_ingestion.litecoin_com_scraper import SECTION_LEARNING_CENTER, run_ingest
+
+    section = spec.section or SECTION_LEARNING_CENTER
+    r = await run_ingest(apply=False, min_words=spec.min_words, section=section)
+    docs: List[FetchedDoc] = []
     for page in r.extracted:
-        report.fetched.append(FetchedDoc(spec.id, page.url, page.title, page.markdown, page.word_count, spec.tier, spec.review_interval_days))
+        title, markdown = _apply_title_prefix(page.title, page.markdown, spec.title_prefix)
+        docs.append(
+            FetchedDoc(
+                spec.id, page.url, title, markdown, page.word_count, spec.tier,
+                spec.review_interval_days, category=spec.category,
+            )
+        )
     for page in r.skipped:
-        report.skipped.append(FetchedDoc(spec.id, page.url, page.title, "", page.word_count, spec.tier, spec.review_interval_days, skip_reason=page.skip_reason))
-    for _page, article_id, action in r.written:
-        (report.created if action == "created" else report.updated).append(article_id)
-    return report
+        docs.append(
+            FetchedDoc(
+                spec.id, page.url, page.title or page.url, "", page.word_count, spec.tier,
+                spec.review_interval_days, skip_reason=page.skip_reason or "skipped",
+            )
+        )
+    return docs
 
 
 # --------------------------------------------------------------------------- upsert
@@ -569,11 +603,10 @@ async def upsert_drafts(docs: Sequence[FetchedDoc], report: SourceReport) -> Non
 
 
 async def run_source(spec: SourceSpec, apply: bool, client: _Client) -> SourceReport:
-    if spec.kind == "litecoin_com":
-        return await fetch_litecoin_com(spec, apply)
-
     report = SourceReport(source_id=spec.id)
-    if spec.kind == "github_markdown":
+    if spec.kind == "litecoin_com":
+        docs = await fetch_litecoin_com(spec)
+    elif spec.kind == "github_markdown":
         docs = await fetch_github_markdown(spec, client)
     elif spec.kind == "html_page":
         docs = await fetch_html_pages(spec, client)

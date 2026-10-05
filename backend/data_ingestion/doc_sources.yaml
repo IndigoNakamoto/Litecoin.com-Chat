@@ -5,7 +5,9 @@
 # Publish, which fires the normal afterChange sync into the vector store.
 #
 # kinds:
-#   litecoin_com     the existing Learning Center scraper (sitemap + hub crawl)
+#   litecoin_com     the litecoin.com scraper; `section` picks `learning_center` (default,
+#                    sitemap + hub crawl) or `projects` (the Foundation project listings
+#                    linked from /projects, with the funding widgets stripped)
 #   github_markdown  files from a GitHub repo (markdown or mediawiki), via raw.githubusercontent.com;
 #                    `paths` may be files or directories (directories are listed via the GitHub API)
 #   html_page        a single public HTML page, main content extracted to markdown
@@ -16,6 +18,7 @@
 # review_interval_days: written on the draft; the stale-doc job uses it
 # content_selector: optional CSS selector for the article root on html/sitemap kinds
 # category:         optional Payload category *name*; drafts are tagged with it when it exists
+#                   (all kinds, including litecoin_com and github_markdown)
 #
 # Re-runs update an existing import's title/body only when they changed and never
 # alter its status, so publishing (an editor action) sticks across weekly runs.
@@ -26,6 +29,19 @@ sources:
     enabled: true
     tier: cms
     review_interval_days: 180
+
+  # Foundation project listings (Litecoin Space, Ordinals Lite, LDK, Electrum-LTC,
+  # Stackwallet, bounties, completed ports...). Each page is the project's own pitch,
+  # so the title is prefixed to keep "MWEB" / "Litecoin Core" distinct from the
+  # protocol articles. /projects/submit (a form) is excluded by the scraper.
+  - id: litecoin_com_projects
+    kind: litecoin_com
+    section: projects
+    enabled: true
+    tier: cms
+    review_interval_days: 180
+    title_prefix: "Litecoin Projects"
+    category: "Ecosystem & Foundation"
 
   - id: litecoin_core_release_notes
     kind: github_markdown
@@ -40,6 +56,7 @@ sources:
     tier: pinned
     review_interval_days: 90
     title_prefix: "Litecoin Core release notes"
+    category: "Build on Litecoin"
 
   - id: litecoin_core_docs
     kind: github_markdown
@@ -61,6 +78,7 @@ sources:
     tier: pinned
     review_interval_days: 180
     title_prefix: "Litecoin Core"
+    category: "Build on Litecoin"
 
   - id: litecoin_lips_mweb
     kind: github_markdown
@@ -75,15 +93,123 @@ sources:
     review_interval_days: 365
     title_prefix: "LIP"
 
+  # litecoinspace.org is a JavaScript-rendered SPA (an Angular build of mempool.space):
+  # the HTML the server returns has ~4 words, so this entry has only ever produced
+  # `thin_or_js_rendered` skips. Disabled until a rendered-HTML kind exists; the API
+  # overview and the Space FAQ are maintained as editor-authored articles instead
+  # (content/articles/litecoin-space/, seeded by scripts/seed_articles.py).
   - id: litecoin_space_api_reference
     kind: html_page
-    enabled: true
+    enabled: false
     urls:
       - https://litecoinspace.org/docs/api/rest
     tier: pinned
     review_interval_days: 90
     title_prefix: "Litecoin Space API"
     min_words: 80
+
+  # The explorer's own repo README (Foundation-operated fork of mempool.space):
+  # what Litecoin Space is and the supported self-hosting routes.
+  - id: litecoin_space_readme
+    kind: github_markdown
+    enabled: true
+    repo: litecoin-foundation/ltcspace
+    ref: v3.3.x
+    paths:
+      - README.md
+    tier: pinned
+    review_interval_days: 180
+    title_prefix: "Litecoin Space"
+    category: "Build on Litecoin"
+
+  # Litecoin Development Kit (LDK): the Litecoin/MWEB port of Bitcoin Dev Kit.
+  # Public prototype, not audited (the docs say so themselves) -> tier `web` so the
+  # chips show it as needing review; 90-day window because the repos move fast.
+  - id: ldk_bdk
+    kind: github_markdown
+    enabled: true
+    repo: LitecoinDevKit/bdk
+    ref: litecoin
+    paths:
+      - README.md
+      - PORTING.md
+      - docs/ADOPTION.md
+      - docs/REVIEWERS_GUIDE.md
+      - docs/MWEB_ARCHITECTURE.md
+      - docs/MWEB_PEGIN.md
+      - docs/MIGRATE_FROM_MWEBD.md
+      - docs/LITECOIN_CORE_BRIEFING.md
+      - docs/LTCSUITE_ALIGNMENT.md
+      - docs/SECURITY_PLAN.md
+      - docs/SUPPLY_CHAIN.md
+    tier: web
+    review_interval_days: 90
+    title_prefix: "Litecoin Dev Kit"
+    category: "Build on Litecoin"
+
+  - id: ldk_bdk_wallet
+    kind: github_markdown
+    enabled: true
+    repo: LitecoinDevKit/bdk_wallet
+    ref: litecoin
+    paths:
+      - README.md
+    tier: web
+    review_interval_days: 90
+    title_prefix: "Litecoin Dev Kit (bdk_wallet)"
+    category: "Build on Litecoin"
+
+  - id: ldk_bdk_ffi
+    kind: github_markdown
+    enabled: true
+    repo: LitecoinDevKit/bdk-ffi
+    ref: litecoin-mweb
+    paths:
+      - README.md
+    tier: web
+    review_interval_days: 90
+    title_prefix: "Litecoin Dev Kit (bdk-ffi bindings)"
+    category: "Build on Litecoin"
+
+  - id: ldk_wallet_mac
+    kind: github_markdown
+    enabled: true
+    repo: LitecoinDevKit/ltc-wallet-mac
+    ref: main
+    paths:
+      - README.md
+    tier: web
+    review_interval_days: 90
+    title_prefix: "Litecoin Dev Kit (reference desktop wallet)"
+    category: "Build on Litecoin"
+
+  - id: ldk_org_profile
+    kind: github_markdown
+    enabled: true
+    repo: LitecoinDevKit/.github
+    ref: main
+    paths:
+      - profile/README.md
+    tier: web
+    review_interval_days: 90
+    title_prefix: "Litecoin Dev Kit"
+    category: "Build on Litecoin"
+
+  # Ordinals Lite: only the README of ynohtna92/ord-litecoin is Litecoin-worded
+  # (litoshis, litecoind); docs/src/* is unmodified upstream Bitcoin text and is
+  # deliberately not imported. Litecoin-adapted explainers are editor-authored in
+  # content/articles/ordinals/.
+  - id: ordinals_lite_readme
+    kind: github_markdown
+    enabled: true
+    repo: ynohtna92/ord-litecoin
+    ref: master
+    paths:
+      - README.md
+    tier: web
+    review_interval_days: 120
+    title_prefix: "Ordinals Lite"
+    category: "Ordinals & Digital Artifacts"
 
   # LitVM (Litecoin's EVM/ZK layer, a separate project): every post under /blog/
   # from the site's sitemap. Third-party content, so tier `web`; drafts are

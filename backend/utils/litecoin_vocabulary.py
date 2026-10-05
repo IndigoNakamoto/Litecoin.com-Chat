@@ -57,9 +57,22 @@ LTC_SYNONYM_MAP: Dict[str, str] = {
     "tokens": "ordinals",
     "inscriptions": "ordinals",
     "brc-20": "ltc-20",
+    "ord-litecoin": "ordinals lite",
     "taproot": "upgrades",
     "segwit": "upgrades",
     "bech32": "address format",
+
+    # --- Developer tooling (Litecoin Dev Kit = the BDK port, not Lightning Dev Kit) ---
+    "litecoin development kit": "litecoin dev kit",
+    "ldk": "litecoin dev kit",
+
+    # --- Explorer & fee units (Litecoin Space is the Foundation's mempool.space fork) ---
+    "litecoinspace.org": "litecoin space",
+    "litecoinspace": "litecoin space",
+    "mempool explorer": "litecoin space mempool explorer",
+    "sat/vb": "lit/vb",
+    "sats/vb": "lit/vb",
+    "sat/vbyte": "lit/vb",
 
     # --- Transaction Policy & Fee Management ---
     "replace-by-fee": "rbf",
@@ -169,6 +182,25 @@ LTC_ENTITY_EXPANSIONS: Dict[str, str] = {
     "charlie lee": "creator founder coblee",
     "foundation": "litecoin foundation lf",
     "litecoin foundation": "lf foundation",
+
+    # --- Ordinals Lite & digital artifacts ---
+    "ordinals lite": "ord-litecoin ordinal theory inscriptions litoshi digital artifacts explorer ordinalslite",
+    "inscription": "ordinals inscriptions digital artifact taproot witness envelope commit reveal litoshi",
+    "litoshi": "litoshis smallest unit ordinal number rarity uncommon rare epic legendary",
+    "digital artifact": "inscription ordinals on-chain immutable permissionless nft",
+    "litescribe": "ordinals wallet browser extension unisat fork inscriptions marketplace ltc-20",
+    "stack wallet": "stackwallet open-source non-custodial multi-coin wallet coin control ordinals privacy",
+    "stackwallet": "stack wallet open-source non-custodial multi-coin wallet coin control ordinals privacy",
+
+    # --- Litecoin Dev Kit (BDK port with native MWEB) ---
+    "litecoin dev kit": "ldk bitcoin dev kit bdk port descriptor wallet library mweb peg-in peg-out rust uniffi bindings prototype",
+    "bdk": "bitcoin dev kit litecoin dev kit descriptor wallet library rust",
+
+    # --- Litecoin Space (explorer) & fee units ---
+    "litecoin space": "litecoinspace mempool explorer block explorer fee estimates lit/vb projected blocks mempool.space fork",
+    "lit/vb": "fee rate litoshis per virtual byte vbytes feerate sat/vb",
+    "projected blocks": "litecoin space mempool explorer fee estimates next blocks forecast",
+    "block health": "litecoin space block audit expected block removed transactions miner",
 }
 
 # Topicality: terms that mark a question as being about Litecoin (or the crypto
@@ -186,6 +218,12 @@ _TOPICAL_TERMS = frozenset(
         "satoshi", "crypto", "cryptocurrency", "bitcoin", "btc", "dogecoin", "doge",
         "ordinals", "inscriptions", "atomic swap", "cold storage", "hardware wallet",
         "exchange", "merchant", "payment", "address", "txid", "block height", "difficulty",
+        # projects: Ordinals Lite, Litecoin Dev Kit, Litecoin Space and related tooling
+        "ordinals lite", "ordinalslite", "ord-litecoin", "litoshi", "litoshis", "inscription",
+        "digital artifact", "digital artifacts", "litescribe", "stackwallet", "stack wallet",
+        "litecoin dev kit", "litecoin development kit", "ldk", "bdk", "electrum-ltc",
+        "block explorer", "mempool explorer", "lit/vb", "sat/vb", "fee rate", "feerate",
+        "rbf", "cpfp", "replace-by-fee", "child-pays-for-parent", "block health", "block audit",
     }
     | set(LTC_SYNONYM_MAP.keys())
     | set(LTC_ENTITY_EXPANSIONS.keys())

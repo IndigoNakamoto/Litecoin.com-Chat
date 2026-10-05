@@ -193,6 +193,50 @@ questions:
     expected_behavior: answer
     expected_source_substrings: [irreversib, confirm, cannot be reversed, revers]
 
+  # ---------------------------------------------------------------- projects: Ordinals Lite, Litecoin Dev Kit, Litecoin Space (answer)
+  # Grounded by the content/articles drafts and the litecoin.com/projects, LDK and ord-litecoin imports.
+  - id: conceptual-ordinals
+    category: conceptual
+    query: What are Ordinals on Litecoin?
+    expected_behavior: answer
+    expected_source_substrings: [ordinal, litoshi]
+    # The upstream ord docs are Bitcoin-worded; the answer must use Litecoin units.
+    must_not_contain: ["subdivision of a bitcoin", "smallest subdivision of a bitcoin"]
+
+  - id: conceptual-ldk
+    category: conceptual
+    query: What is the Litecoin Development Kit?
+    expected_behavior: answer
+    expected_source_substrings: [dev kit, descriptor, bdk]
+
+  - id: conceptual-ldk-not-audited
+    category: conceptual
+    # The LDK docs call it a public prototype whose funds path is not independently reviewed.
+    query: Is the Litecoin Dev Kit audited and ready for production wallets?
+    expected_behavior: answer
+    expected_source_substrings: [prototype, audit, dev kit]
+    must_not_contain: ["is production-ready", "fully audited", "has been audited"]
+
+  - id: conceptual-litecoin-space
+    category: conceptual
+    query: What is Litecoin Space?
+    expected_behavior: answer
+    expected_source_substrings: [litecoin space, mempool]
+
+  - id: conceptual-stuck-tx
+    category: conceptual
+    # Definitional: must stay on RAG (the live mempool route is for "right now" phrasing).
+    query: My Litecoin transaction has been unconfirmed for hours. How do RBF and CPFP help?
+    expected_behavior: answer
+    expected_source_substrings: [rbf, cpfp, replace-by-fee, child-pays-for-parent]
+
+  - id: conceptual-lit-vb
+    category: conceptual
+    # Unit explanation, not a live fee lookup.
+    query: What does lit/vB mean?
+    expected_behavior: answer
+    expected_source_substrings: [lit/vb, virtual byte, fee rate]
+
   # ---------------------------------------------------------------- orient (answer, newcomer / merchant / developer entry points)
   - id: orient-where-to-start
     category: orient

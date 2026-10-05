@@ -216,12 +216,40 @@ async def test_astream_retrieval_failure_is_error_not_abstain():
         ("Best hotels in Paris", False),
         ("Write a poem about cats", False),
         ("What was discussed in the Foundation board meeting last Tuesday?", True),  # "foundation" is topical
+        # projects vocabulary (Ordinals Lite, Litecoin Dev Kit, Litecoin Space)
+        ("What is a litoshi?", True),
+        ("Is LDK audited?", True),
+        ("What does 5 lit/vB mean?", True),
+        ("How does block health work on a mempool explorer?", True),
+        ("Can I bump a stuck payment with CPFP?", True),
+        ("Where do I download Litescribe?", True),
     ],
 )
 def test_is_litecoin_related(query, related):
     from backend.utils.litecoin_vocabulary import is_litecoin_related
 
     assert is_litecoin_related(query) is related
+
+
+def test_projects_vocabulary_normalises_and_expands():
+    from backend.utils.litecoin_vocabulary import expand_ltc_entities, normalize_ltc_keywords
+
+    # Canonical forms: Litecoin Space, Litecoin Dev Kit, lit/vB
+    assert normalize_ltc_keywords("Is litecoinspace.org down?") == "Is litecoin space down?"
+    assert normalize_ltc_keywords("what is the Litecoin Development Kit") == "what is the litecoin dev kit"
+    assert normalize_ltc_keywords("Is LDK production ready?") == "Is litecoin dev kit production ready?"
+    assert normalize_ltc_keywords("fees are 2 sat/vB today") == "fees are 2 lit/vb today"
+    assert normalize_ltc_keywords("install ord-litecoin") == "install ordinals lite"
+    # Expansions pull in the retrieval vocabulary the authored articles use
+    ldk = expand_ltc_entities("what is the litecoin dev kit").lower()
+    assert "bdk" in ldk and "descriptor" in ldk and "peg-in" in ldk
+    ords = expand_ltc_entities("explain ordinals lite").lower()
+    assert "inscriptions" in ords and "litoshi" in ords and "digital artifacts" in ords
+    space = expand_ltc_entities("what is litecoin space").lower()
+    assert "mempool explorer" in space and "fee estimates" in space
+    assert "litoshis per virtual byte" in expand_ltc_entities("what is lit/vb")
+    # Unrelated questions are untouched
+    assert expand_ltc_entities("best sourdough recipe") == "best sourdough recipe"
 
 
 @pytest.mark.asyncio

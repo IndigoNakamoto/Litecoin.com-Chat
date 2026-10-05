@@ -1,8 +1,16 @@
 """
 Discover educational pages on litecoin.com and convert them to markdown.
 
-Used by the operator CLI to create Payload CMS drafts. Nothing is published
-or embedded until an editor reviews the draft in the CMS.
+Two site sections are supported, selected with ``section``:
+
+* ``learning_center`` (default) — Learning Center articles (sitemap + hub crawl).
+* ``projects`` — the Litecoin Foundation project pages linked from
+  ``/projects`` (they are not in the sitemap; each page is a funding listing
+  whose body sits in a ``div.markdown`` block surrounded by Info / Links /
+  Share / Contributors / funding widgets, which are stripped).
+
+Used by the operator CLI and the ``doc_sources`` registry to create Payload CMS
+drafts. Nothing is published or embedded until an editor reviews the draft.
 """
 
 from __future__ import annotations
@@ -28,6 +36,28 @@ DISCOVERY_SEEDS = (
 STANDALONE_PATHS = frozenset({"/what-is-litecoin"})
 HUB_PATHS = frozenset({"/learningcenter", "/learning-center/learning-center"})
 ALLOWED_HOSTS = frozenset({"litecoin.com", "www.litecoin.com"})
+
+# Site sections. The Learning Center is the default so existing callers are unchanged.
+SECTION_LEARNING_CENTER = "learning_center"
+SECTION_PROJECTS = "projects"
+SECTIONS = (SECTION_LEARNING_CENTER, SECTION_PROJECTS)
+
+PROJECTS_SEEDS = (f"{SITE_ORIGIN}/projects",)
+PROJECTS_HUB_PATHS = frozenset({"/projects"})
+# `/projects/submit` is the proposal form, not a project listing.
+PROJECTS_EXCLUDED_PATHS = frozenset({"/projects/submit"})
+
+# Lines that are widgets on every project page, never content. Compared after
+# `_normalize_title` (lowercase, alphanumerics only).
+PROJECT_BOILERPLATE_LINES = frozenset({
+    "info", "links", "share", "copylink", "x", "facebook", "howdonationswork",
+    "contributors", "fundingsummary", "impactsummary", "numberofdonations",
+    "communityraisedltc", "communitydonationsusd", "paidtocontributors",
+    "donate", "donatenow", "loadingcontributors",
+})
+# "0", "$ 0.00", "Ł 19.03", "Ł 19.03 + $ 5,407.22": funding counters.
+_PROJECT_COUNTER_RE = re.compile(r"^(?:[Ł$]\s*)?[\d,]+(?:\.\d+)?(?:\s*\+\s*(?:[Ł$]\s*)?[\d,]+(?:\.\d+)?)?$")
+_SHARE_HOST_FRAGMENTS = ("twitter.com/intent", "x.com/intent", "facebook.com/sharer", "reddit.com/r/")
 MIN_WORD_COUNT = 50
 DEFAULT_REQUEST_DELAY_SECONDS = 1.0
 USER_AGENT = (
@@ -96,13 +126,28 @@ def normalize_url(url: str) -> str:
     return urlunparse((scheme, host, path, "", "", ""))
 
 
-def is_discovery_hub(url: str) -> bool:
+def _check_section(section: str) -> str:
+    if section not in SECTIONS:
+        raise ValueError(f"Unknown litecoin.com section {section!r}; expected one of {SECTIONS}")
+    return section
+
+
+def discovery_seeds(section: str = SECTION_LEARNING_CENTER) -> Sequence[str]:
+    """Hub pages whose links are crawled for a section."""
+    return PROJECTS_SEEDS if _check_section(section) == SECTION_PROJECTS else DISCOVERY_SEEDS
+
+
+def is_discovery_hub(url: str, section: str = SECTION_LEARNING_CENTER) -> bool:
     parsed = urlparse(normalize_url(url))
-    return parsed.path in HUB_PATHS
+    hubs = PROJECTS_HUB_PATHS if _check_section(section) == SECTION_PROJECTS else HUB_PATHS
+    return parsed.path in hubs
 
 
-def is_ingestible_url(url: str) -> bool:
-    """True for individual Learning Center articles and standalone docs pages."""
+def is_ingestible_url(url: str, section: str = SECTION_LEARNING_CENTER) -> bool:
+    """
+    True for pages the given section imports: individual Learning Center
+    articles and standalone docs pages, or `/projects/<slug>` listings.
+    """
     try:
         parsed = urlparse(normalize_url(url))
     except ValueError:
@@ -110,11 +155,19 @@ def is_ingestible_url(url: str) -> bool:
     if parsed.netloc not in ALLOWED_HOSTS and parsed.netloc != "litecoin.com":
         return False
     path = parsed.path or "/"
+    parts = path.split("/")
+    if _check_section(section) == SECTION_PROJECTS:
+        # ['', 'projects', 'slug']
+        return (
+            len(parts) == 3
+            and parts[1] == "projects"
+            and bool(parts[2])
+            and path not in PROJECTS_EXCLUDED_PATHS
+        )
     if path in STANDALONE_PATHS:
         return True
     if path in HUB_PATHS:
         return False
-    parts = path.split("/")
     # ['', 'learning-center', 'slug']
     if len(parts) == 3 and parts[1] == "learning-center" and parts[2] and parts[2] != "learning-center":
         return True
@@ -166,7 +219,12 @@ def _text(node: Optional[Tag]) -> str:
     return node.get_text(" ", strip=True)
 
 
-def extract_page(url: str, html: str, min_words: int = MIN_WORD_COUNT) -> ExtractedPage:
+def extract_page(
+    url: str,
+    html: str,
+    min_words: int = MIN_WORD_COUNT,
+    section: str = SECTION_LEARNING_CENTER,
+) -> ExtractedPage:
     """Parse HTML into markdown. Sets skip_reason for CF or thin pages."""
     normalized = normalize_url(url)
     if is_cloudflare_challenge(html):
@@ -174,15 +232,20 @@ def extract_page(url: str, html: str, min_words: int = MIN_WORD_COUNT) -> Extrac
             f"Cloudflare challenge page received for {normalized}. "
             "Run this script from a network that can load litecoin.com in a browser."
         )
-    if not is_ingestible_url(normalized):
+    if not is_ingestible_url(normalized, section=section):
         return ExtractedPage(url=normalized, skip_reason="not_allowlisted")
 
     soup = BeautifulSoup(html, "lxml")
-    title = _page_title(soup, url=normalized)
-    catalog = _catalog_titles(soup, normalized)
-    _strip_chrome(soup)
-    body = _extract_article_markdown(soup, title=title, catalog=catalog)
-    body = _drop_catalog_lines(body, catalog, title)
+    if section == SECTION_PROJECTS:
+        title = _project_title(soup, url=normalized)
+        _strip_chrome(soup)
+        body = _extract_project_markdown(soup)
+    else:
+        title = _page_title(soup, url=normalized)
+        catalog = _catalog_titles(soup, normalized)
+        _strip_chrome(soup)
+        body = _extract_article_markdown(soup, title=title, catalog=catalog)
+        body = _drop_catalog_lines(body, catalog, title)
     body = re.sub(r"\n{3,}", "\n\n", body)
     count = word_count(body)
     if is_thin_page(body, min_words=min_words):
@@ -410,6 +473,94 @@ def _extract_article_markdown(soup: BeautifulSoup, title: str, catalog: Set[str]
             return sliced
     content_root = _select_content_root(soup, title=title)
     return _element_to_markdown(content_root).strip()
+
+
+def _project_title(soup: BeautifulSoup, url: str) -> str:
+    """
+    Project pages carry the listing title in the hero `article > header > h1`;
+    the `<title>` is just the slug and there is no og:title, while the footer
+    has unrelated h1s ("LITECOIN SOCIALS"). Prefer the hero, then fall back to
+    the generic ranking.
+    """
+    hero = soup.select_one("article header h1")
+    if hero is not None:
+        text = _clean_text(hero.get_text(" ", strip=True))
+        if text and text.lower() not in GENERIC_TITLES:
+            return text
+    return _page_title(soup, url=url)
+
+
+def _project_links(soup: BeautifulSoup) -> List[tuple]:
+    """
+    (text, href) pairs from a project page's "Links:" widget — the project's own
+    site, repo, Discord. Share intents, anchors and litecoin.com-internal links
+    are dropped. Empty when the widget is absent.
+    """
+    out: List[tuple] = []
+    seen: Set[str] = set()
+    for marker in soup.find_all(string=re.compile(r"^\s*Links:?\s*$")):
+        container = marker.parent
+        # Climb to the block that holds the anchors (the label is usually a bare span/div).
+        for _ in range(4):
+            if container is None or container.find("a", href=True) is not None:
+                break
+            container = container.parent
+        if container is None:
+            continue
+        for anchor in container.find_all("a", href=True):
+            href = anchor["href"].strip()
+            text = _clean_text(anchor.get_text(" ", strip=True))
+            if not href.startswith(("http://", "https://")) or not text:
+                continue
+            host = urlparse(href).netloc.lower()
+            if host.endswith("litecoin.com") or any(frag in href for frag in _SHARE_HOST_FRAGMENTS):
+                continue
+            if href in seen:
+                continue
+            seen.add(href)
+            out.append((text.rstrip("/"), href))
+    return out
+
+
+def _extract_project_markdown(soup: BeautifulSoup) -> str:
+    """
+    Body of a litecoin.com project page.
+
+    The listing's prose lives in the innermost `div.markdown` block (the outer one
+    wraps the Info / Links / Share widgets and the Contributors list as well), so
+    the leaf `.markdown` block with the most words is the article. Falls back to
+    the generic content root for pages that are not built from that template.
+    """
+    leaves = [el for el in soup.select("div.markdown") if el.select_one("div.markdown") is None]
+    best: Optional[Tag] = None
+    best_words = 0
+    for el in leaves:
+        count = word_count(el.get_text(" ", strip=True))
+        if count > best_words:
+            best, best_words = el, count
+    if best is not None and best_words >= 20:
+        body = _element_to_markdown(best).strip()
+    else:
+        body = _element_to_markdown(_select_content_root(soup)).strip()
+    body = _drop_project_boilerplate_lines(body)
+    links = _project_links(soup)
+    if links:
+        body += "\n\n## Project links\n\n" + "\n".join(f"- [{text}]({href})" for text, href in links)
+    return body
+
+
+def _drop_project_boilerplate_lines(markdown: str) -> str:
+    """Remove funding-widget labels and counters that leak into project pages."""
+    kept: List[str] = []
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        text = re.sub(r"^#{1,6}\s*", "", stripped)
+        text = re.sub(r"^[-*]\s+", "", text)
+        text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+        if text and (_normalize_title(text) in PROJECT_BOILERPLATE_LINES or _PROJECT_COUNTER_RE.match(text)):
+            continue
+        kept.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
 
 
 def _drop_catalog_lines(markdown: str, catalog: Set[str], title: str) -> str:
@@ -662,9 +813,18 @@ def _http_client() -> httpx.AsyncClient:
 
 async def discover_urls(
     fetcher: RateLimitedClient,
-    seeds: Sequence[str] = DISCOVERY_SEEDS,
+    seeds: Optional[Sequence[str]] = None,
     sitemap_url: str = SITEMAP_URL,
+    section: str = SECTION_LEARNING_CENTER,
 ) -> List[str]:
+    """
+    Allowlisted URLs for a section. The Learning Center is listed in the sitemap
+    and linked from its hubs; project pages are only linked from `/projects`, so
+    the sitemap pass simply contributes nothing for that section.
+    """
+    _check_section(section)
+    if seeds is None:
+        seeds = discovery_seeds(section)
     discovered: Set[str] = set()
 
     try:
@@ -679,7 +839,7 @@ async def discover_urls(
             child_pages, _nested = parse_sitemap_locs(child_xml)
             page_urls.extend(child_pages)
         for loc in page_urls:
-            if is_ingestible_url(loc):
+            if is_ingestible_url(loc, section=section):
                 discovered.add(normalize_url(loc))
         logger.info("Sitemap contributed %d allowlisted URLs", len(discovered))
     except (httpx.HTTPError, CloudflareChallengeError) as exc:
@@ -692,7 +852,7 @@ async def discover_urls(
             logger.warning("Discovery seed failed %s: %s", seed, exc)
             continue
         for link in extract_links(html, seed):
-            if is_ingestible_url(link):
+            if is_ingestible_url(link, section=section):
                 discovered.add(normalize_url(link))
 
     urls = sorted(discovered)
@@ -704,15 +864,16 @@ async def scrape_pages(
     urls: Iterable[str],
     fetcher: RateLimitedClient,
     min_words: int = MIN_WORD_COUNT,
+    section: str = SECTION_LEARNING_CENTER,
 ) -> List[ExtractedPage]:
     pages: List[ExtractedPage] = []
     for url in urls:
-        if not is_ingestible_url(url):
+        if not is_ingestible_url(url, section=section):
             pages.append(ExtractedPage(url=normalize_url(url), skip_reason="not_allowlisted"))
             continue
         try:
             html = await fetcher.get_text(url)
-            pages.append(extract_page(url, html, min_words=min_words))
+            pages.append(extract_page(url, html, min_words=min_words, section=section))
         except CloudflareChallengeError as exc:
             logger.warning("Skipping %s: %s", url, exc)
             pages.append(ExtractedPage(url=normalize_url(url), skip_reason="cloudflare"))
@@ -780,7 +941,9 @@ async def run_ingest(
     delay_seconds: float = DEFAULT_REQUEST_DELAY_SECONDS,
     min_words: int = MIN_WORD_COUNT,
     urls: Optional[Sequence[str]] = None,
+    section: str = SECTION_LEARNING_CENTER,
 ) -> IngestReport:
+    _check_section(section)
     report = IngestReport()
     async with _http_client() as raw_client:
         fetcher = RateLimitedClient(raw_client, delay_seconds=delay_seconds)
@@ -791,6 +954,7 @@ async def run_ingest(
                 apply=apply,
                 min_words=min_words,
                 urls=urls,
+                section=section,
             )
         finally:
             await fetcher.aclose()
@@ -803,16 +967,17 @@ async def _run_ingest_with_fetcher(
     apply: bool,
     min_words: int,
     urls: Optional[Sequence[str]],
+    section: str = SECTION_LEARNING_CENTER,
 ) -> IngestReport:
     if urls:
-        discovered = [normalize_url(url) for url in urls if is_ingestible_url(url)]
-        rejected = [normalize_url(url) for url in urls if not is_ingestible_url(url)]
+        discovered = [normalize_url(url) for url in urls if is_ingestible_url(url, section=section)]
+        rejected = [normalize_url(url) for url in urls if not is_ingestible_url(url, section=section)]
         for url in rejected:
             report.skipped.append(ExtractedPage(url=url, skip_reason="not_allowlisted"))
     else:
-        discovered = await discover_urls(fetcher)
+        discovered = await discover_urls(fetcher, section=section)
     report.discovered = discovered
-    pages = await scrape_pages(discovered, fetcher, min_words=min_words)
+    pages = await scrape_pages(discovered, fetcher, min_words=min_words, section=section)
     for page in pages:
         if page.skip_reason:
             report.skipped.append(page)

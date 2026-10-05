@@ -281,6 +281,29 @@ def test_doc_sources_registry_loads_and_is_well_formed():
     assert litvm.kind == "sitemap" and litvm.tier == "web" and litvm.category == "LitVM"
     assert litvm.sitemap_url.startswith("https://www.litvm.com/") and litvm.include_prefixes == ["https://www.litvm.com/blog/"]
     assert litvm.content_selector == ".article-body"
+    # litecoin.com/projects, Litecoin Dev Kit, Ordinals Lite (Milestone 13 expansion)
+    projects = next(s for s in specs if s.id == "litecoin_com_projects")
+    assert projects.kind == "litecoin_com" and projects.section == "projects" and projects.category == "Ecosystem & Foundation"
+    assert next(s for s in specs if s.id == "litecoin_com_learning_center").section is None
+    ldk = [s for s in specs if s.id.startswith("ldk_")]
+    assert len(ldk) == 5 and all(s.repo.startswith("LitecoinDevKit/") and s.tier == "web" and s.category == "Build on Litecoin" for s in ldk)
+    assert next(s for s in ldk if s.id == "ldk_bdk").ref == "litecoin"
+    ords = next(s for s in specs if s.id == "ordinals_lite_readme")
+    assert ords.repo == "ynohtna92/ord-litecoin" and ords.paths == ["README.md"] and ords.category == "Ordinals & Digital Artifacts"
+    assert not any("docs/src" in p for p in ords.paths)  # upstream Bitcoin wording stays out
+    # the JS-rendered Space API page is parked, not deleted
+    assert next(s for s in specs if s.id == "litecoin_space_api_reference").enabled is False
+    assert next(s for s in specs if s.id == "litecoin_space_readme").repo == "litecoin-foundation/ltcspace"
+    assert all(s.section in (None, "learning_center", "projects") for s in specs)
+
+
+def test_title_from_markdown_handles_setext_and_code_ticks():
+    from backend.data_ingestion.doc_sources import _title_from_markdown
+
+    assert _title_from_markdown("# Litecoin Core\n\nbody", "x") == "Litecoin Core"
+    assert _title_from_markdown("`ord-litecoin`\n=====\n\n`ord` is an index", "README") == "ord-litecoin"
+    assert _title_from_markdown("# `crates/mweb` Security Plan", "x") == "crates/mweb Security Plan"
+    assert _title_from_markdown("no heading here\n\nbody", "README") == "README"
 
 
 def test_select_sitemap_urls_filters_prefix_excludes_listing_and_caps():
@@ -411,6 +434,73 @@ async def test_upsert_drafts_preserves_status_skips_unchanged_and_tags_category(
     assert calls["create"][0][1] == "draft" and "category" not in calls["create"][0][2]  # unknown category -> untagged
     assert report.created == ["new-3"] and report.updated == ["pub-1"] and report.errors == []
     assert report.summary()["unchanged"] == 1
+
+
+@pytest.mark.asyncio
+async def test_litecoin_com_kind_goes_through_status_preserving_upsert(monkeypatch):
+    """The scraper only fetches; writes use upsert_drafts so a published Learning
+    Center / project import is not reset to draft by the weekly run."""
+    from backend.data_ingestion import doc_sources as ds
+    from backend.data_ingestion import litecoin_com_scraper as sc
+
+    seen_sections = []
+
+    async def fake_run_ingest(*, apply, min_words, section):
+        seen_sections.append((apply, section))
+        r = sc.IngestReport()
+        r.extracted = [
+            sc.ExtractedPage(url="https://litecoin.com/projects/mweb", title="MWEB",
+                             markdown="# MWEB\n\nFund MWEB.\n\n---\n*Imported from x*", word_count=120),
+        ]
+        r.skipped = [sc.ExtractedPage(url="https://litecoin.com/projects/bounty-port-openordex", title="OpenOrdEx", word_count=33, skip_reason="thin")]
+        return r
+
+    upserted = {}
+
+    async def fake_upsert(docs, report):
+        upserted["docs"] = list(docs)
+        report.updated.append("pub-1")
+
+    monkeypatch.setattr(sc, "run_ingest", fake_run_ingest)
+    monkeypatch.setattr(ds, "upsert_drafts", fake_upsert)
+
+    spec = ds.SourceSpec(id="lc_projects", kind="litecoin_com", section="projects", tier="cms",
+                         review_interval_days=180, category="Ecosystem & Foundation", title_prefix="Litecoin Projects")
+    report = await ds.run_source(spec, apply=True, client=None)
+
+    assert seen_sections == [(False, "projects")]  # fetch-only, section threaded through
+    assert [d.skip_reason for d in report.skipped] == ["thin"]
+    assert len(report.fetched) == 1 and report.updated == ["pub-1"]
+    doc = upserted["docs"][0]
+    assert doc.title == "Litecoin Projects: MWEB" and doc.markdown.startswith("# Litecoin Projects: MWEB\n\nFund MWEB.")
+    assert doc.category == "Ecosystem & Foundation" and doc.tier == "cms" and doc.review_interval_days == 180
+
+    # Default section when the registry entry has none; dry-run never upserts.
+    upserted.clear()
+    spec2 = ds.SourceSpec(id="lc", kind="litecoin_com")
+    report2 = await ds.run_source(spec2, apply=False, client=None)
+    assert seen_sections[-1] == (False, "learning_center")
+    assert "docs" not in upserted and report2.fetched[0].title == "MWEB"  # no prefix configured
+
+
+@pytest.mark.asyncio
+async def test_fetch_github_markdown_tags_category(monkeypatch):
+    from backend.data_ingestion import doc_sources as ds
+
+    class _Resp:
+        status_code = 200
+        text = "# Litecoin Dev Kit\n" + "word " * 120
+
+    class _Client:
+        async def get(self, url, **kw):
+            return _Resp()
+
+    spec = ds.SourceSpec(id="ldk", kind="github_markdown", repo="LitecoinDevKit/bdk", ref="litecoin",
+                         paths=["README.md"], tier="web", category="Build on Litecoin")
+    docs = await ds.fetch_github_markdown(spec, _Client())
+    assert docs[0].skip_reason is None
+    assert docs[0].category == "Build on Litecoin"
+    assert docs[0].url == "https://github.com/LitecoinDevKit/bdk/blob/litecoin/README.md"
 
 
 def test_mediawiki_to_markdown_basics():

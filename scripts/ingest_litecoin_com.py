@@ -10,6 +10,10 @@ Usage (from repo root):
 
     python scripts/ingest_litecoin_com.py --dry-run
     python scripts/ingest_litecoin_com.py --apply
+    python scripts/ingest_litecoin_com.py --section projects --dry-run
+
+Note: this CLI always writes drafts (status reset on re-run). The weekly
+registry run (`scripts/ingest_doc_sources.py`) is the status-preserving path.
 """
 
 from __future__ import annotations
@@ -39,6 +43,8 @@ if not _payload_url or "payload_cms" in _payload_url:
 from backend.data_ingestion.litecoin_com_scraper import (  # noqa: E402
     DEFAULT_REQUEST_DELAY_SECONDS,
     MIN_WORD_COUNT,
+    SECTION_LEARNING_CENTER,
+    SECTIONS,
     format_report,
     run_ingest,
 )
@@ -72,6 +78,12 @@ def parse_args() -> argparse.Namespace:
         help=f"Skip pages with fewer than this many body words (default {MIN_WORD_COUNT}).",
     )
     parser.add_argument(
+        "--section",
+        choices=SECTIONS,
+        default=SECTION_LEARNING_CENTER,
+        help="Site section to import: Learning Center articles (default) or /projects listings.",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -92,6 +104,7 @@ def main() -> int:
             apply=apply,
             delay_seconds=args.delay,
             min_words=args.min_words,
+            section=args.section,
         )
     )
     print(format_report(report, apply=apply))
