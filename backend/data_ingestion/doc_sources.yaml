@@ -9,9 +9,16 @@
 #   github_markdown  files from a GitHub repo (markdown or mediawiki), via raw.githubusercontent.com;
 #                    `paths` may be files or directories (directories are listed via the GitHub API)
 #   html_page        a single public HTML page, main content extracted to markdown
+#   sitemap          every page listed in `sitemap_url` under `include_prefixes` (minus
+#                    `exclude_urls` and the listing page itself), extracted like html_page
 #
 # tier:             sourceTier written on the draft (cms | pinned | web)
 # review_interval_days: written on the draft; the stale-doc job uses it
+# content_selector: optional CSS selector for the article root on html/sitemap kinds
+# category:         optional Payload category *name*; drafts are tagged with it when it exists
+#
+# Re-runs update an existing import's title/body only when they changed and never
+# alter its status, so publishing (an editor action) sticks across weekly runs.
 
 sources:
   - id: litecoin_com_learning_center
@@ -77,3 +84,20 @@ sources:
     review_interval_days: 90
     title_prefix: "Litecoin Space API"
     min_words: 80
+
+  # LitVM (Litecoin's EVM/ZK layer, a separate project): every post under /blog/
+  # from the site's sitemap. Third-party content, so tier `web`; drafts are
+  # tagged with the "LitVM" landing category and keep whatever status an editor
+  # sets on later re-runs.
+  - id: litvm_blog
+    kind: sitemap
+    enabled: true
+    sitemap_url: https://www.litvm.com/sitemap.xml
+    include_prefixes:
+      - https://www.litvm.com/blog/
+    content_selector: ".article-body"   # Webflow rich-text root; keeps related-post teasers out
+    tier: web
+    review_interval_days: 120
+    title_prefix: "LitVM"
+    category: "LitVM"
+    min_words: 150

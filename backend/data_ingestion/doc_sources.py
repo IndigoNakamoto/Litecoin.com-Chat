@@ -2,10 +2,12 @@
 Scheduled reference-doc ingestion driven by `doc_sources.yaml`.
 
 Generalizes the litecoin.com scraper into a registry: Litecoin Core docs and
-release notes, the MWEB LIPs, the Litecoin Space API reference, and the
-Learning Center. Each source becomes Payload CMS drafts upserted by
-`sourceUrl`, tagged with `sourceTier` and `reviewIntervalDays`. Publishing
-stays a human action.
+release notes, the MWEB LIPs, the Litecoin Space API reference, the Learning
+Center, and sitemap-driven sites such as the LitVM blog. Each source becomes
+Payload CMS drafts upserted by `sourceUrl`, tagged with `sourceTier`,
+`reviewIntervalDays`, an optional `category`, and a detected `publishedDate`.
+Publishing stays a human action: re-imports keep whatever status an editor
+set and skip articles whose content has not changed.
 
 Run on a weekly ARQ cron (`ingest_doc_sources`) or by hand:
 
@@ -52,6 +54,14 @@ class SourceSpec:
     max_files: Optional[int] = None
     title_prefix: Optional[str] = None
     min_words: int = DEFAULT_MIN_WORDS
+    # kind: sitemap — discover page URLs from an XML sitemap
+    sitemap_url: Optional[str] = None
+    include_prefixes: List[str] = field(default_factory=list)
+    exclude_urls: List[str] = field(default_factory=list)
+    # html kinds — CSS selector for the article root (falls back to main/article/body)
+    content_selector: Optional[str] = None
+    # Payload category *name* to tag drafts with (resolved to an id at upsert time)
+    category: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "SourceSpec":
@@ -69,6 +79,8 @@ class FetchedDoc:
     tier: str
     review_interval_days: int
     skip_reason: Optional[str] = None
+    category: Optional[str] = None       # Payload category name
+    published_at: Optional[str] = None   # ISO date detected on the page, if any
 
 
 @dataclass
@@ -78,6 +90,7 @@ class SourceReport:
     skipped: List[FetchedDoc] = field(default_factory=list)
     created: List[str] = field(default_factory=list)
     updated: List[str] = field(default_factory=list)
+    unchanged: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
 
     def summary(self) -> Dict[str, Any]:
@@ -87,6 +100,7 @@ class SourceReport:
             "skipped": len(self.skipped),
             "created": len(self.created),
             "updated": len(self.updated),
+            "unchanged": len(self.unchanged),
             "errors": self.errors[:10],
         }
 
@@ -173,8 +187,50 @@ def format_import_markdown(title: str, body: str, source_url: str, tier: str) ->
     return "\n".join(parts)
 
 
-def html_to_markdown(html: str, url: str) -> tuple:
-    """Main-content extraction for a single HTML page. Returns (title, markdown)."""
+_PAGE_DATE_RE = re.compile(
+    r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2}),\s+(\d{4})\b"
+)
+_MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
+
+
+def detect_page_date(html: str) -> Optional[str]:
+    """
+    Best-effort ISO date for a page: `article:published_time` meta, a <time datetime>,
+    or the first "Mon D, YYYY" string in the visible text (blog bylines). None if unsure.
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    meta = soup.find("meta", attrs={"property": "article:published_time"})
+    if meta and meta.get("content"):
+        return str(meta["content"])[:10]
+    t = soup.find("time")
+    if t and t.get("datetime"):
+        return str(t["datetime"])[:10]
+    for tag in soup.find_all(["script", "style", "noscript"]):
+        tag.decompose()
+    root = soup.find("main") or soup.body or soup
+    text = root.get_text(" ", strip=True)[:3000]
+    m = _PAGE_DATE_RE.search(text)
+    if not m:
+        return None
+    month = _MONTHS.get(m.group(1)[:3].lower())
+    if not month:
+        return None
+    try:
+        return f"{int(m.group(3)):04d}-{month:02d}-{int(m.group(2)):02d}"
+    except ValueError:
+        return None
+
+
+def html_to_markdown(html: str, url: str, content_selector: Optional[str] = None) -> tuple:
+    """
+    Main-content extraction for a single HTML page. Returns (title, markdown).
+
+    `content_selector` (CSS) pins the article root when a site wraps the body in
+    a known container (e.g. Webflow's `.article-body`), which keeps related-post
+    teasers and promo blocks out of the import. Falls back to main/article/body.
+    """
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "lxml")
@@ -183,10 +239,19 @@ def html_to_markdown(html: str, url: str) -> tuple:
     title = ""
     if soup.title and soup.title.string:
         title = soup.title.string.strip()
+    og = soup.find("meta", attrs={"property": "og:title"})
+    if og and og.get("content"):
+        title = str(og["content"]).strip()
     h1 = soup.find("h1")
     if h1 and h1.get_text(strip=True):
         title = h1.get_text(" ", strip=True)
-    root = soup.find("main") or soup.find("article") or soup.body or soup
+    root = None
+    if content_selector:
+        try:
+            root = soup.select_one(content_selector)
+        except Exception:  # noqa: BLE001 - bad selector in YAML should not kill the run
+            root = None
+    root = root or soup.find("main") or soup.find("article") or soup.body or soup
     lines: List[str] = []
     for el in root.find_all(["h1", "h2", "h3", "h4", "p", "li", "pre", "code", "td", "th"]):
         text = el.get_text(" ", strip=True)
@@ -292,9 +357,9 @@ async def fetch_github_markdown(spec: SourceSpec, client: _Client) -> List[Fetch
     return docs
 
 
-async def fetch_html_pages(spec: SourceSpec, client: _Client) -> List[FetchedDoc]:
+async def _fetch_html_urls(spec: SourceSpec, client: _Client, urls: Sequence[str]) -> List[FetchedDoc]:
     docs: List[FetchedDoc] = []
-    for url in spec.urls:
+    for url in urls:
         try:
             resp = await client.get(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html"}, follow_redirects=True)
         except Exception as e:  # noqa: BLE001
@@ -303,7 +368,7 @@ async def fetch_html_pages(spec: SourceSpec, client: _Client) -> List[FetchedDoc
         if resp.status_code != 200:
             docs.append(FetchedDoc(spec.id, url, url, "", 0, spec.tier, spec.review_interval_days, skip_reason=f"http_{resp.status_code}"))
             continue
-        title, body = html_to_markdown(resp.text, url)
+        title, body = html_to_markdown(resp.text, url, content_selector=spec.content_selector)
         if spec.title_prefix and not title.lower().startswith(spec.title_prefix.lower()):
             title = f"{spec.title_prefix}: {title}"
         wc = _word_count(body)
@@ -311,8 +376,61 @@ async def fetch_html_pages(spec: SourceSpec, client: _Client) -> List[FetchedDoc
             # JS-rendered pages (e.g. mempool-based explorers) come back nearly empty; report, do not guess.
             docs.append(FetchedDoc(spec.id, url, title, body, wc, spec.tier, spec.review_interval_days, skip_reason="thin_or_js_rendered"))
             continue
-        docs.append(FetchedDoc(spec.id, url, title, format_import_markdown(title, body, url, spec.tier), wc, spec.tier, spec.review_interval_days))
+        docs.append(
+            FetchedDoc(
+                spec.id, url, title, format_import_markdown(title, body, url, spec.tier), wc,
+                spec.tier, spec.review_interval_days,
+                category=spec.category, published_at=detect_page_date(resp.text),
+            )
+        )
     return docs
+
+
+async def fetch_html_pages(spec: SourceSpec, client: _Client) -> List[FetchedDoc]:
+    return await _fetch_html_urls(spec, client, spec.urls)
+
+
+_LOC_RE = re.compile(r"<loc>\s*(.*?)\s*</loc>", re.IGNORECASE | re.DOTALL)
+
+
+def select_sitemap_urls(sitemap_xml: str, spec: SourceSpec) -> List[str]:
+    """URLs from a sitemap filtered by `include_prefixes` / `exclude_urls`; index pages dropped."""
+    locs = [u.strip() for u in _LOC_RE.findall(sitemap_xml or "")]
+    prefixes = [p for p in (spec.include_prefixes or []) if p]
+    excluded = {u.rstrip("/") for u in (spec.exclude_urls or [])}
+    # A bare prefix ("https://site/blog/") names the listing page, not a post.
+    excluded |= {p.rstrip("/") for p in prefixes}
+    out: List[str] = []
+    seen: set = set()
+    for u in locs:
+        if not u or u in seen:
+            continue
+        if prefixes and not any(u.startswith(p) for p in prefixes):
+            continue
+        if u.rstrip("/") in excluded:
+            continue
+        seen.add(u)
+        out.append(u)
+    out.sort()
+    if spec.max_files:
+        out = out[: spec.max_files]
+    return out
+
+
+async def fetch_sitemap_pages(spec: SourceSpec, client: _Client) -> List[FetchedDoc]:
+    """kind: sitemap — every page under `include_prefixes` listed in `sitemap_url`."""
+    if not spec.sitemap_url:
+        return [FetchedDoc(spec.id, "", spec.id, "", 0, spec.tier, spec.review_interval_days, skip_reason="missing sitemap_url")]
+    try:
+        resp = await client.get(spec.sitemap_url, headers={"User-Agent": USER_AGENT, "Accept": "application/xml,text/xml"}, follow_redirects=True)
+    except Exception as e:  # noqa: BLE001
+        return [FetchedDoc(spec.id, spec.sitemap_url, spec.id, "", 0, spec.tier, spec.review_interval_days, skip_reason=f"sitemap_fetch_error: {e}")]
+    if resp.status_code != 200:
+        return [FetchedDoc(spec.id, spec.sitemap_url, spec.id, "", 0, spec.tier, spec.review_interval_days, skip_reason=f"sitemap_http_{resp.status_code}")]
+    urls = select_sitemap_urls(resp.text, spec)
+    if not urls:
+        return [FetchedDoc(spec.id, spec.sitemap_url, spec.id, "", 0, spec.tier, spec.review_interval_days, skip_reason="sitemap_no_matching_urls")]
+    return await _fetch_html_urls(spec, client, urls)
 
 
 async def fetch_litecoin_com(spec: SourceSpec, apply: bool) -> SourceReport:
@@ -337,22 +455,107 @@ async def fetch_litecoin_com(spec: SourceSpec, apply: bool) -> SourceReport:
 # --------------------------------------------------------------------------- upsert
 
 
+_MD_ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|>~])")
+
+
+def markdown_fingerprint(text: str) -> str:
+    """
+    Comparison form for "did the import change?". Payload re-serialises markdown
+    from its Lexical tree on save (e.g. `*emphasis*` after a rule comes back as
+    `\\*emphasis\\*`), so byte equality is never true; drop backslash escapes and
+    collapse whitespace before comparing.
+    """
+    s = _MD_ESCAPE_RE.sub(r"\1", text or "")
+    return re.sub(r"\s+", " ", s).strip()
+
+
+async def _get_article(article_id: str, client: httpx.AsyncClient) -> Optional[Dict[str, Any]]:
+    """Current title/status/markdown of an article (service-key read), or None."""
+    from backend.services.article_draft_generator import _get_payload_url, _payload_headers
+
+    try:
+        resp = await client.get(
+            f"{_get_payload_url()}/api/articles/{article_id}",
+            params={"depth": 0, "locale": "en"},
+            headers=_payload_headers(),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("article read failed for %s: %s", article_id, e)
+        return None
+    if resp.status_code != 200:
+        return None
+    doc = resp.json()
+    return doc if isinstance(doc, dict) else None
+
+
+async def resolve_category_id(name: str, client: httpx.AsyncClient) -> Optional[str]:
+    """Payload `categories` id for an exact (case-insensitive) name, or None if absent."""
+    from backend.services.article_draft_generator import _get_payload_url, _payload_headers
+
+    try:
+        resp = await client.get(
+            f"{_get_payload_url()}/api/categories",
+            params={"limit": 200, "depth": 0},
+            headers=_payload_headers(),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("category lookup failed for %r: %s", name, e)
+        return None
+    if resp.status_code != 200:
+        return None
+    want = name.strip().lower()
+    for doc in resp.json().get("docs") or []:
+        n = doc.get("name")
+        n = n.get("en") if isinstance(n, dict) else n
+        if isinstance(n, str) and n.strip().lower() == want:
+            return str(doc.get("id"))
+    return None
+
+
 async def upsert_drafts(docs: Sequence[FetchedDoc], report: SourceReport) -> None:
+    """
+    Create missing imports as drafts; refresh existing ones in place.
+
+    Imports never change an editor's publish decision: an existing article keeps
+    its current `status` (so the weekly re-run cannot demote a published import),
+    and an import whose title and body are unchanged is left untouched entirely.
+    """
     from backend.services.article_draft_generator import (
         create_payload_article,
         find_payload_articles,
         update_payload_article,
     )
 
+    category_cache: Dict[str, Optional[str]] = {}
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         for d in docs:
             if d.skip_reason:
                 continue
-            extra = {"sourceTier": d.tier, "reviewIntervalDays": d.review_interval_days}
+            extra: Dict[str, Any] = {"sourceTier": d.tier, "reviewIntervalDays": d.review_interval_days}
+            if d.published_at:
+                extra["publishedDate"] = d.published_at
+            if d.category:
+                if d.category not in category_cache:
+                    category_cache[d.category] = await resolve_category_id(d.category, client)
+                    if category_cache[d.category] is None:
+                        logger.warning("[%s] category %r not found in Payload; drafts will be untagged", d.source_id, d.category)
+                if category_cache[d.category]:
+                    extra["category"] = [category_cache[d.category]]
             try:
                 existing = await find_payload_articles(source_url=d.url, client=client)
                 if existing:
-                    aid = await update_payload_article(existing[0], title=d.title, markdown=d.markdown, status="draft", source_url=d.url, client=client, extra_fields=extra)
+                    current = await _get_article(existing[0], client) or {}
+                    cur_title = current.get("title")
+                    cur_title = cur_title.get("en") if isinstance(cur_title, dict) else cur_title
+                    if (
+                        markdown_fingerprint(current.get("markdown") or "") == markdown_fingerprint(d.markdown)
+                        and (cur_title or "").strip() == d.title.strip()
+                    ):
+                        report.unchanged.append(existing[0])
+                        continue
+                    status = current.get("status") if current.get("status") in ("draft", "published") else "draft"
+                    aid = await update_payload_article(existing[0], title=d.title, markdown=d.markdown, status=status, source_url=d.url, client=client, extra_fields=extra)
                     report.updated.append(aid)
                 else:
                     aid = await create_payload_article(title=d.title, markdown=d.markdown, status="draft", source_url=d.url, client=client, extra_fields=extra)
@@ -374,6 +577,8 @@ async def run_source(spec: SourceSpec, apply: bool, client: _Client) -> SourceRe
         docs = await fetch_github_markdown(spec, client)
     elif spec.kind == "html_page":
         docs = await fetch_html_pages(spec, client)
+    elif spec.kind == "sitemap":
+        docs = await fetch_sitemap_pages(spec, client)
     else:
         report.errors.append(f"unknown kind {spec.kind!r}")
         return report
@@ -404,7 +609,10 @@ async def run_all(apply: bool = False, only: Optional[Sequence[str]] = None, reg
 def format_reports(reports: Sequence[SourceReport], apply: bool) -> str:
     lines: List[str] = []
     for r in reports:
-        lines.append(f"[{r.source_id}] fetched={len(r.fetched)} skipped={len(r.skipped)} created={len(r.created)} updated={len(r.updated)} errors={len(r.errors)}")
+        lines.append(
+            f"[{r.source_id}] fetched={len(r.fetched)} skipped={len(r.skipped)} created={len(r.created)} "
+            f"updated={len(r.updated)} unchanged={len(r.unchanged)} errors={len(r.errors)}"
+        )
         for d in r.fetched[:20]:
             lines.append(f"  - {d.title} ({d.url}) [{d.word_count} words]" + ("" if apply else "  [dry-run]"))
         for d in r.skipped[:10]:

@@ -273,10 +273,144 @@ def test_doc_sources_registry_loads_and_is_well_formed():
     ids = [s.id for s in specs]
     assert len(ids) == len(set(ids))
     kinds = {s.kind for s in specs}
-    assert kinds <= {"litecoin_com", "github_markdown", "html_page"}
+    assert kinds <= {"litecoin_com", "github_markdown", "html_page", "sitemap"}
     assert any(s.repo == "litecoin-project/litecoin" for s in specs)
     assert any("lip-0003" in p for s in specs for p in s.paths)  # MWEB LIP
     assert all(s.tier in ("cms", "pinned", "web") for s in specs)
+    litvm = next(s for s in specs if s.id == "litvm_blog")
+    assert litvm.kind == "sitemap" and litvm.tier == "web" and litvm.category == "LitVM"
+    assert litvm.sitemap_url.startswith("https://www.litvm.com/") and litvm.include_prefixes == ["https://www.litvm.com/blog/"]
+    assert litvm.content_selector == ".article-body"
+
+
+def test_select_sitemap_urls_filters_prefix_excludes_listing_and_caps():
+    from backend.data_ingestion import doc_sources as ds
+
+    xml = """<?xml version="1.0"?><urlset>
+      <url><loc>https://s.io/</loc></url>
+      <url><loc>https://s.io/blog</loc></url>
+      <url><loc> https://s.io/blog/b-post </loc></url>
+      <url><loc>https://s.io/blog/a-post</loc></url>
+      <url><loc>https://s.io/blog/a-post</loc></url>
+      <url><loc>https://s.io/blog/skip-me</loc></url>
+      <url><loc>https://s.io/docs/x</loc></url>
+    </urlset>"""
+    spec = ds.SourceSpec(id="t", kind="sitemap", sitemap_url="https://s.io/sitemap.xml",
+                         include_prefixes=["https://s.io/blog/"], exclude_urls=["https://s.io/blog/skip-me"])
+    assert ds.select_sitemap_urls(xml, spec) == ["https://s.io/blog/a-post", "https://s.io/blog/b-post"]
+    spec.max_files = 1
+    assert ds.select_sitemap_urls(xml, spec) == ["https://s.io/blog/a-post"]
+    spec.max_files = None
+    spec.include_prefixes = []
+    assert "https://s.io/docs/x" in ds.select_sitemap_urls(xml, spec)
+
+
+_POST_HTML = """<html><head><title>T | Site</title><meta property="og:title" content="Building on X"></head>
+<body><nav>About Blog Docs</nav><main>
+<h1>Building on X</h1><p>Lead paragraph.</p><div class="meta">Feb 2, 2026 6 Mins read</div>
+<div class="article-body"><h2>Why</h2><p>Body one.</p><ul><li>point</li></ul><p>Body two.</p></div>
+<section class="related"><h3>Other post</h3><p>Teaser text.</p></section>
+</main><footer>© Site</footer></body></html>"""
+
+
+def test_html_to_markdown_content_selector_and_page_date():
+    from backend.data_ingestion import doc_sources as ds
+
+    title, md = ds.html_to_markdown(_POST_HTML, "https://x/blog/p", content_selector=".article-body")
+    assert title == "Building on X"
+    assert "## Why" in md and "- point" in md and "Body two." in md
+    assert "Teaser text" not in md and "About Blog Docs" not in md
+    # without a selector the related strip leaks in (documented reason for the option)
+    _, md_all = ds.html_to_markdown(_POST_HTML, "https://x/blog/p")
+    assert "Teaser text" in md_all
+    # bad selector falls back instead of raising
+    _, md_bad = ds.html_to_markdown(_POST_HTML, "https://x/blog/p", content_selector="??!!")
+    assert "Body one." in md_bad
+    assert ds.detect_page_date(_POST_HTML) == "2026-02-02"
+    assert ds.detect_page_date('<html><head><meta property="article:published_time" content="2025-11-26T10:00:00Z"></head><body></body></html>') == "2025-11-26"
+    assert ds.detect_page_date("<html><body><p>no date here</p></body></html>") is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_sitemap_pages_end_to_end(monkeypatch):
+    from backend.data_ingestion import doc_sources as ds
+
+    class _Resp:
+        def __init__(self, status, text=""):
+            self.status_code, self.text = status, text
+
+    class _Client:
+        async def get(self, url, **kw):
+            if url.endswith("sitemap.xml"):
+                return _Resp(200, "<urlset><url><loc>https://x/blog/</loc></url><url><loc>https://x/blog/p</loc></url><url><loc>https://x/blog/thin</loc></url></urlset>")
+            if url.endswith("/thin"):
+                return _Resp(200, "<html><body><main><div class='article-body'><p>tiny</p></div></main></body></html>")
+            return _Resp(200, _POST_HTML.replace("<p>Body two.</p>", "<p>" + "word " * 200 + "</p>"))
+
+    spec = ds.SourceSpec(id="lv", kind="sitemap", sitemap_url="https://x/sitemap.xml", include_prefixes=["https://x/blog/"],
+                         content_selector=".article-body", tier="web", review_interval_days=120, title_prefix="LitVM",
+                         category="LitVM", min_words=50)
+    docs = await ds.fetch_sitemap_pages(spec, _Client())
+    by_url = {d.url: d for d in docs}
+    assert set(by_url) == {"https://x/blog/p", "https://x/blog/thin"}
+    assert by_url["https://x/blog/thin"].skip_reason == "thin_or_js_rendered"
+    good = by_url["https://x/blog/p"]
+    assert good.skip_reason is None
+    assert good.title == "LitVM: Building on X"
+    assert good.category == "LitVM" and good.published_at == "2026-02-02"
+    assert "Imported reference (web)" in good.markdown and "Teaser text" not in good.markdown
+
+
+@pytest.mark.asyncio
+async def test_upsert_drafts_preserves_status_skips_unchanged_and_tags_category(monkeypatch):
+    from backend.data_ingestion import doc_sources as ds
+    from backend.services import article_draft_generator as adg
+
+    existing_docs = {
+        "pub-1": {"id": "pub-1", "title": "A", "status": "published", "markdown": "old body"},
+        # Payload re-escapes markdown on save: this must still count as unchanged.
+        "same-2": {"id": "same-2", "title": "B", "status": "draft", "markdown": "same body\n\n---\n\\*Imported\\*  ref"},
+    }
+    by_url = {"https://x/blog/a": ["pub-1"], "https://x/blog/b": ["same-2"]}
+    calls = {"create": [], "update": []}
+
+    async def fake_find(*, source_url=None, title=None, client=None):
+        return by_url.get(source_url, [])
+
+    async def fake_get(article_id, client):
+        return existing_docs.get(article_id)
+
+    async def fake_update(article_id, title, markdown, status, source_url, client, extra_fields):
+        calls["update"].append((article_id, status, extra_fields))
+        return article_id
+
+    async def fake_create(title, markdown, status, source_url, client, extra_fields):
+        calls["create"].append((title, status, extra_fields))
+        return "new-3"
+
+    async def fake_cat(name, client):
+        return "cat-litvm" if name == "LitVM" else None
+
+    monkeypatch.setattr(adg, "find_payload_articles", fake_find)
+    monkeypatch.setattr(adg, "update_payload_article", fake_update)
+    monkeypatch.setattr(adg, "create_payload_article", fake_create)
+    monkeypatch.setattr(ds, "_get_article", fake_get)
+    monkeypatch.setattr(ds, "resolve_category_id", fake_cat)
+
+    docs = [
+        ds.FetchedDoc("lv", "https://x/blog/a", "A", "new body", 300, "web", 120, category="LitVM", published_at="2026-02-02"),
+        ds.FetchedDoc("lv", "https://x/blog/b", "B", "same body\n\n---\n*Imported* ref", 300, "web", 120, category="LitVM"),
+        ds.FetchedDoc("lv", "https://x/blog/c", "C", "fresh", 300, "web", 120, category="Nope"),
+    ]
+    report = ds.SourceReport(source_id="lv")
+    await ds.upsert_drafts(docs, report)
+
+    # published import stays published on re-run; unchanged one untouched; new one is a draft
+    assert calls["update"] == [("pub-1", "published", {"sourceTier": "web", "reviewIntervalDays": 120, "publishedDate": "2026-02-02", "category": ["cat-litvm"]})]
+    assert report.unchanged == ["same-2"]
+    assert calls["create"][0][1] == "draft" and "category" not in calls["create"][0][2]  # unknown category -> untagged
+    assert report.created == ["new-3"] and report.updated == ["pub-1"] and report.errors == []
+    assert report.summary()["unchanged"] == 1
 
 
 def test_mediawiki_to_markdown_basics():
