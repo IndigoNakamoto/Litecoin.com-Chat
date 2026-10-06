@@ -254,6 +254,18 @@ def test_projects_vocabulary_normalises_and_expands():
     assert expand_ltc_entities("best sourdough recipe") == "best sourdough recipe"
 
 
+def test_expand_ltc_entities_ignores_entity_keys_inside_identifiers():
+    """`mweb` is a word, not a prefix of MwebCoinDatabase."""
+    from backend.utils.litecoin_vocabulary import expand_ltc_entities
+
+    architecture = expand_ltc_entities(
+        "What is the role of MwebCoinDatabase in the Litecoin Dev Kit architecture?"
+    ).lower()
+    assert "mimblewimble" not in architecture
+    assert "bdk" in architecture and "descriptor" in architecture
+    assert "mimblewimble" in expand_ltc_entities("what is mweb").lower()
+
+
 def test_retrieval_head_terms_survive_normalize_and_expand():
     """Synonym replacement must not delete the term the index is built on."""
     from backend.utils.litecoin_vocabulary import expand_ltc_entities, normalize_ltc_keywords

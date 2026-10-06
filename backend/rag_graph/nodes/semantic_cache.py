@@ -115,7 +115,7 @@ def make_semantic_cache_node(pipeline: Any):
                 try:
                     cached_is_grounded = False
                     if hasattr(redis_cache, "get_entry"):
-                        entry = await redis_cache.get_entry(query_vector)
+                        entry = await redis_cache.get_entry(query_vector, query_text=rewritten_query)
                         redis_result = (entry.response, entry.sources) if entry else None
                         cached_is_grounded = bool(getattr(entry, "is_grounded", False)) if entry else False
                     else:

@@ -27,10 +27,11 @@ Usage:
 """
 
 import os
+import re
 import json
 import hashlib
 import logging
-from typing import List, Optional, Tuple, Any, Dict
+from typing import List, Optional, Set, Tuple, Any, Dict
 from dataclasses import dataclass
 import numpy as np
 
@@ -75,6 +76,50 @@ class CacheEntry:
     sources: List[Dict[str, Any]]
     similarity: float
     is_grounded: bool = False
+
+
+# Function words. Content tokens are what distinguish one question from another.
+_CACHE_QUESTION_STOPWORDS = frozenset(
+    {
+        "a", "an", "the", "of", "in", "on", "for", "to", "and", "or",
+        "what", "is", "are", "was", "were", "does", "do", "did",
+        "how", "why", "when", "where", "who", "whom", "which",
+        "can", "could", "should", "would", "i", "me", "my", "you", "your",
+        "with", "use", "using", "used", "included", "include",
+        "about", "tell", "please", "into", "from", "by", "at", "it", "its",
+        "be", "as", "that", "this",
+    }
+)
+
+
+def cache_question_tokens(text: str) -> Set[str]:
+    """Content words of a query after any retrieval-expansion suffix is removed."""
+    from backend.utils.litecoin_vocabulary import peel_entity_expansion
+
+    core = peel_entity_expansion(text or "")
+    return {
+        tok
+        for tok in re.findall(r"[a-z0-9]+", core.lower())
+        if tok not in _CACHE_QUESTION_STOPWORDS
+    }
+
+
+def same_cached_question(lookup: str, stored: str) -> bool:
+    """
+    True when ``lookup`` and ``stored`` ask the same thing.
+
+    Equal content-token sets match. So does a one-word paraphrase, where the
+    smaller set is contained in the larger and the larger has a single extra
+    token. Distinct questions that only share a topic do not match.
+    """
+    left = cache_question_tokens(lookup)
+    right = cache_question_tokens(stored)
+    if left == right:
+        return True
+    if not left or not right:
+        return False
+    smaller, larger = (left, right) if len(left) <= len(right) else (right, left)
+    return smaller <= larger and len(larger - smaller) <= 1
 
 
 def _payload_ids_from_sources(sources: List[Dict[str, Any]]) -> List[str]:
@@ -275,12 +320,16 @@ class RedisVectorCache:
         self,
         query_vector: List[float],
         k: int = 1,
+        query_text: Optional[str] = None,
     ) -> Optional[CacheEntry]:
         """
         Search cache for similar query and return the full entry.
 
         Unlike `get`, this preserves `is_grounded` so a cached web-supplemented
         answer is replayed with the same provenance flag it was stored with.
+
+        When ``query_text`` is set, a neighbor past the cosine threshold is
+        still a miss if it asks a different question.
         """
         import time
         start_time = time.time()
@@ -335,10 +384,6 @@ class RedisVectorCache:
                 )
                 return None
             
-            # Cache hit!
-            if METRICS_ENABLED:
-                redis_cache_hits_total.inc()
-            
             response = best_match.response
             if isinstance(response, bytes):
                 response = response.decode("utf-8")
@@ -356,6 +401,20 @@ class RedisVectorCache:
             query_raw = getattr(best_match, "query", "")
             if isinstance(query_raw, bytes):
                 query_raw = query_raw.decode("utf-8")
+
+            if query_text and not same_cached_question(query_text, query_raw or ""):
+                if METRICS_ENABLED:
+                    redis_cache_misses_total.inc()
+                logger.info(
+                    "Semantic cache rejected: similarity=%.3f lookup=%r stored=%r",
+                    similarity,
+                    query_text[:160],
+                    (query_raw or "")[:160],
+                )
+                return None
+
+            if METRICS_ENABLED:
+                redis_cache_hits_total.inc()
             
             logger.debug(
                 f"Cache hit (similarity {similarity:.3f}, grounded={is_grounded}) in {latency:.3f}s"

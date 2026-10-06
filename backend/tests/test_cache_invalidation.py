@@ -201,7 +201,7 @@ async def test_semantic_cache_node_replays_is_grounded():
             return [0.1, 0.2], None
 
     class _RedisCache:
-        async def get_entry(self, vec):
+        async def get_entry(self, vec, query_text=None):
             return CacheEntry(
                 query="q",
                 response="cached",
@@ -225,3 +225,53 @@ async def test_semantic_cache_node_replays_is_grounded():
     assert out["early_cache_type"] == "redis_vector"
     assert out["metadata"]["is_grounded"] is True
     assert out["early_sources"][0].metadata["payload_id"] == "p1"
+
+
+_LDK_QUESTIONS = (
+    "What is the role of MwebCoinDatabase in the Litecoin Dev Kit architecture?",
+    "What cryptographic libraries does the Litecoin Dev Kit use for MWEB?",
+    "What features are included in the Litecoin Dev Kit prototype?",
+)
+
+# Written when entity matching was a substring check, so MwebCoinDatabase
+# also picked up the MWEB bag. Still in Redis until those keys expire.
+_LDK_ARCHITECTURE_STORED_BEFORE_WORD_BOUNDARY = (
+    "What is the role of MwebCoinDatabase in the Litecoin Dev Kit architecture? "
+    "mimblewimble extension blocks privacy confidential transactions lip-0002 lip-0003 "
+    "ldk bitcoin bdk port descriptor wallet library peg-in peg-out rust uniffi bindings prototype"
+)
+
+
+def test_cache_question_guard_accepts_same_question_and_one_token_paraphrase():
+    from backend.utils.litecoin_vocabulary import expand_ltc_entities, normalize_ltc_keywords
+
+    from backend.services.redis_vector_cache import same_cached_question
+
+    question = _LDK_QUESTIONS[0]
+    normalized = normalize_ltc_keywords(question)
+    expanded = expand_ltc_entities(normalized)
+    assert expanded != normalized
+    assert same_cached_question(normalized, expanded)
+    assert same_cached_question(normalized, _LDK_ARCHITECTURE_STORED_BEFORE_WORD_BOUNDARY)
+    assert same_cached_question(
+        "what is the litecoin dev kit",
+        "what is the litecoin dev kit exactly",
+    )
+    assert same_cached_question("what is litecoin dev kit", "what is the litecoin dev kit")
+
+
+def test_cache_question_guard_rejects_distinct_ldk_questions():
+    from backend.utils.litecoin_vocabulary import expand_ltc_entities, normalize_ltc_keywords
+
+    from backend.services.redis_vector_cache import same_cached_question
+
+    normalized = [normalize_ltc_keywords(q) for q in _LDK_QUESTIONS]
+    stored = [expand_ltc_entities(q) for q in normalized]
+    stored[0] = _LDK_ARCHITECTURE_STORED_BEFORE_WORD_BOUNDARY
+
+    for i, lookup in enumerate(normalized):
+        for j, entry in enumerate(stored):
+            if i == j:
+                assert same_cached_question(lookup, entry)
+            else:
+                assert not same_cached_question(lookup, entry)

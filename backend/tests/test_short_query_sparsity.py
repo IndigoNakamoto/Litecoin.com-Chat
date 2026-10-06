@@ -106,6 +106,39 @@ async def test_prechecks_short_question_still_expands_known_entities():
     assert "mimblewimble" in rewritten
 
 
+LDK_QUESTIONS = (
+    "What is the role of MwebCoinDatabase in the Litecoin Dev Kit architecture?",
+    "What cryptographic libraries does the Litecoin Dev Kit use for MWEB?",
+    "What features are included in the Litecoin Dev Kit prototype?",
+)
+
+
+@pytest.mark.asyncio
+async def test_prechecks_cache_text_omits_entity_expansion_for_distinct_ldk_questions():
+    """Retrieval keeps the synonym bag. The cache key is the question."""
+    pipeline = _FakePipeline()
+    node = make_prechecks_node(pipeline)
+    cache_texts = []
+
+    for query in LDK_QUESTIONS:
+        state = await node(
+            {"raw_query": query, "metadata": {}, "effective_history_pairs": [], "is_dependent": False}
+        )
+        cache = (state.get("rewritten_query_for_cache") or "").lower()
+        retrieval = (state.get("retrieval_query") or "").lower()
+        assert "bdk" not in cache
+        assert "peg-in" not in cache
+        assert "bdk" in retrieval
+        assert state.get("rewritten_query") == state.get("retrieval_query")
+        cache_texts.append(cache)
+
+    assert len(set(cache_texts)) == 3
+    assert "mwebcoindatabase" in cache_texts[0]
+    assert "mimblewimble" not in cache_texts[0]
+    assert "cryptographic" in cache_texts[1]
+    assert "prototype" in cache_texts[2]
+
+
 @pytest.mark.asyncio
 async def test_prechecks_unknown_short_query_calls_expand_llm():
     pipeline = _FakePipeline()

@@ -152,7 +152,11 @@ def make_prechecks_node(pipeline: Any):
         effective_query = state.get("effective_query") or query_text
         expanded_query = effective_query
 
-        from backend.utils.litecoin_vocabulary import expand_ltc_entities, normalize_ltc_keywords
+        from backend.utils.litecoin_vocabulary import (
+            expand_ltc_entities,
+            normalize_ltc_keywords,
+            peel_entity_expansion,
+        )
 
         def _vocab_expand(text: str) -> str:
             try:
@@ -160,8 +164,18 @@ def make_prechecks_node(pipeline: Any):
             except Exception:
                 return (text or "").strip()
 
+        def _cache_text(text: str) -> str:
+            """Synonym-normalized question, without the retrieval synonym bag."""
+            try:
+                return normalize_ltc_keywords(peel_entity_expansion(text or "")).strip()
+            except Exception:
+                return (text or "").strip()
+
         vocab_expanded = _vocab_expand(effective_query)
         vocab_changed = vocab_expanded.lower() != (effective_query or "").strip().lower()
+        # Cache embeds this, not the entity-expansion bag. An LLM short-query
+        # rewrite replaces it; vocabulary expansion does not.
+        cache_basis = effective_query
 
         # 3a) Short-query expansion: vocab first. LLM only if vocab did not change the query
         # (not a string-length check — normalize can canonicalize without growing).
@@ -241,6 +255,7 @@ def make_prechecks_node(pipeline: Any):
                                     candidate = " ".join(words[:max_words]).strip()
                                 if candidate and candidate.lower() != effective_query.strip().lower():
                                     expanded_query = candidate
+                                    cache_basis = candidate
                                     if isinstance(cache, OrderedDict):
                                         cache[cache_key] = expanded_query
                                         cache.move_to_end(cache_key)
@@ -264,8 +279,10 @@ def make_prechecks_node(pipeline: Any):
 
         rewritten_expanded = _vocab_expand(expanded_query)
         state["rewritten_query"] = rewritten_expanded
-        state["rewritten_query_for_cache"] = rewritten_expanded
         state["retrieval_query"] = rewritten_expanded
+        # Entity expansion is for retrieval recall. Caching the bag makes
+        # distinct questions about one project embed as the same vector.
+        state["rewritten_query_for_cache"] = _cache_text(cache_basis)
         state["metadata"] = metadata
         return state
 

@@ -266,6 +266,40 @@ def normalize_ltc_keywords(query: str) -> str:
     ).strip()
 
 
+# Whole-word entity matches. A substring check treated "mweb" inside
+# "MwebCoinDatabase" as the MWEB protocol and appended that bag too.
+_ENTITY_PATTERNS = tuple(
+    (re.compile(r"\b" + re.escape(entity) + r"\b", re.IGNORECASE), expansion)
+    for entity, expansion in LTC_ENTITY_EXPANSIONS.items()
+)
+
+
+def _append_entity_expansions(query: str, *, word_boundary: bool) -> str:
+    """Append synonym bags for entities found in `query`."""
+    if not query:
+        return ""
+
+    query_lower = query.lower()
+    expansions_to_add = []
+
+    if word_boundary:
+        matches = ((pattern.search(query), expansion) for pattern, expansion in _ENTITY_PATTERNS)
+        present = (expansion for match, expansion in matches if match)
+    else:
+        present = (expansion for entity, expansion in LTC_ENTITY_EXPANSIONS.items() if entity in query_lower)
+
+    for expansion in present:
+        expansion_terms = expansion.split()
+        new_terms = [term for term in expansion_terms if term not in query_lower]
+        if new_terms:
+            expansions_to_add.extend(new_terms)
+
+    if expansions_to_add:
+        return f"{query} {' '.join(expansions_to_add)}".strip()
+
+    return query.strip()
+
+
 def expand_ltc_entities(query: str) -> str:
     """
     Expands known entities with synonyms to improve retrieval recall.
@@ -283,23 +317,33 @@ def expand_ltc_entities(query: str) -> str:
     Returns:
         Query with appended synonyms for detected entities.
     """
-    if not query:
+    return _append_entity_expansions(query, word_boundary=True)
+
+
+def peel_entity_expansion(text: str) -> str:
+    """
+    Return the question with an ``expand_ltc_entities`` suffix removed.
+
+    The shortest token prefix ``P`` whose expansion equals ``text`` is the
+    question: expansion only appends. Entries written before word-boundary
+    matching are peeled with the old substring rule, so a cached
+    ``MwebCoinDatabase`` question still matches itself.
+    """
+    raw = re.sub(r"\s+", " ", (text or "").strip())
+    if not raw:
         return ""
-    
-    query_lower = query.lower()
-    expansions_to_add = []
-    
-    for entity, expansion in LTC_ENTITY_EXPANSIONS.items():
-        # Check if entity is in query but expansion terms are not already present
-        if entity in query_lower:
-            # Only add expansion if it's not already in the query
-            expansion_terms = expansion.split()
-            new_terms = [term for term in expansion_terms if term not in query_lower]
-            if new_terms:
-                expansions_to_add.extend(new_terms)
-    
-    if expansions_to_add:
-        # Append unique expansion terms to the query
-        return f"{query} {' '.join(expansions_to_add)}".strip()
-    
-    return query.strip()
+    tokens = raw.split()
+    if len(tokens) == 1:
+        return raw
+    for i in range(1, len(tokens)):
+        prefix = " ".join(tokens[:i])
+        if _expanded_equals(prefix, raw):
+            return prefix
+    return raw
+
+
+def _expanded_equals(prefix: str, target: str) -> bool:
+    if re.sub(r"\s+", " ", expand_ltc_entities(prefix)).strip() == target:
+        return True
+    legacy = _append_entity_expansions(prefix, word_boundary=False)
+    return re.sub(r"\s+", " ", legacy).strip() == target
