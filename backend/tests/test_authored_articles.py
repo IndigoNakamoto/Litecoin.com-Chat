@@ -76,6 +76,7 @@ def test_repo_content_directory_is_well_formed():
     known = {
         "Ordinals & Digital Artifacts", "Build on Litecoin", "Live Network Data",
         "Fees, Payments & Everyday Use", "Mining & Network Security", "Ecosystem & Foundation",
+        "Litecoin Basics",
     }
     for a in articles:
         assert a.category in known, (a.slug, a.category)

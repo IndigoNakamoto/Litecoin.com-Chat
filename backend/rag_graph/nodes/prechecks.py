@@ -1,11 +1,29 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict
 
 from ..state import RAGState
 
 logger = logging.getLogger(__name__)
+
+# A short query that is already a question must not be rewritten. Expanding
+# "What is Litecoin?" into a longer paraphrase changes the retrieval target.
+_QUESTION_START_RE = re.compile(
+    r"^(what|who|when|where|why|how|can|does|do|is|are|will)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_complete_question(query: str) -> bool:
+    """True when the text is already a question, so an LLM rewrite would change the target."""
+    text = (query or "").strip()
+    if not text:
+        return False
+    if text.endswith("?"):
+        return True
+    return _QUESTION_START_RE.match(text) is not None
 
 
 def make_prechecks_node(pipeline: Any):
@@ -153,7 +171,6 @@ def make_prechecks_node(pipeline: Any):
             and effective_query
         ):
             try:
-                import re
                 from collections import OrderedDict
                 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -176,6 +193,11 @@ def make_prechecks_node(pipeline: Any):
                             "Short query expanded via vocab (no LLM): %r -> %r",
                             effective_query,
                             expanded_query,
+                        )
+                    elif _is_complete_question(effective_query):
+                        logger.info(
+                            "Short query is already a question; skipping LLM expansion: %r",
+                            effective_query,
                         )
                     elif getattr(pipeline, "llm", None) is not None:
                         cache_key = effective_query.strip().lower()

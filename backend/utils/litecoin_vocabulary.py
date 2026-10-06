@@ -27,7 +27,6 @@ LTC_SYNONYM_MAP: Dict[str, str] = {
     "charlie lee": "creator",
     "coblee": "creator",
     "founder": "creator",
-    "litecoin foundation": "foundation",
     "lf": "foundation",
     "genesis block": "history",
     "fair launch": "history",
@@ -58,8 +57,6 @@ LTC_SYNONYM_MAP: Dict[str, str] = {
     "inscriptions": "ordinals",
     "brc-20": "ltc-20",
     "ord-litecoin": "ordinals lite",
-    "taproot": "upgrades",
-    "segwit": "upgrades",
     "bech32": "address format",
 
     # --- Developer tooling (Litecoin Dev Kit = the BDK port, not Lightning Dev Kit) ---
@@ -107,9 +104,6 @@ LTC_SYNONYM_MAP: Dict[str, str] = {
     "loafwallet": "wallet",
     "electrum-ltc": "wallet",
     "cold storage": "custody",
-    "hardware wallet": "custody",
-    "ledger": "custody",
-    "trezor": "custody",
 
     # --- Other ---
     "blocktime": "litecoin block time",

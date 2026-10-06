@@ -252,6 +252,32 @@ def test_projects_vocabulary_normalises_and_expands():
     assert expand_ltc_entities("best sourdough recipe") == "best sourdough recipe"
 
 
+def test_retrieval_head_terms_survive_normalize_and_expand():
+    """Synonym replacement must not delete the term the index is built on."""
+    from backend.utils.litecoin_vocabulary import expand_ltc_entities, normalize_ltc_keywords
+
+    def retrieval(query: str) -> str:
+        return expand_ltc_entities(normalize_ltc_keywords(query)).lower()
+
+    segwit = retrieval("Does Litecoin support SegWit?")
+    assert "segwit" in segwit and "segregated witness" in segwit
+    assert "support upgrades" not in segwit
+
+    taproot = retrieval("Does Litecoin support Taproot?")
+    assert "taproot" in taproot and "schnorr" in taproot
+    assert "support upgrades" not in taproot
+
+    hardware = retrieval("Can I store Litecoin on a hardware wallet?")
+    assert "hardware wallet" in hardware
+    assert hardware != "can i store litecoin on a custody?"
+
+    assert "ledger" in retrieval("Does Ledger support Litecoin?")
+    assert "trezor" in retrieval("Does Trezor support Litecoin?")
+
+    foundation = retrieval("What is the Litecoin Foundation?")
+    assert "litecoin foundation" in foundation
+
+
 @pytest.mark.asyncio
 async def test_astream_off_topic_low_similarity_abstains_even_with_grounding():
     """Web tier is only for Litecoin-related gaps."""

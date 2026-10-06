@@ -73,6 +73,40 @@ async def test_prechecks_short_query_expands_via_vocab_without_llm():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["What is Litecoin?", "What is MVRV?"])
+async def test_prechecks_complete_question_skips_llm_expansion(query):
+    """A short question is already a retrieval target. Do not paraphrase it."""
+    pipeline = _FakePipeline()
+    pipeline.llm = _DummyLLM("What is the purpose and history of the Litecoin network?")
+    node = make_prechecks_node(pipeline)
+
+    state = await node(
+        {"raw_query": query, "metadata": {}, "effective_history_pairs": [], "is_dependent": False}
+    )
+
+    assert pipeline.llm.calls == 0
+    assert state["metadata"].get("short_query_expand_source") != "llm"
+    assert state.get("retrieval_query") == query
+
+
+@pytest.mark.asyncio
+async def test_prechecks_short_question_still_expands_known_entities():
+    """Vocabulary still runs on a question. Only the LLM paraphrase is skipped."""
+    pipeline = _FakePipeline()
+    node = make_prechecks_node(pipeline)
+
+    state = await node(
+        {"raw_query": "What is MWEB?", "metadata": {}, "effective_history_pairs": [], "is_dependent": False}
+    )
+
+    assert pipeline.llm.calls == 0
+    assert state["metadata"].get("short_query_expand_source") == "vocab"
+    rewritten = (state.get("retrieval_query") or "").lower()
+    assert rewritten.startswith("what is mweb")
+    assert "mimblewimble" in rewritten
+
+
+@pytest.mark.asyncio
 async def test_prechecks_unknown_short_query_calls_expand_llm():
     pipeline = _FakePipeline()
     pipeline.llm = _DummyLLM("What is xyzzy on the Litecoin network?")
