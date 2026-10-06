@@ -240,7 +240,7 @@ class GeminiRewriter(BaseRewriter):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "gemini-3.1-flash-lite-preview",
+        model: str = "gemini-3.5-flash-lite",
     ):
         """
         Initialize Gemini rewriter.

@@ -230,7 +230,7 @@ except ImportError:
 # --- Constants ---
 DB_NAME = os.getenv("MONGO_DB_NAME", "litecoin_rag_db")
 COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "litecoin_docs")
-LLM_MODEL_NAME = "gemini-3.1-flash-lite-preview"  # 
+LLM_MODEL_NAME = "gemini-3.5-flash-lite"
 # Maximum number of chat history pairs (human-AI exchanges) to include in context
 # This prevents token overflow and keeps context manageable. Default: 4 pairs (8 messages)
 MAX_CHAT_HISTORY_PAIRS = int(os.getenv("MAX_CHAT_HISTORY_PAIRS", "4"))

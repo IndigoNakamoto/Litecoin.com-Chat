@@ -171,46 +171,49 @@ def track_llm_metrics(
 def estimate_gemini_cost(
     input_tokens: int,
     output_tokens: int,
-    model: str = "gemini-3.1-flash-lite-preview",
+    model: str = "gemini-3.5-flash-lite",
 ) -> float:
     """
     Estimate cost for Gemini API calls.
-    
-    Pricing as of 2024-2025:
-    - gemini-3.1-flash-lite-preview: $0.10 per 1M input tokens, $0.40 per 1M output tokens (assumed same as 2.5 lite)
-    - gemini-2.5-flash-lite-preview-09-2025: $0.10 per 1M input tokens, $0.40 per 1M output tokens
-    - gemini-2.0-flash-lite: $0.075 per 1M input tokens, $0.30 per 1M output tokens
-    - gemini-pro: $0.50 per 1M input tokens, $1.50 per 1M output tokens
-    - gemini-1.5-pro: $1.25 per 1M input tokens, $5.00 per 1M output tokens
-    
+
+    Paid-tier USD per 1M tokens. Output prices include thinking tokens.
+    - gemini-3.5-flash-lite: $0.30 input, $2.50 output (Gemini API, 2026-10)
+    - gemini-3.1-flash-lite-preview: $0.10 input, $0.40 output (legacy card; kept for old log lines)
+    - gemini-2.5-flash-lite-preview-09-2025: $0.10 input, $0.40 output
+    - gemini-2.0-flash-lite: $0.075 input, $0.30 output
+    - gemini-pro: $0.50 input, $1.50 output
+    - gemini-1.5-pro: $1.25 input, $5.00 output
+
     Args:
         input_tokens: Number of input tokens
         output_tokens: Number of output tokens
         model: Model name
-    
+
     Returns:
         Estimated cost in USD
     """
-    # Pricing per 1M tokens
+    # Pricing per 1M tokens. Longer ids must be listed before any shorter id
+    # that is a substring (the matcher below treats either side as a substring).
     pricing = {
+        "gemini-3.5-flash-lite": {"input": 0.30, "output": 2.50},
         "gemini-3.1-flash-lite-preview": {"input": 0.10, "output": 0.40},
         "gemini-2.5-flash-lite-preview-09-2025": {"input": 0.10, "output": 0.40},
         "gemini-2.0-flash-lite": {"input": 0.075, "output": 0.30},
         "gemini-pro": {"input": 0.50, "output": 1.50},
         "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
     }
-    
-    # Match model name (handle partial matches for preview versions)
-    model_pricing = None
-    for model_key, prices in pricing.items():
-        if model_key in model or model in model_key:
-            model_pricing = prices
-            break
-    
-    # Default to gemini-3.1-flash-lite-preview pricing if not found (since that's what's being used)
+
+    # Exact id first, then partial matches for preview / versioned log lines.
+    model_pricing = pricing.get(model)
     if model_pricing is None:
-        logger.warning(f"Unknown model '{model}', using gemini-3.1-flash-lite-preview pricing")
-        model_pricing = pricing["gemini-3.1-flash-lite-preview"]
+        for model_key, prices in pricing.items():
+            if model_key in model or model in model_key:
+                model_pricing = prices
+                break
+
+    if model_pricing is None:
+        logger.warning(f"Unknown model '{model}', using gemini-3.5-flash-lite pricing")
+        model_pricing = pricing["gemini-3.5-flash-lite"]
     
     input_cost = (input_tokens / 1_000_000) * model_pricing["input"]
     output_cost = (output_tokens / 1_000_000) * model_pricing["output"]

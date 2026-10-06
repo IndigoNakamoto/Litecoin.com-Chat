@@ -287,7 +287,7 @@ class LLMRequestLog(BaseModel):
                 "output_tokens": 450,
                 "cost_usd": 0.000325,
                 "pricing_version": "2025-01-15",
-                "model": "gemini-3.1-flash-lite-preview",
+                "model": "gemini-3.5-flash-lite",
                 "operation": "generate",
                 "duration_seconds": 1.2,
                 "status": "success",
