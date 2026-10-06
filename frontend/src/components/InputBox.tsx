@@ -12,6 +12,33 @@ interface InputBoxProps {
 
 const MAX_QUERY_LENGTH = 400;
 
+// Optional link target for the "questions are logged" sentence. Inlined at build time
+// (NEXT_PUBLIC_*), so an unset value renders the notice as plain text with no new page.
+const PRIVACY_URL = process.env.NEXT_PUBLIC_PRIVACY_URL?.trim() || "";
+
+/**
+ * Standing notice under the composer. The per-message badges (abstained, web-unverified)
+ * only appear on the answers they apply to; this line is always visible so a reader never
+ * takes a fluent answer as a statement from the Litecoin Foundation.
+ */
+const ComposerNotice: React.FC = () => (
+  <p className="text-xs leading-5 text-muted-foreground" data-testid="composer-notice">
+    Answers are generated from published sources and are not statements of the Litecoin Foundation.{" "}
+    {PRIVACY_URL ? (
+      <a
+        href={PRIVACY_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="underline underline-offset-2 hover:text-foreground"
+      >
+        Questions are logged to improve the knowledge base.
+      </a>
+    ) : (
+      <span>Questions are logged to improve the knowledge base.</span>
+    )}
+  </p>
+);
+
 const InputBox: React.FC<InputBoxProps> = ({
   onSendMessage,
   isLoading,
@@ -164,11 +191,14 @@ const InputBox: React.FC<InputBoxProps> = ({
             </div>
           </div>
         )}
-        <div className={`mt-2 flex justify-between items-center px-4 transition-opacity ${showWarning ? 'opacity-60' : ''}`}>
-          <p className="text-sm text-muted-foreground">
-            Press Enter to send, Shift+Enter for new line
-          </p>
-          <p className={`text-sm font-medium ${
+        <div className={`mt-2 flex items-start justify-between gap-4 px-4 transition-opacity ${showWarning ? 'opacity-60' : ''}`}>
+          <div className="min-w-0 flex-1">
+            <ComposerNotice />
+            <p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">
+              Press Enter to send, Shift+Enter for new line
+            </p>
+          </div>
+          <p className={`shrink-0 text-sm font-medium ${
             input.length > MAX_QUERY_LENGTH 
               ? 'text-red-500' 
               : input.length > MAX_QUERY_LENGTH * 0.9 

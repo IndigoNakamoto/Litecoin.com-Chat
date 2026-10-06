@@ -79,6 +79,23 @@ async def test_admin_auth_login_success(client_with_admin, admin_headers):
     data = response.json()
     assert data["authenticated"] == True
     assert "message" in data
+    # Legacy ADMIN_TOKEN maps to the generic operator name.
+    assert data["operator"] == "admin"
+
+
+def test_admin_auth_login_named_tokens(client_with_admin, monkeypatch):
+    """ADMIN_TOKENS gives each operator their own token; login reports who it was."""
+    monkeypatch.setenv("ADMIN_TOKENS", "alice:alice-token,bob:bob-token")
+    for token, name in (("alice-token", "alice"), ("bob-token", "bob"), (TEST_ADMIN_TOKEN, "admin")):
+        response = client_with_admin.post("/api/v1/admin/auth/login", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200, token
+        assert response.json()["operator"] == name
+    response = client_with_admin.get("/api/v1/admin/auth/verify", headers={"Authorization": "Bearer bob-token"})
+    assert response.status_code == 200 and response.json()["operator"] == "bob"
+    # Dropping bob from the list revokes his access without touching alice.
+    monkeypatch.setenv("ADMIN_TOKENS", "alice:alice-token")
+    assert client_with_admin.post("/api/v1/admin/auth/login", headers={"Authorization": "Bearer bob-token"}).status_code == 401
+    assert client_with_admin.post("/api/v1/admin/auth/login", headers={"Authorization": "Bearer alice-token"}).status_code == 200
 
 
 def test_admin_auth_login_invalid_token(client_with_admin, mock_redis):

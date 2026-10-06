@@ -111,6 +111,32 @@ async def test_graph_early_return_redis_vector_cache():
     assert state["early_sources"][0].metadata["status"] == "published"
 
 
+@pytest.mark.asyncio
+async def test_graph_skip_cache_bypasses_exact_and_vector_caches():
+    """`skip_cache` (golden eval) must fall through every cache tier to retrieval."""
+    pipeline = _FakePipeline()
+    pipeline.use_redis_cache = True
+    pipeline.use_infinity_embeddings = True
+    pipeline.get_infinity_embeddings = lambda: _DummyInfinity()
+    pipeline.query_cache = _DummyExactCache("cached-answer", [Document(page_content="c", metadata={"status": "published"})])
+    pipeline.get_redis_vector_cache = lambda: _DummyRedisVectorCache("redis-answer", [{"page_content": "x", "metadata": {"status": "published"}}])
+    live = Document(page_content="live doc", metadata={"status": "published", "doc_title": "Live"})
+    pipeline.hybrid_retriever = _DummyRetriever([live])
+
+    graph = build_rag_graph(build_nodes(pipeline))
+    state = await graph.ainvoke({"raw_query": "q", "chat_history_pairs": [], "metadata": {}, "skip_cache": True})
+
+    assert state.get("early_answer") is None
+    assert state["metadata"].get("cache_bypassed") is True
+    # Embedding still happened (retrieve needs the vector); retrieval ran.
+    assert state.get("query_vector") is not None
+    assert [d.page_content for d in state.get("published_sources") or []] == ["live doc"]
+
+    # Same pipeline without the flag still short-circuits on the exact cache.
+    state2 = await graph.ainvoke({"raw_query": "q", "chat_history_pairs": [], "metadata": {}})
+    assert state2["early_answer"] == "cached-answer"
+
+
 class _ScoringRetriever:
     """Returns docs that already carry a cross-encoder `rerank_score` (as the reranker would set)."""
 

@@ -20,6 +20,9 @@ class RAGState(TypedDict, total=False):
     # Landing-page topic (Payload category id) the user clicked through, if any.
     # Carried for logging / future soft retrieval boost; no node depends on it yet.
     category_hint: Optional[str]
+    # Bypass every answer cache (read and write): the golden eval sets this so the
+    # score measures retrieval + generation rather than 7-day cache replays.
+    skip_cache: bool
 
     # Sanitized + normalized
     sanitized_query: str

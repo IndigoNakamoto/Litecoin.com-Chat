@@ -1574,36 +1574,9 @@ ADMIN_CACHE_REFRESH_RATE_LIMIT = RateLimitConfig(
     identifier="admin_cache_refresh",
 )
 
-def verify_admin_token(authorization: str = None) -> bool:
-    """
-    Verify admin token from Authorization header.
-    
-    Args:
-        authorization: Authorization header value (e.g., "Bearer <token>")
-        
-    Returns:
-        True if token is valid, False otherwise
-    """
-    if not authorization:
-        return False
-    
-    # Extract token from "Bearer <token>" format
-    try:
-        scheme, token = authorization.split(" ", 1)
-        if scheme.lower() != "bearer":
-            return False
-    except ValueError:
-        return False
-    
-    # Get expected token from environment
-    expected_token = os.getenv("ADMIN_TOKEN")
-    if not expected_token:
-        logger.warning("ADMIN_TOKEN not set, admin endpoint authentication disabled")
-        return False
-    
-    # Use constant-time comparison to prevent timing attacks
-    import hmac
-    return hmac.compare_digest(token, expected_token)
+# Shared verifier (ADMIN_TOKENS named operators + legacy ADMIN_TOKEN); kept as a
+# module attribute because tests and older imports reference `backend.main.verify_admin_token`.
+from backend.utils.admin_auth import verify_admin_token  # noqa: E402
 
 
 @app.post("/api/v1/admin/refresh-suggested-cache")

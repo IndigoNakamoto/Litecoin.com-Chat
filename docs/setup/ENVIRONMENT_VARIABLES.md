@@ -95,7 +95,8 @@ These should be stored in service-specific `.env` files and never committed to g
 | `GOOGLE_API_KEY` | Backend | Google AI API key for Gemini |
 | `PAYLOAD_SECRET` | Payload CMS | Payload CMS secret key |
 | `WEBHOOK_SECRET` | Both | Shared secret for webhook HMAC signature verification (must be same in both services) |
-| `ADMIN_TOKEN` | Backend | Bearer token for admin endpoints (e.g., cache refresh) |
+| `ADMIN_TOKENS` | Backend | Named per-operator bearer tokens for admin endpoints: `alice:tok1,bob:tok2`. Admin log lines carry `operator=<name>`; `/admin/login` returns `operator`. Revoke one person by removing their entry and recreating the backend. Preferred over `ADMIN_TOKEN`. |
+| `ADMIN_TOKEN` | Backend | Legacy single shared bearer token (operator name `admin`). Still honoured alongside `ADMIN_TOKENS`. |
 | `TURNSTILE_SECRET_KEY` | Backend | Cloudflare Turnstile secret key (required if `ENABLE_TURNSTILE=true`) |
 | `CLOUDFLARE_TUNNEL_TOKEN` | Production | Cloudflare tunnel token (optional) |
 | `MONGO_ROOT_USERNAME` | Docker | MongoDB root/admin username (default: `admin`) |
@@ -105,7 +106,7 @@ These should be stored in service-specific `.env` files and never committed to g
 | `REDIS_PASSWORD` | Docker | **REQUIRED** - Redis password (generate with `openssl rand -base64 32`) |
 
 **Where to set:** 
-- `backend/.env` for `GOOGLE_API_KEY`, `WEBHOOK_SECRET`, and `ADMIN_TOKEN`
+- `backend/.env` for `GOOGLE_API_KEY`, `WEBHOOK_SECRET`, and `ADMIN_TOKENS` (or the legacy `ADMIN_TOKEN`)
 - `payload_cms/.env` for `PAYLOAD_SECRET` and `WEBHOOK_SECRET`
 - Root `.env.docker.prod`, `.env.docker.dev`, or `.env.prod-local` for `MONGO_ROOT_PASSWORD`, `MONGO_APP_PASSWORD`, and `REDIS_PASSWORD`
 - Root `.env.docker.prod` or environment variables for `CLOUDFLARE_TUNNEL_TOKEN`
@@ -303,13 +304,14 @@ These variables configure the local-first RAG pipeline with cloud spillover. See
    # Generate a secure webhook secret (use the same value in both files)
    WEBHOOK_SECRET=$(openssl rand -base64 32)
    
-   # Generate admin token
-   ADMIN_TOKEN=$(openssl rand -base64 32)
+   # Generate one admin token per operator (tokens must not contain ':' or ',')
+   ALICE_TOKEN=$(openssl rand -hex 32)
+   BOB_TOKEN=$(openssl rand -hex 32)
    
    # Backend secrets
    echo "GOOGLE_API_KEY=your-key-here" > backend/.env
    echo "WEBHOOK_SECRET=$WEBHOOK_SECRET" >> backend/.env
-   echo "ADMIN_TOKEN=$ADMIN_TOKEN" >> backend/.env
+   echo "ADMIN_TOKENS=alice:$ALICE_TOKEN,bob:$BOB_TOKEN" >> backend/.env
    
    # Payload CMS secrets
    echo "PAYLOAD_SECRET=your-secret-here" > payload_cms/.env

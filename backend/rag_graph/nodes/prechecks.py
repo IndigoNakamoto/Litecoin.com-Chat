@@ -21,6 +21,9 @@ def make_prechecks_node(pipeline: Any):
         is_dependent = bool(state.get("is_dependent", False))
 
         metadata: Dict[str, Any] = state.get("metadata") or {}
+        # Golden eval bypass: static intent answers still apply (they are not cached
+        # generations), but the FAQ suggested-answer cache and the exact cache do not.
+        skip_cache = bool(state.get("skip_cache"))
 
         # 1) Intent/static responses (optional)
         if getattr(pipeline, "use_intent_classification", False):
@@ -63,7 +66,7 @@ def make_prechecks_node(pipeline: Any):
                             return state
 
                         # FAQ match: try suggested question cache (if available)
-                        if intent == Intent.FAQ_MATCH and matched_faq:
+                        if intent == Intent.FAQ_MATCH and matched_faq and not skip_cache:
                             suggested_cache = (
                                 pipeline.get_suggested_question_cache()
                                 if hasattr(pipeline, "get_suggested_question_cache")
@@ -101,7 +104,7 @@ def make_prechecks_node(pipeline: Any):
 
         # 2) Exact cache check (optional)
         query_cache = getattr(pipeline, "query_cache", None)
-        if query_cache and hasattr(query_cache, "get"):
+        if query_cache and hasattr(query_cache, "get") and not skip_cache:
             try:
                 cached = query_cache.get(query_text, effective_history)
                 if cached:

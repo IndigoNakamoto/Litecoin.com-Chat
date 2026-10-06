@@ -41,11 +41,21 @@ _REFUSE_PATTERNS: List[Tuple[str, re.Pattern]] = [
         "financial_advice",
         re.compile(
             r"\b(should i|shall i|is it (a )?good (time|idea) to|worth) (buy|sell|hold|invest|short|long)\b"
-            r"|\b(buy|sell|hold) (ltc|litecoin)\b.*\?"
+            # "Should I buy Litecoin?" / "buy Litecoin now?" — but not "How do I buy Litecoin?"
+            r"|\b(should|shall) (i|we) (buy|sell|hold) (ltc|litecoin)\b"
+            r"|\b(buy|sell|hold) (ltc|litecoin) (now|today|right now|this (week|month|year))\b"
             r"|\bprice (target|prediction|forecast)s?\b"
             r"|\b(will|is|does) (ltc|litecoin) (hit|reach|go to|moon|pump|dump|crash|be worth)\b"
             r"|\b(how (much|high|low) will (ltc|litecoin))\b"
             r"|\bwhen (should i|to) (buy|sell|exit|enter)\b"
+            # Paraphrases: "a good investment", "worth buying", "will it go up", "good time to get in"
+            r"|\b(is|would be|be) (ltc|litecoin|it) (still )?a (good|bad|smart|safe|wise|sound) (investment|buy|bet)\b"
+            r"|\b(a )?(good|bad|smart|safe|wise|sound) (investment|buy|bet)\b.*\b(ltc|litecoin)\b"
+            r"|\bworth (buying|investing in|holding|getting into)\b"
+            r"|\b(will|is|could|would) (ltc|litecoin|the price|it) (go|going) (up|down|higher|lower)\b"
+            r"|\b(good|right|bad|best) time to (buy|sell|get in(to)?|invest|enter|exit)\b"
+            r"|\b(should|shall) (i|we) (get into|invest in|put (my )?money in(to)?)\b"
+            r"|\b(ltc|litecoin) (price|value) (in|by) (20\d\d|next year)\b"
             r"|\binvestment advice\b|\bfinancial advice\b",
             re.IGNORECASE,
         ),
@@ -82,7 +92,11 @@ _REFUSE_PATTERNS: List[Tuple[str, re.Pattern]] = [
             r"|\b(you are|you're) (now )?(charlie lee|the litecoin foundation)\b"
             r"|\bwhat (does|would) (charlie lee|the foundation) (think|say|believe|want)\b.*\b(about|on)\b"
             r"|\b(official|foundation'?s?) (position|stance|statement|opinion) on\b"
-            r"|\b(does|will) the (litecoin )?foundation (endorse|support|back|recommend|approve)\b"
+            # "endorse / approve / back" are always a request for a position. "recommend / support"
+            # only when the object is a specific project/coin/exchange ("Does the Foundation
+            # recommend any wallet?" is a practical question and is answered from the KB).
+            r"|\b(does|will) the (litecoin )?foundation (endorse|approve|back)\b"
+            r"|\b(does|will) the (litecoin )?foundation (recommend|support) (this|that|my|our|the) (project|coin|token|exchange|etf|company|proposal|product)\b"
             r"|\bon behalf of (charlie lee|the (litecoin )?foundation)\b",
             re.IGNORECASE,
         ),

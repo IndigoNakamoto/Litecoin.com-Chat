@@ -7,10 +7,9 @@ from fastapi import APIRouter, HTTPException, Request, Query
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import logging
-import os
-import hmac
 
 from backend.dependencies import get_llm_request_logs_collection
+from backend.utils.admin_auth import operator_from_request, verify_admin_token
 from backend.rate_limiter import RateLimitConfig, check_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -24,37 +23,6 @@ ADMIN_LOGS_RATE_LIMIT = RateLimitConfig(
     identifier="admin_logs",
     enable_progressive_limits=False,
 )
-
-
-def verify_admin_token(authorization: str = None) -> bool:
-    """
-    Verify admin token from Authorization header.
-    
-    Args:
-        authorization: Authorization header value (e.g., "Bearer <token>")
-        
-    Returns:
-        True if token is valid, False otherwise
-    """
-    if not authorization:
-        return False
-    
-    # Extract token from "Bearer <token>" format
-    try:
-        scheme, token = authorization.split(" ", 1)
-        if scheme.lower() != "bearer":
-            return False
-    except ValueError:
-        return False
-    
-    # Get expected token from environment
-    expected_token = os.getenv("ADMIN_TOKEN")
-    if not expected_token:
-        logger.warning("ADMIN_TOKEN not set, admin endpoint authentication disabled")
-        return False
-    
-    # Use constant-time comparison to prevent timing attacks
-    return hmac.compare_digest(token, expected_token)
 
 
 @router.get("/llm-logs/stats")

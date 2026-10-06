@@ -6,9 +6,9 @@ from fastapi import APIRouter, HTTPException, Request
 from typing import Dict, Any
 import logging
 import os
-import hmac
 
 from backend.cache_utils import suggested_question_cache, query_cache
+from backend.utils.admin_auth import operator_from_request, verify_admin_token
 from backend.rate_limiter import RateLimitConfig, check_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -22,37 +22,6 @@ ADMIN_CACHE_RATE_LIMIT = RateLimitConfig(
     identifier="admin_cache",
     enable_progressive_limits=True,
 )
-
-
-def verify_admin_token(authorization: str = None) -> bool:
-    """
-    Verify admin token from Authorization header.
-    
-    Args:
-        authorization: Authorization header value (e.g., "Bearer <token>")
-        
-    Returns:
-        True if token is valid, False otherwise
-    """
-    if not authorization:
-        return False
-    
-    # Extract token from "Bearer <token>" format
-    try:
-        scheme, token = authorization.split(" ", 1)
-        if scheme.lower() != "bearer":
-            return False
-    except ValueError:
-        return False
-    
-    # Get expected token from environment
-    expected_token = os.getenv("ADMIN_TOKEN")
-    if not expected_token:
-        logger.warning("ADMIN_TOKEN not set, admin endpoint authentication disabled")
-        return False
-    
-    # Use constant-time comparison to prevent timing attacks
-    return hmac.compare_digest(token, expected_token)
 
 
 @router.get("/suggested-questions/stats")
@@ -131,7 +100,7 @@ async def clear_suggested_questions_cache(request: Request) -> Dict[str, Any]:
         # Clear the cache
         await suggested_question_cache.clear()
         
-        logger.info(f"Admin cleared suggested questions cache ({cache_size_before} entries)")
+        logger.info(f"Admin cleared suggested questions cache ({cache_size_before} entries) operator={operator_from_request(request)}")
         
         return {
             "success": True,
@@ -320,7 +289,7 @@ async def clear_semantic_cache(request: Request) -> Dict[str, Any]:
                         redis_cleared = True
                         entries_cleared = redis_stats_before.get("entries", 0)
                         cleared_caches.append(f"Redis Stack vector cache ({entries_cleared} entries)")
-                        logger.info(f"Admin cleared Redis Stack vector cache ({entries_cleared} entries)")
+                        logger.info(f"Admin cleared Redis Stack vector cache ({entries_cleared} entries) operator={operator_from_request(request)}")
             except Exception as e:
                 logger.warning(f"Error clearing Redis vector cache: {e}")
         
@@ -333,7 +302,7 @@ async def clear_semantic_cache(request: Request) -> Dict[str, Any]:
                 legacy_cleared = True
                 entries_cleared = legacy_stats_before.get("size", 0)
                 cleared_caches.append(f"Legacy semantic cache ({entries_cleared} entries)")
-                logger.info(f"Admin cleared legacy semantic cache ({entries_cleared} entries)")
+                logger.info(f"Admin cleared legacy semantic cache ({entries_cleared} entries) operator={operator_from_request(request)}")
         except Exception as e:
             logger.warning(f"Error clearing legacy semantic cache: {e}")
         
@@ -459,7 +428,7 @@ async def clear_response_caches(request: Request) -> Dict[str, Any]:
         query_size = query_stats.get("size", 0)
         query_cache.clear()
         cleared.append(f"Query cache ({query_size} entries)")
-        logger.info(f"Admin cleared query cache ({query_size} entries)")
+        logger.info(f"Admin cleared query cache ({query_size} entries) operator={operator_from_request(request)}")
 
         # 1b. Exact normalised-text cache (Redis)
         try:
@@ -468,7 +437,7 @@ async def clear_response_caches(request: Request) -> Dict[str, Any]:
             if exact_cache:
                 removed = await exact_cache.clear()
                 cleared.append(f"Exact answer cache ({removed} entries)")
-                logger.info(f"Admin cleared exact answer cache ({removed} entries)")
+                logger.info(f"Admin cleared exact answer cache ({removed} entries) operator={operator_from_request(request)}")
         except Exception as e:
             logger.warning(f"Error clearing exact answer cache: {e}")
 
@@ -482,7 +451,7 @@ async def clear_response_caches(request: Request) -> Dict[str, Any]:
                     await redis_cache.clear()
                     entries = stats_before.get("entries", 0)
                     cleared.append(f"Redis semantic cache ({entries} entries)")
-                    logger.info(f"Admin cleared Redis semantic cache ({entries} entries)")
+                    logger.info(f"Admin cleared Redis semantic cache ({entries} entries) operator={operator_from_request(request)}")
             except Exception as e:
                 logger.warning(f"Error clearing Redis vector cache: {e}")
         else:
@@ -493,7 +462,7 @@ async def clear_response_caches(request: Request) -> Dict[str, Any]:
                     _global_rag_pipeline.semantic_cache.clear()
                     entries = stats_before.get("size", 0)
                     cleared.append(f"Legacy semantic cache ({entries} entries)")
-                    logger.info(f"Admin cleared legacy semantic cache ({entries} entries)")
+                    logger.info(f"Admin cleared legacy semantic cache ({entries} entries) operator={operator_from_request(request)}")
             except Exception as e:
                 logger.warning(f"Error clearing legacy semantic cache: {e}")
 

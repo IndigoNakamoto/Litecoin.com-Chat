@@ -10,11 +10,10 @@ from typing import Dict, Any, List, Optional, Literal
 from datetime import datetime
 from pydantic import BaseModel, Field
 import logging
-import os
-import hmac
 
 from backend.dependencies import get_knowledge_candidates_collection
 from backend.rate_limiter import RateLimitConfig, check_rate_limit
+from backend.utils.admin_auth import verify_admin_token
 from bson import ObjectId
 
 logger = logging.getLogger(__name__)
@@ -29,25 +28,9 @@ ADMIN_CANDIDATES_RATE_LIMIT = RateLimitConfig(
 )
 
 
-def _verify_admin_token(authorization: Optional[str]) -> bool:
-    if not authorization:
-        return False
-    try:
-        scheme, token = authorization.split(" ", 1)
-        if scheme.lower() != "bearer":
-            return False
-    except ValueError:
-        return False
-    expected_token = os.getenv("ADMIN_TOKEN")
-    if not expected_token:
-        logger.warning("ADMIN_TOKEN not set, admin endpoint authentication disabled")
-        return False
-    return hmac.compare_digest(token, expected_token)
-
-
 def _require_admin(request: Request) -> None:
     auth_header = request.headers.get("Authorization")
-    if not _verify_admin_token(auth_header):
+    if not verify_admin_token(auth_header):
         raise HTTPException(
             status_code=401,
             detail={"error": "Unauthorized", "message": "Invalid or missing admin token"},

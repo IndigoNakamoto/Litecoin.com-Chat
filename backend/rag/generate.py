@@ -174,13 +174,16 @@ async def generate_answer(pipeline: Any, state: RAGState) -> RAGState:
 
     query_text = state.get("raw_query") or sanitized_query
     effective_history = state.get("effective_history_pairs") or []
+    # A bypassed run (golden eval) must not seed the caches either; otherwise the
+    # next real visitor would replay an eval-generated answer.
+    skip_cache = bool(state.get("skip_cache"))
     query_cache = getattr(pipeline, "query_cache", None)
-    if query_cache is not None and not kb_insufficient:
+    if query_cache is not None and not kb_insufficient and not skip_cache:
         query_cache.set(query_text, effective_history, answer, published_sources)
 
     query_vector = state.get("query_vector")
     rewritten_query = state.get("rewritten_query_for_cache") or state.get("rewritten_query") or ""
-    if getattr(pipeline, "use_redis_cache", False) and query_vector and not kb_insufficient:
+    if getattr(pipeline, "use_redis_cache", False) and query_vector and not kb_insufficient and not skip_cache:
         redis_cache = (
             pipeline.get_redis_vector_cache()
             if hasattr(pipeline, "get_redis_vector_cache")
@@ -198,10 +201,10 @@ async def generate_answer(pipeline: Any, state: RAGState) -> RAGState:
             except Exception as e:
                 logger.warning("Redis cache storage failed: %s", e)
     semantic_cache = getattr(pipeline, "semantic_cache", None)
-    if semantic_cache and not getattr(pipeline, "use_redis_cache", False) and not kb_insufficient:
+    if semantic_cache and not getattr(pipeline, "use_redis_cache", False) and not kb_insufficient and not skip_cache:
         semantic_cache.set(rewritten_query, [], answer, published_sources)
     store_exact = getattr(pipeline, "_store_exact_answer", None)
-    if callable(store_exact):
+    if callable(store_exact) and not skip_cache:
         try:
             await store_exact(state, answer, published_sources, is_grounded, kb_insufficient)
         except Exception as e:

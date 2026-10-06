@@ -1,10 +1,11 @@
 """Admin endpoints that enqueue background jobs and report cron status. They do not execute work in-process."""
 
+import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request
 
-from backend.api.v1.admin.auth import verify_admin_token
+from backend.utils.admin_auth import operator_from_request, verify_admin_token
 from backend.jobs.enqueue import (
     MAINTENANCE_JOBS,
     enqueue_cleanup_orphans,
@@ -13,6 +14,8 @@ from backend.jobs.enqueue import (
     enqueue_reindex,
 )
 from backend.jobs.status import get_job_statuses
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -39,6 +42,7 @@ async def enqueue_maintenance_job(name: str, request: Request) -> Dict[str, Any]
         job_id = await enqueue_maintenance(name)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"Could not enqueue: {e}")
+    logger.info("Admin enqueued maintenance job %s job_id=%s operator=%s", name, job_id, operator_from_request(request))
     return {"status": "queued", "job": name, "job_id": job_id}
 
 
@@ -46,6 +50,7 @@ async def enqueue_maintenance_job(name: str, request: Request) -> Dict[str, Any]
 async def enqueue_reindex_job(request: Request) -> Dict[str, Any]:
     _require_admin(request)
     job_id = await enqueue_reindex(with_faq=False)
+    logger.info("Admin enqueued reindex_vectors job_id=%s operator=%s", job_id, operator_from_request(request))
     return {"status": "queued", "job": "reindex_vectors", "job_id": job_id}
 
 
@@ -61,6 +66,7 @@ async def reload_vector_index(request: Request) -> Dict[str, Any]:
         _global_rag_pipeline.refresh_vector_store()
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Reload failed: {e}")
+    logger.info("Admin reloaded the vector index into the API operator=%s", operator_from_request(request))
     vsm = getattr(_global_rag_pipeline, "vector_store_manager", None)
     count = None
     try:

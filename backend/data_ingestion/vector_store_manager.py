@@ -856,6 +856,22 @@ class VectorStoreManager:
             search_kwargs=search_kwargs
         )
 
+    def count_documents_by_metadata_field(self, field_name: str, field_value: Any) -> Optional[int]:
+        """
+        Number of stored chunks whose `metadata.<field_name>` equals `field_value`.
+
+        Returns None when MongoDB is unavailable (so callers can tell "zero chunks"
+        from "could not check"). Used by the ingest worker to verify that a published
+        article actually landed in the store before reporting the job as done.
+        """
+        if not field_name or field_value is None or not self.mongodb_available:
+            return None
+        try:
+            return int(self.collection.count_documents({f"metadata.{field_name}": field_value}))
+        except Exception as e:
+            logger.warning(f"Count by metadata.{field_name}={field_value!r} failed: {e}")
+            return None
+
     def delete_documents_by_metadata_field(self, field_name: str, field_value: Any, rebuild_faiss: bool = False):
         """
         Deletes documents from MongoDB. Optionally rebuilds FAISS index.

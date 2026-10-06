@@ -6,11 +6,10 @@ Tracks unique users over time with daily aggregation.
 from fastapi import APIRouter, HTTPException, Request
 from typing import Dict, Any, List
 import logging
-import os
-import hmac
 from datetime import datetime, timedelta
 
 from backend.redis_client import get_redis_client
+from backend.utils.admin_auth import operator_from_request, verify_admin_token
 from backend.rate_limiter import RateLimitConfig, check_rate_limit
 import asyncio
 
@@ -25,37 +24,6 @@ ADMIN_USERS_RATE_LIMIT = RateLimitConfig(
     identifier="admin_users",
     enable_progressive_limits=True,
 )
-
-
-def verify_admin_token(authorization: str = None) -> bool:
-    """
-    Verify admin token from Authorization header.
-    
-    Args:
-        authorization: Authorization header value (e.g., "Bearer <token>")
-        
-    Returns:
-        True if token is valid, False otherwise
-    """
-    if not authorization:
-        return False
-    
-    # Extract token from "Bearer <token>" format
-    try:
-        scheme, token = authorization.split(" ", 1)
-        if scheme.lower() != "bearer":
-            return False
-    except ValueError:
-        return False
-    
-    # Get expected token from environment
-    expected_token = os.getenv("ADMIN_TOKEN")
-    if not expected_token:
-        logger.warning("ADMIN_TOKEN not set, admin endpoint authentication disabled")
-        return False
-    
-    # Use constant-time comparison to prevent timing attacks
-    return hmac.compare_digest(token, expected_token)
 
 
 async def track_unique_user(fingerprint_hash: str) -> None:

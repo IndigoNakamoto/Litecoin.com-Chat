@@ -620,7 +620,7 @@ class RAGPipeline:
         kb_insufficient: bool,
     ) -> None:
         """Write-back for the exact-text cache: empty-history, KB-grounded answers only."""
-        if kb_insufficient or not answer or state.get("chat_history_pairs"):
+        if kb_insufficient or not answer or state.get("chat_history_pairs") or state.get("skip_cache"):
             return
         if not getattr(self, "use_exact_answer_cache", False):
             return
@@ -1361,12 +1361,23 @@ Be conservative: only mark as dependent if the query is clearly referring to pri
             logger.warning(f"Standardizer failed: {e}")
             return query_text, False
 
-    async def aquery(self, query_text: str, chat_history: List[Tuple[str, str]]) -> Tuple[str, List[Document], Dict[str, Any]]:
-        """Async query endpoint (non-stream). LangGraph handles routing/caching/retrieval and non-stream generation."""
+    async def aquery(
+        self,
+        query_text: str,
+        chat_history: List[Tuple[str, str]],
+        skip_cache: bool = False,
+    ) -> Tuple[str, List[Document], Dict[str, Any]]:
+        """Async query endpoint (non-stream). LangGraph handles routing/caching/retrieval and non-stream generation.
+
+        `skip_cache=True` bypasses every answer cache for both read and write (golden eval).
+        """
         start_time = time.time()
         try:
             graph = self._get_rag_graph()
-            state = await graph.ainvoke({"raw_query": query_text, "chat_history_pairs": chat_history, "metadata": {}})
+            initial_state: Dict[str, Any] = {"raw_query": query_text, "chat_history_pairs": chat_history, "metadata": {}}
+            if skip_cache:
+                initial_state["skip_cache"] = True
+            state = await graph.ainvoke(initial_state)
             metadata: Dict[str, Any] = state.get("metadata") or {}
 
             # Early return (intent/static or cache hits)

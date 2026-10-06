@@ -11,6 +11,11 @@ keeps one operator at ~3-4 hours a week:
 
 Set DISABLE_CRON_JOBS=true to run a worker without the schedule (e.g. a second
 replica, or local dev).
+
+Article ingest (chunking + per-chunk FAQ generation) can run well past ARQ's
+300 s default on long READMEs; INGEST_JOB_TIMEOUT_S (default 1800) and
+ARQ_MAX_JOBS (default 2) are tuned so a bulk publish does not get cancelled
+mid-flight while the `to_thread` work keeps running.
 """
 
 from __future__ import annotations
@@ -40,10 +45,22 @@ from backend.jobs.tasks import (
 _CRON_DISABLED = os.getenv("DISABLE_CRON_JOBS", "false").lower() == "true"
 
 
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+INGEST_JOB_TIMEOUT_S = _env_int("INGEST_JOB_TIMEOUT_S", 1800, minimum=300)
+ARQ_MAX_JOBS = _env_int("ARQ_MAX_JOBS", 2)
+
+
 class WorkerSettings:
     functions = [
-        ingest_payload_document,
-        delete_payload_document,
+        # Job names are unchanged, so backend/jobs/enqueue.py keeps working.
+        func(ingest_payload_document, name="ingest_payload_document", timeout=INGEST_JOB_TIMEOUT_S, max_tries=2),
+        func(delete_payload_document, name="delete_payload_document", timeout=INGEST_JOB_TIMEOUT_S, max_tries=2),
         reindex_vectors,
         reindex_with_faq,
         refresh_suggested_questions,
@@ -68,4 +85,4 @@ class WorkerSettings:
         ]
     )
     redis_settings = redis_settings_from_env()
-    max_jobs = 4
+    max_jobs = ARQ_MAX_JOBS

@@ -25,11 +25,16 @@ def make_semantic_cache_node(pipeline: Any):
         logger = logging.getLogger(__name__)
 
         rewritten_query = state.get("rewritten_query_for_cache") or state.get("rewritten_query") or ""
+        # Golden eval / explicit bypass: still embed (retrieve needs the vector) but never
+        # return a cached answer from any tier.
+        skip_cache = bool(state.get("skip_cache"))
+        if skip_cache:
+            metadata["cache_bypassed"] = True
 
         # === 0) Exact normalised-text cache (empty history only) ===
         # Cheapest tier: no embedding call. Keyed on the sanitized question text, so
         # it only applies when there is no conversation context to resolve.
-        if getattr(pipeline, "use_exact_answer_cache", False) and not state.get("chat_history_pairs"):
+        if not skip_cache and getattr(pipeline, "use_exact_answer_cache", False) and not state.get("chat_history_pairs"):
             exact_cache = pipeline.get_exact_answer_cache() if hasattr(pipeline, "get_exact_answer_cache") else None
             exact_key_text = state.get("sanitized_query") or state.get("raw_query") or ""
             if exact_cache and exact_key_text:
@@ -104,7 +109,7 @@ def make_semantic_cache_node(pipeline: Any):
         state["query_sparse"] = query_sparse
 
         # === 2) Redis vector cache (unified semantic cache) ===
-        if getattr(pipeline, "use_redis_cache", False) and query_vector:
+        if not skip_cache and getattr(pipeline, "use_redis_cache", False) and query_vector:
             redis_cache = pipeline.get_redis_vector_cache() if hasattr(pipeline, "get_redis_vector_cache") else None
             if redis_cache:
                 try:
@@ -155,7 +160,7 @@ def make_semantic_cache_node(pipeline: Any):
                     logger.warning("Redis vector cache lookup failed: %s", e)
 
         # === 3) Legacy semantic cache (only when Redis not enabled) ===
-        if getattr(pipeline, "semantic_cache", None) and not getattr(pipeline, "use_redis_cache", False):
+        if not skip_cache and getattr(pipeline, "semantic_cache", None) and not getattr(pipeline, "use_redis_cache", False):
             try:
                 cached = pipeline.semantic_cache.get(rewritten_query, [])  # type: ignore[attr-defined]
                 if cached:

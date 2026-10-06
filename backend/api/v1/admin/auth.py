@@ -5,10 +5,9 @@ Admin API endpoints for authentication.
 from fastapi import APIRouter, HTTPException, Request
 from typing import Dict, Any
 import logging
-import os
-import hmac
 
 from backend.rate_limiter import RateLimitConfig, check_rate_limit
+from backend.utils.admin_auth import admin_operator, verify_admin_token  # noqa: F401  (re-exported)
 
 logger = logging.getLogger(__name__)
 
@@ -23,47 +22,16 @@ ADMIN_AUTH_RATE_LIMIT = RateLimitConfig(
 )
 
 
-def verify_admin_token(authorization: str = None) -> bool:
-    """
-    Verify admin token from Authorization header.
-    
-    Args:
-        authorization: Authorization header value (e.g., "Bearer <token>")
-        
-    Returns:
-        True if token is valid, False otherwise
-    """
-    if not authorization:
-        return False
-    
-    # Extract token from "Bearer <token>" format
-    try:
-        scheme, token = authorization.split(" ", 1)
-        if scheme.lower() != "bearer":
-            return False
-    except ValueError:
-        return False
-    
-    # Get expected token from environment
-    expected_token = os.getenv("ADMIN_TOKEN")
-    if not expected_token:
-        logger.warning("ADMIN_TOKEN not set, admin endpoint authentication disabled")
-        return False
-    
-    # Use constant-time comparison to prevent timing attacks
-    return hmac.compare_digest(token, expected_token)
-
-
 @router.post("/login")
 async def admin_login(request: Request) -> Dict[str, Any]:
     """
     Verify admin token and return session info.
     
     Requires Bearer token authentication via Authorization header.
-    Example: Authorization: Bearer <ADMIN_TOKEN>
+    Example: Authorization: Bearer <token>   (an ADMIN_TOKENS entry or the legacy ADMIN_TOKEN)
     
     Returns:
-        Dictionary with authentication status and session info.
+        Dictionary with authentication status, the operator name behind the token, and session info.
     """
     # Rate limiting
     await check_rate_limit(request, ADMIN_AUTH_RATE_LIMIT)
@@ -72,7 +40,8 @@ async def admin_login(request: Request) -> Dict[str, Any]:
     auth_header = request.headers.get("Authorization")
     
     # Verify authentication
-    if not verify_admin_token(auth_header):
+    operator = admin_operator(auth_header)
+    if operator is None:
         logger.warning(
             f"Unauthorized admin login attempt from IP: {request.client.host if request.client else 'unknown'}"
         )
@@ -81,8 +50,10 @@ async def admin_login(request: Request) -> Dict[str, Any]:
             detail={"error": "Unauthorized", "message": "Invalid or missing admin token"}
         )
     
+    logger.info("Admin login operator=%s", operator)
     return {
         "authenticated": True,
+        "operator": operator,
         "message": "Authentication successful"
     }
 
@@ -105,7 +76,8 @@ async def verify_admin(request: Request) -> Dict[str, Any]:
     auth_header = request.headers.get("Authorization")
     
     # Verify authentication
-    if not verify_admin_token(auth_header):
+    operator = admin_operator(auth_header)
+    if operator is None:
         raise HTTPException(
             status_code=401,
             detail={"error": "Unauthorized", "message": "Invalid or missing admin token"}
@@ -113,6 +85,7 @@ async def verify_admin(request: Request) -> Dict[str, Any]:
     
     return {
         "authenticated": True,
+        "operator": operator,
         "message": "Token is valid"
     }
 

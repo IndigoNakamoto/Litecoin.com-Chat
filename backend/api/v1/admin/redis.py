@@ -5,10 +5,9 @@ Admin API endpoints for Redis management (bans and throttles).
 from fastapi import APIRouter, HTTPException, Request
 from typing import Dict, Any
 import logging
-import os
-import hmac
 
 from backend.redis_client import get_redis_client
+from backend.utils.admin_auth import operator_from_request, verify_admin_token
 from backend.rate_limiter import RateLimitConfig, check_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -22,37 +21,6 @@ ADMIN_REDIS_RATE_LIMIT = RateLimitConfig(
     identifier="admin_redis",
     enable_progressive_limits=True,
 )
-
-
-def verify_admin_token(authorization: str = None) -> bool:
-    """
-    Verify admin token from Authorization header.
-    
-    Args:
-        authorization: Authorization header value (e.g., "Bearer <token>")
-        
-    Returns:
-        True if token is valid, False otherwise
-    """
-    if not authorization:
-        return False
-    
-    # Extract token from "Bearer <token>" format
-    try:
-        scheme, token = authorization.split(" ", 1)
-        if scheme.lower() != "bearer":
-            return False
-    except ValueError:
-        return False
-    
-    # Get expected token from environment
-    expected_token = os.getenv("ADMIN_TOKEN")
-    if not expected_token:
-        logger.warning("ADMIN_TOKEN not set, admin endpoint authentication disabled")
-        return False
-    
-    # Use constant-time comparison to prevent timing attacks
-    return hmac.compare_digest(token, expected_token)
 
 
 async def count_redis_keys(pattern: str) -> int:
@@ -218,7 +186,7 @@ async def clear_bans(request: Request) -> Dict[str, Any]:
             deleted = await delete_redis_keys(pattern)
             total_deleted += deleted
         
-        logger.info(f"Admin cleared {total_deleted} ban keys from Redis")
+        logger.info(f"Admin cleared {total_deleted} ban keys from Redis operator={operator_from_request(request)}")
         
         return {
             "success": True,
@@ -272,7 +240,7 @@ async def clear_throttles(request: Request) -> Dict[str, Any]:
             deleted = await delete_redis_keys(pattern)
             total_deleted += deleted
         
-        logger.info(f"Admin cleared {total_deleted} throttle keys from Redis")
+        logger.info(f"Admin cleared {total_deleted} throttle keys from Redis operator={operator_from_request(request)}")
         
         return {
             "success": True,

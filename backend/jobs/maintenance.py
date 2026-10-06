@@ -221,9 +221,12 @@ async def _run_golden_eval(run_id: str) -> Dict[str, Any]:
             fields.append({"name": "Behavior failures (abstain/refuse/lookup wrong)", "value": ", ".join(report.behavior_failures)[:1000], "inline": False})
         if report.citation_misses:
             fields.append({"name": "Citation misses", "value": ", ".join(report.citation_misses)[:1000], "inline": False})
+        if report.chip_misses:
+            fields.append({"name": "Chip misses (top chip below the on-topic floor)", "value": ", ".join(report.chip_misses)[:1000], "inline": False})
         await _alert(
             f"Golden set: {report.passed}/{report.total} passed",
-            f"{len(report.regressions)} regression(s), {len(report.behavior_failures)} behavior failure(s), {len(report.citation_misses)} citation miss(es). Fixed since last run: {len(report.fixed)}.",
+            f"{len(report.regressions)} regression(s), {len(report.behavior_failures)} behavior failure(s), "
+            f"{len(report.citation_misses)} citation miss(es), {len(report.chip_misses)} chip miss(es). Fixed since last run: {len(report.fixed)}.",
             level="error" if report.regressions else "warning",
             fields=fields,
         )

@@ -8,10 +8,10 @@ from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 import logging
 import os
-import hmac
 import json
 
 from backend.redis_client import get_redis_client
+from backend.utils.admin_auth import operator_from_request, verify_admin_token
 from backend.rate_limiter import RateLimitConfig, check_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -60,37 +60,6 @@ async def get_setting_value(key: str, default: Any = None) -> Any:
         return default
     value = current.get(key)
     return default if value is None else value
-
-
-def verify_admin_token(authorization: str = None) -> bool:
-    """
-    Verify admin token from Authorization header.
-    
-    Args:
-        authorization: Authorization header value (e.g., "Bearer <token>")
-        
-    Returns:
-        True if token is valid, False otherwise
-    """
-    if not authorization:
-        return False
-    
-    # Extract token from "Bearer <token>" format
-    try:
-        scheme, token = authorization.split(" ", 1)
-        if scheme.lower() != "bearer":
-            return False
-    except ValueError:
-        return False
-    
-    # Get expected token from environment
-    expected_token = os.getenv("ADMIN_TOKEN")
-    if not expected_token:
-        logger.warning("ADMIN_TOKEN not set, admin endpoint authentication disabled")
-        return False
-    
-    # Use constant-time comparison to prevent timing attacks
-    return hmac.compare_digest(token, expected_token)
 
 
 async def get_settings_from_redis() -> Dict[str, Any]:
@@ -283,7 +252,7 @@ async def update_abuse_prevention_settings(
         from backend.utils.settings_reader import clear_settings_cache
         clear_settings_cache()
         
-        logger.info(f"Admin updated abuse prevention settings: {list(update_dict.keys())}")
+        logger.info(f"Admin updated abuse prevention settings: {list(update_dict.keys())} operator={operator_from_request(request)}")
         
         return {
             "success": True,
