@@ -188,6 +188,14 @@ class TestLitecoinSpaceClient:
         assert isinstance(fees, FeeData)
         assert fees.fastestFee == 2
 
+    @pytest.mark.asyncio
+    async def test_get_recent_blocks(self, client_no_cache, mock_http):
+        _, response = mock_http
+        response.json.return_value = [SAMPLE_BLOCK]
+        blocks = await client_no_cache.get_recent_blocks()
+        assert blocks[0]["height"] == 2800000
+        mock_http[0].get.assert_called_once_with("/blocks")
+
     # -- Mempool -----------------------------------------------------------
 
     @pytest.mark.asyncio

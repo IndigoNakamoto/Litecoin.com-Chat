@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -147,6 +148,174 @@ def _age_label(unix_time: int) -> str:
     if age_seconds < 86400:
         return f"{age_seconds // 3600}h ago"
     return f"{age_seconds // 86400}d ago"
+
+
+# 1 LTC = 100,000,000 litoshis. Fee rates are litoshis per virtual byte.
+LITS_PER_LTC = 100_000_000
+
+_FEE_TIER_LABELS = (
+    ("fastestFee", "Fastest (next block)"),
+    ("halfHourFee", "Half Hour"),
+    ("hourFee", "Hour"),
+    ("economyFee", "Economy"),
+    ("minimumFee", "Minimum"),
+)
+
+
+def average_tx_vbytes(blocks: Any) -> Tuple[Optional[float], int]:
+    """Mean virtual bytes per transaction across recent blocks.
+
+    Prefers ``extras.virtualSize`` from Litecoin Space. Otherwise uses
+    ``weight / 4``, which is the virtual size of the block. Raw ``size``
+    is the wrong unit for a lit/vB rate. Returns ``(mean, sample_count)``.
+    """
+    if not isinstance(blocks, list):
+        return None, 0
+    samples: list[float] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        tx_count = _positive(block.get("tx_count"))
+        if tx_count is None:
+            continue
+        virtual: Optional[float] = None
+        extras = block.get("extras")
+        if isinstance(extras, dict):
+            virtual = _positive(extras.get("virtualSize"))
+        if virtual is None:
+            weight = _positive(block.get("weight"))
+            if weight is None:
+                continue
+            virtual = weight / 4.0
+        samples.append(virtual / tx_count)
+    if not samples:
+        return None, 0
+    return sum(samples) / len(samples), len(samples)
+
+
+def tx_cost_usd(fee_lit_per_vb: float, avg_vbytes: float, usd_price: float) -> float:
+    """USD to send one transaction at this fee rate and virtual size."""
+    return fee_lit_per_vb * avg_vbytes * usd_price / LITS_PER_LTC
+
+
+def format_usd_amount(amount: float) -> str:
+    """Format a dollar amount so a sub-cent fee does not collapse to $0.00.
+
+    Amounts of one cent or more use two decimal places. Smaller amounts
+    keep two significant figures (1 lit/vB × 226 vB × $84.20 → $0.00019).
+    """
+    if amount >= 0.01:
+        return f"${amount:,.2f}"
+    if amount <= 0:
+        return "$0.00"
+    magnitude = math.floor(math.log10(amount))
+    decimals = min(8, max(0, 2 - 1 - magnitude))
+    rounded = round(amount, decimals)
+    if rounded <= 0:
+        return f"${amount:.8f}"
+    return f"${rounded:.{decimals}f}"
+
+
+async def _optional_result(awaitable: Any, timeout: float, label: str) -> Any:
+    """Await with a timeout. A miss returns None so a fee answer can still ship."""
+    try:
+        return await asyncio.wait_for(awaitable, timeout=timeout)
+    except Exception as exc:
+        logger.info("%s unavailable: %s", label, exc)
+        return None
+
+
+async def _price_quote_or_none(client: Any, redis_client: Any) -> Optional[Dict[str, Any]]:
+    """Price context for the fee answer. ``_live_price_quote`` already times out."""
+    try:
+        return await _live_price_quote(client, redis_client)
+    except Exception as exc:
+        logger.info("LTC price unavailable: %s", exc)
+        return None
+
+
+async def _live_price_quote(client: Any, redis_client: Any) -> Dict[str, Any]:
+    """USD from litview, other fiat from Litecoin Space.
+
+    Raises TimeoutError when neither source has a positive quote.
+    """
+    spot, space_price = await asyncio.gather(
+        _optional_result(_litview_spot(redis_client), 4.0, "litview spot price"),
+        _optional_result(client.get_spot_prices(), _SPACE_PRICE_TIMEOUT_S, "Litecoin Space price"),
+    )
+
+    values: Dict[str, Any] = {}
+    quote_time = 0
+    source = "Litecoin Space"
+    endpoint = "/api/v1/prices"
+    if isinstance(spot, dict) and _positive(spot.get("USD")):
+        values["USD"] = float(spot["USD"])
+        try:
+            quote_time = int(spot.get("time") or 0)
+        except (TypeError, ValueError):
+            quote_time = 0
+        source = "litview.space"
+        endpoint = "/api/v1/prices"
+    elif space_price is not None and _positive(getattr(space_price, "USD", None)):
+        values["USD"] = float(space_price.USD)
+        try:
+            quote_time = int(space_price.time or 0)
+        except (TypeError, ValueError):
+            quote_time = 0
+    if space_price is not None:
+        for code in ("EUR", "GBP", "AUD", "JPY"):
+            num = _positive(getattr(space_price, code, None))
+            if num is not None:
+                values[code] = num
+        if source == "litview.space" and any(code in values for code in ("EUR", "GBP", "AUD", "JPY")):
+            endpoint = "/api/v1/prices · FX litecoinspace.org/api/v1/prices"
+        if quote_time <= 0:
+            try:
+                quote_time = int(getattr(space_price, "time", 0) or 0)
+            except (TypeError, ValueError):
+                quote_time = 0
+    if not values:
+        raise TimeoutError("no live price from litview or Litecoin Space")
+    return {"values": values, "time": quote_time, "source": source, "endpoint": endpoint}
+
+
+def _fee_answer(
+    fees: Any,
+    avg_vbytes: Optional[int],
+    block_count: int,
+    usd: Optional[float],
+) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """lit/vB tiers, plus a dollar cost when price and average size are both known."""
+    context: Optional[Dict[str, Any]] = None
+    if avg_vbytes and usd and block_count:
+        raw_costs = {
+            key: tx_cost_usd(getattr(fees, key), avg_vbytes, usd)
+            for key, _label in _FEE_TIER_LABELS
+        }
+        context = {
+            "usd": usd,
+            "usdLabel": f"${usd:,.2f}",
+            "avgVbytes": avg_vbytes,
+            "blockCount": block_count,
+            "hourCostLabel": format_usd_amount(raw_costs["hourFee"]),
+            "costs": {key: format_usd_amount(amount) for key, amount in raw_costs.items()},
+        }
+
+    lines = ["**Current Recommended Fees**", ""]
+    for key, label in _FEE_TIER_LABELS:
+        line = f"- **{label}:** {getattr(fees, key)} lit/vB"
+        if context:
+            line += f" (about {context['costs'][key]})"
+        lines.append(line)
+    if context:
+        window = "block" if block_count == 1 else "blocks"
+        lines.append("")
+        lines.append(
+            f"A typical transaction is about {avg_vbytes:,} virtual bytes, "
+            f"averaged over the last {block_count} {window}. "
+            f"At {context['usdLabel']} per LTC, the 1-hour rate costs about {context['hourCostLabel']}."
+        )
+    return "\n".join(lines) + "\n", context
 
 
 def _finish_early(
@@ -436,17 +605,40 @@ def make_blockchain_lookup_node(pipeline: Any):
                 state["blockchain_lookup_type"] = BlockchainLookupType.BLOCK.value
 
             elif entity == "fees":
-                fees = await client.get_recommended_fees()
-                answer = (
-                    "**Current Recommended Fees**\n\n"
-                    f"- **Fastest (next block):** {fees.fastestFee} lit/vB\n"
-                    f"- **Half Hour:** {fees.halfHourFee} lit/vB\n"
-                    f"- **Hour:** {fees.hourFee} lit/vB\n"
-                    f"- **Economy:** {fees.economyFee} lit/vB\n"
-                    f"- **Minimum:** {fees.minimumFee} lit/vB\n"
+                # Fees decide success. Price and recent-block size are context
+                # only: a timeout on either still returns the lit/vB tiers.
+                fees, blocks, quote = await asyncio.gather(
+                    client.get_recommended_fees(),
+                    _optional_result(
+                        client.get_recent_blocks(), _SPACE_PRICE_TIMEOUT_S, "recent blocks"
+                    ),
+                    _price_quote_or_none(client, redis_client),
                 )
+                avg_raw, block_count = average_tx_vbytes(blocks)
+                avg_vbytes = int(round(avg_raw)) if avg_raw else None
+                usd = None
+                price_source = ""
+                price_endpoint = ""
+                if isinstance(quote, dict):
+                    usd = _positive((quote.get("values") or {}).get("USD"))
+                    price_source = str(quote.get("source") or "")
+                    price_endpoint = str(quote.get("endpoint") or "")
 
-                state["blockchain_data"] = fees.model_dump()
+                answer, context = _fee_answer(fees, avg_vbytes, block_count, usd)
+                payload = fees.model_dump()
+                source = "Litecoin Space"
+                endpoint = "/api/v1/fees/recommended"
+                if context:
+                    payload["context"] = context
+                    endpoint = (
+                        f"/api/v1/fees/recommended · avg size /api/blocks · "
+                        f"price {price_source} {price_endpoint}"
+                    ).strip()
+                    if price_source and price_source != "Litecoin Space":
+                        source = f"Litecoin Space · {price_source}"
+                state["blockchain_data"] = _stamp_provenance(
+                    payload, "fees", source=source, endpoint=endpoint
+                )
                 state["blockchain_lookup_type"] = BlockchainLookupType.FEES.value
 
             elif entity == "mempool":
@@ -628,42 +820,11 @@ def make_blockchain_lookup_node(pipeline: Any):
                 # on Litecoin Space, which publishes a full fiat basket.
                 # litview's /v1/historical-price is oldest-first, so it is not
                 # a drop-in for get_price().
-                spot: Optional[Dict[str, Any]] = None
-                space_price = None
-                try:
-                    spot = await asyncio.wait_for(_litview_spot(redis_client), timeout=4.0)
-                except Exception as exc:
-                    logger.info("litview spot price unavailable: %s", exc)
-                try:
-                    space_price = await asyncio.wait_for(
-                        client.get_spot_prices(), timeout=_SPACE_PRICE_TIMEOUT_S
-                    )
-                except Exception as exc:
-                    logger.info("Litecoin Space price unavailable: %s", exc)
-
-                values: Dict[str, Any] = {}
-                quote_time = 0
-                source = "Litecoin Space"
-                endpoint = "/api/v1/prices"
-                if spot and _positive(spot.get("USD")):
-                    values["USD"] = float(spot["USD"])
-                    quote_time = int(spot.get("time") or 0)
-                    source = "litview.space"
-                    endpoint = "/api/v1/prices"
-                elif space_price is not None and _positive(space_price.USD):
-                    values["USD"] = float(space_price.USD)
-                    quote_time = int(space_price.time or 0)
-                if space_price is not None:
-                    for code in ("EUR", "GBP", "AUD", "JPY"):
-                        num = _positive(getattr(space_price, code, None))
-                        if num is not None:
-                            values[code] = num
-                    if source == "litview.space" and any(code in values for code in ("EUR", "GBP", "AUD", "JPY")):
-                        endpoint = "/api/v1/prices · FX litecoinspace.org/api/v1/prices"
-                    if quote_time <= 0:
-                        quote_time = int(space_price.time or 0)
-                if not values:
-                    raise TimeoutError("no live price from litview or Litecoin Space")
+                quote = await _live_price_quote(client, redis_client)
+                values = quote["values"]
+                quote_time = int(quote["time"] or 0)
+                source = quote["source"]
+                endpoint = quote["endpoint"]
 
                 header = "**Current Litecoin Price**"
                 age = _age_label(quote_time)

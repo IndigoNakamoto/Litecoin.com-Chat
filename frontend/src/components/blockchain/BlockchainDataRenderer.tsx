@@ -4,7 +4,7 @@ import React from "react";
 import TransactionCard from "./TransactionCard";
 import AddressCard from "./AddressCard";
 import BlockCard from "./BlockCard";
-import FeeEstimator from "./FeeEstimator";
+import FeeEstimator, { type FeeCostContext } from "./FeeEstimator";
 import MempoolStatus from "./MempoolStatus";
 import NetworkStats from "./NetworkStats";
 import MiningPoolsCard, { type MiningPoolRow } from "./MiningPoolsCard";
@@ -67,6 +67,7 @@ function renderCard(dataType: string, data: Record<string, unknown>): React.Reac
           hourFee={data.hourFee as number}
           economyFee={data.economyFee as number}
           minimumFee={data.minimumFee as number}
+          context={data.context as FeeCostContext | undefined}
         />
       );
 

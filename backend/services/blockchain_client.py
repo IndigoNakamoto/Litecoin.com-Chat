@@ -303,6 +303,16 @@ class LitecoinSpaceClient:
         )
         return FeeData.model_validate(data)
 
+    async def get_recent_blocks(self) -> List[Dict[str, Any]]:
+        """GET /blocks — the latest blocks (10), with weight and tx_count.
+
+        ``/v1/blocks`` is the extended list, but it does not answer within a
+        few seconds on litecoinspace.org. Weight is enough to turn a fee rate
+        into virtual bytes per transaction.
+        """
+        data = await self._cached_get("blocks:recent", "/blocks", CACHE_TTL_VOLATILE)
+        return data if isinstance(data, list) else []
+
     async def get_mempool(self) -> MempoolData:
         data = await self._cached_get(
             "mempool", "/mempool", CACHE_TTL_VOLATILE

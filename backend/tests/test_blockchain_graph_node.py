@@ -58,13 +58,25 @@ class TestBlockchainLookupNode:
         node = make_blockchain_lookup_node(mock_pipeline)
 
         mock_fees = FeeData(fastestFee=2, halfHourFee=1, hourFee=1, economyFee=1, minimumFee=1)
+        # 90_400 / 4 / 100 = 226 virtual bytes per transaction.
+        blocks = [
+            {"tx_count": 100, "weight": 90400},
+            {"tx_count": 100, "weight": 90400},
+        ]
 
         with patch(
             "backend.services.blockchain_client.LitecoinSpaceClient"
-        ) as MockClient:
+        ) as MockClient, patch(
+            "backend.services.litview_client.LitviewClient"
+        ) as MockLitview:
             instance = AsyncMock()
             instance.get_recommended_fees = AsyncMock(return_value=mock_fees)
+            instance.get_recent_blocks = AsyncMock(return_value=blocks)
+            instance.get_spot_prices = AsyncMock(return_value=None)
             MockClient.return_value = instance
+            litview = AsyncMock()
+            litview.get_spot_price = AsyncMock(return_value={"USD": 84.20, "time": 1700000000})
+            MockLitview.return_value = litview
 
             state = {
                 "intent": "blockchain_lookup",
@@ -74,11 +86,94 @@ class TestBlockchainLookupNode:
             }
             result = await node(state)
 
-        assert result.get("early_answer") is not None
-        assert "Fastest" in result["early_answer"]
-        assert result.get("blockchain_data") is not None
+        answer = result["early_answer"]
+        assert "Fastest" in answer
+        assert "(about $0.00038)" in answer
+        assert "(about $0.00019)" in answer
+        assert "226 virtual bytes" in answer
+        assert "last 2 blocks" in answer
+        assert "$84.20 per LTC" in answer
+        assert "1-hour rate costs about $0.00019" in answer
         assert result.get("blockchain_lookup_type") == "fees"
         assert result.get("early_cache_type") == "blockchain_lookup"
+        context = result["blockchain_data"]["context"]
+        assert context["avgVbytes"] == 226
+        assert context["usdLabel"] == "$84.20"
+        assert context["hourCostLabel"] == "$0.00019"
+        assert context["costs"]["fastestFee"] == "$0.00038"
+        assert context["costs"]["hourFee"] == "$0.00019"
+        endpoint = result["blockchain_data"]["_provenance"]["endpoint"]
+        assert "/api/v1/fees/recommended" in endpoint
+        assert "/api/blocks" in endpoint
+        assert "litview.space" in endpoint
+
+    @pytest.mark.asyncio
+    async def test_fee_lookup_omits_dollars_when_price_times_out(self, mock_pipeline):
+        from backend.rag_graph.nodes.blockchain_lookup import make_blockchain_lookup_node
+        from backend.services.blockchain_client import FeeData
+
+        node = make_blockchain_lookup_node(mock_pipeline)
+        mock_fees = FeeData(fastestFee=1, halfHourFee=1, hourFee=1, economyFee=1, minimumFee=1)
+
+        with patch(
+            "backend.services.blockchain_client.LitecoinSpaceClient"
+        ) as MockClient, patch(
+            "backend.services.litview_client.LitviewClient"
+        ) as MockLitview:
+            instance = AsyncMock()
+            instance.get_recommended_fees = AsyncMock(return_value=mock_fees)
+            instance.get_recent_blocks = AsyncMock(return_value=[{"tx_count": 100, "weight": 90400}])
+            instance.get_spot_prices = AsyncMock(side_effect=TimeoutError("slow"))
+            MockClient.return_value = instance
+            litview = AsyncMock()
+            litview.get_spot_price = AsyncMock(side_effect=TimeoutError("slow"))
+            MockLitview.return_value = litview
+            result = await node({
+                "intent": "blockchain_lookup",
+                "matched_faq": "fees",
+                "sanitized_query": "fees",
+                "metadata": {},
+            })
+
+        assert result["early_cache_type"] == "blockchain_lookup"
+        assert "1 lit/vB" in result["early_answer"]
+        assert "$" not in result["early_answer"]
+        assert "context" not in result["blockchain_data"]
+        assert result["blockchain_data"]["_provenance"]["endpoint"] == "/api/v1/fees/recommended"
+
+    @pytest.mark.asyncio
+    async def test_fee_lookup_omits_dollars_when_blocks_time_out(self, mock_pipeline):
+        from backend.rag_graph.nodes.blockchain_lookup import make_blockchain_lookup_node
+        from backend.services.blockchain_client import FeeData, PriceData
+
+        node = make_blockchain_lookup_node(mock_pipeline)
+        mock_fees = FeeData(fastestFee=1, halfHourFee=1, hourFee=1, economyFee=1, minimumFee=1)
+
+        with patch(
+            "backend.services.blockchain_client.LitecoinSpaceClient"
+        ) as MockClient, patch(
+            "backend.services.litview_client.LitviewClient"
+        ) as MockLitview:
+            instance = AsyncMock()
+            instance.get_recommended_fees = AsyncMock(return_value=mock_fees)
+            instance.get_recent_blocks = AsyncMock(side_effect=TimeoutError("slow"))
+            instance.get_spot_prices = AsyncMock(return_value=PriceData(time=1700000000, USD=84.20))
+            MockClient.return_value = instance
+            litview = AsyncMock()
+            litview.get_spot_price = AsyncMock(return_value=None)
+            MockLitview.return_value = litview
+            result = await node({
+                "intent": "blockchain_lookup",
+                "matched_faq": "fees",
+                "sanitized_query": "fees",
+                "metadata": {},
+            })
+
+        assert result["early_cache_type"] == "blockchain_lookup"
+        assert "Fastest" in result["early_answer"]
+        assert "lit/vB" in result["early_answer"]
+        assert "$" not in result["early_answer"]
+        assert "context" not in result["blockchain_data"]
 
     @pytest.mark.asyncio
     async def test_price_lookup(self, mock_pipeline):
@@ -264,10 +359,17 @@ class TestBlockchainLookupNode:
 
         with patch(
             "backend.services.blockchain_client.LitecoinSpaceClient"
-        ) as MockClient:
+        ) as MockClient, patch(
+            "backend.services.litview_client.LitviewClient"
+        ) as MockLitview:
             instance = AsyncMock()
             instance.get_recommended_fees = AsyncMock(side_effect=Exception("API timeout"))
+            instance.get_recent_blocks = AsyncMock(return_value=[])
+            instance.get_spot_prices = AsyncMock(side_effect=TimeoutError("slow"))
             MockClient.return_value = instance
+            litview = AsyncMock()
+            litview.get_spot_price = AsyncMock(return_value=None)
+            MockLitview.return_value = litview
 
             state = {
                 "intent": "blockchain_lookup",
@@ -470,3 +572,43 @@ class TestMetricLookupBranch:
         result = await node(self._state("metric:does_not_exist", "x"))
         assert "Unknown metric" in result["early_answer"]
         assert result["early_cache_type"] == "blockchain_lookup_error"
+
+
+class TestFeeCostMath:
+    """Average virtual size and the dollar cost of a typical transaction."""
+
+    def test_average_vbytes_from_weight(self):
+        from backend.rag_graph.nodes.blockchain_lookup import average_tx_vbytes
+
+        mean, count = average_tx_vbytes([
+            {"tx_count": 100, "weight": 90400},
+            {"tx_count": 50, "weight": 40000},
+        ])
+        # 226 and 200.
+        assert count == 2
+        assert mean == pytest.approx(213.0)
+
+    def test_average_vbytes_prefers_virtual_size(self):
+        from backend.rag_graph.nodes.blockchain_lookup import average_tx_vbytes
+
+        mean, count = average_tx_vbytes([
+            {"tx_count": 10, "weight": 4000, "extras": {"virtualSize": 500}},
+        ])
+        assert count == 1
+        assert mean == pytest.approx(50.0)
+
+    def test_average_vbytes_skips_empty_blocks(self):
+        from backend.rag_graph.nodes.blockchain_lookup import average_tx_vbytes
+
+        assert average_tx_vbytes([]) == (None, 0)
+        assert average_tx_vbytes([{"tx_count": 0, "weight": 1000}]) == (None, 0)
+        assert average_tx_vbytes("not-a-list") == (None, 0)
+
+    def test_usd_cost_keeps_sub_cent_digits(self):
+        from backend.rag_graph.nodes.blockchain_lookup import format_usd_amount, tx_cost_usd
+
+        cost = tx_cost_usd(1, 226, 84.20)
+        assert cost == pytest.approx(226 * 84.20 / 100_000_000)
+        assert format_usd_amount(cost) == "$0.00019"
+        assert format_usd_amount(0.02) == "$0.02"
+        assert format_usd_amount(1.5) == "$1.50"
