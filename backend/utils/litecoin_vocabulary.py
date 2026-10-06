@@ -176,6 +176,9 @@ LTC_ENTITY_EXPANSIONS: Dict[str, str] = {
     "charlie lee": "creator founder coblee",
     "foundation": "litecoin foundation lf",
     "litecoin foundation": "lf foundation",
+    # Project and bounty submissions go to litecoin.com/projects/submit, not a separate portal.
+    "bounty": "projects/submit crowdfund listing",
+    "submit a project": "projects/submit crowdfund listing",
 
     # --- Ordinals Lite & digital artifacts ---
     "ordinals lite": "ord-litecoin ordinal theory inscriptions litoshi digital artifacts explorer ordinalslite",

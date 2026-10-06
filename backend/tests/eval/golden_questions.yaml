@@ -237,6 +237,15 @@ questions:
     expected_behavior: answer
     expected_source_substrings: [lit/vb, virtual byte, fee rate]
 
+  - id: conceptual-submit-project
+    category: conceptual
+    # The form at litecoin.com/projects/submit. The scraper skips that page (it is a form);
+    # content/articles/basics/submit-a-project.md is the grounded source.
+    query: How do I submit a project or bounty to the Litecoin Foundation?
+    expected_behavior: answer
+    expected_source_substrings: [submit]
+    must_not_contain: ["lite.space/apply", "general grants", "long-term support grants"]
+
   # ---------------------------------------------------------------- orient (answer, newcomer / merchant / developer entry points)
   - id: orient-where-to-start
     category: orient

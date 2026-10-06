@@ -248,6 +248,8 @@ def test_projects_vocabulary_normalises_and_expands():
     space = expand_ltc_entities("what is litecoin space").lower()
     assert "mempool explorer" in space and "fee estimates" in space
     assert "litoshis per virtual byte" in expand_ltc_entities("what is lit/vb")
+    submit = expand_ltc_entities("How do I submit a project or bounty to the Litecoin Foundation?").lower()
+    assert "projects/submit" in submit and "crowdfund" in submit
     # Unrelated questions are untouched
     assert expand_ltc_entities("best sourdough recipe") == "best sourdough recipe"
 
@@ -636,6 +638,16 @@ def test_answer_feedback_request_validates():
     assert req.verdict == "down"
     with pytest.raises(Exception):
         AnswerFeedbackRequest(request_id="short", verdict="sideways")  # type: ignore[arg-type]
+
+
+def test_destination_url_exception_is_in_both_prompts():
+    """A where-to-go question may repeat one URL that an excerpt states as the destination."""
+    from backend.rag_pipeline import SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION_GROUNDED
+
+    for prompt in (SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION_GROUNDED):
+        assert "Do **not** invent URLs" in prompt
+        assert "litecoin.com/projects/submit" not in prompt
+        assert "include that URL once, copied exactly, as plain text" in prompt
 
 
 def test_audience_note_profiles():
