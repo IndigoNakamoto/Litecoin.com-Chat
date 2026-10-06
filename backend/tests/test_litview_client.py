@@ -101,6 +101,8 @@ def _route(url: str, params: Optional[Dict[str, Any]]) -> _Resp:
             return _Resp(200, BULK_MVRV_NULL)
     if url == "/api/series/search":
         return _Resp(200, ["mvrv", "lth_mvrv", "sth_mvrv"])
+    if url == "/api/v1/prices":
+        return _Resp(200, {"time": 1791302952, "USD": 69.96})
     if url == "/api/block-height/2520000":
         return _Resp(200, "54cd0ef48a977c5bb9c845e0c67a4e9d17a5894b084aea4bf7e594122f5c0dc1")
     if url.startswith("/api/block/54cd0ef4"):
@@ -208,6 +210,38 @@ async def test_breaker_open_surfaces_as_connect_error(client):
     cb.litview_breaker.opened_at = 1e18  # force open
     with pytest.raises(httpx.ConnectError):
         await client.get_sync_status()
+
+
+@pytest.mark.asyncio
+async def test_spot_price_is_usd_and_drops_missing_fiat(client):
+    spot = await client.get_spot_price()
+    assert spot == {"USD": 69.96, "time": 1791302952}
+
+
+@pytest.mark.asyncio
+async def test_connect_error_fails_over_to_public_site(monkeypatch):
+    from backend.services import circuit_breaker as cb
+
+    monkeypatch.setattr(cb, "litview_breaker", cb.CircuitBreaker("litview-failover"))
+
+    class _Http:
+        def __init__(self, base_url, **_kwargs):
+            self.base_url = str(base_url)
+
+        async def get(self, url, params=None):
+            if "7070" in self.base_url:
+                raise httpx.ConnectError("connection refused")
+            assert url == "/api/v1/prices"
+            return _Resp(200, {"time": 1791302952, "USD": 69.96})
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(lv.httpx, "AsyncClient", _Http)
+    client = LitviewClient(base_url="http://host.docker.internal:7070")
+    spot = await client.get_spot_price()
+    assert spot["USD"] == 69.96
+    assert client.base_url == lv.LITVIEW_PUBLIC_URL
 
 
 @pytest.mark.asyncio

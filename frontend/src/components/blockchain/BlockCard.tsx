@@ -2,7 +2,8 @@
 
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ExternalLink, Copy, Check } from "lucide-react";
+import { Copy, Check } from "lucide-react";
+import { LiveExternalLink, LiveStat, liveInnerCardClass } from "./LiveCardFrame";
 
 interface BlockCardProps {
   id: string;
@@ -56,21 +57,13 @@ export default function BlockCard({
   };
 
   return (
-    <Card className="my-3 border-emerald-200/50 bg-emerald-50/30 dark:bg-emerald-950/20 dark:border-emerald-800/30">
-      <CardHeader className="pb-2">
+    <Card className={liveInnerCardClass}>
+      <CardHeader className="px-4 pt-4 pb-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <CardTitle className="text-sm font-medium">
+          <CardTitle className="font-space-grotesk text-lg font-semibold">
             Block {height.toLocaleString()}
           </CardTitle>
-          <a
-            href={deep_link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 flex items-center gap-1"
-          >
-            View on Litecoin Space
-            <ExternalLink className="w-3 h-3" />
-          </a>
+          <LiveExternalLink href={deep_link}>View on Litecoin Space</LiveExternalLink>
         </div>
         <button
           onClick={copyHash}
@@ -84,22 +77,14 @@ export default function BlockCard({
           )}
         </button>
       </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+      <CardContent className="grid grid-cols-2 gap-3 px-4 pb-4">
         <div className="col-span-2">
-          <span className="text-muted-foreground">Time:</span>{" "}
-          <span className="font-medium">{formatTimestamp(timestamp)}</span>
+          <LiveStat label="Time" value={formatTimestamp(timestamp)} />
         </div>
-        <div>
-          <span className="text-muted-foreground">Transactions:</span>{" "}
-          <span className="font-medium">{tx_count.toLocaleString()}</span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">Size:</span>{" "}
-          <span className="font-medium">{formatSize(size)}</span>
-        </div>
+        <LiveStat label="Transactions" value={tx_count.toLocaleString()} />
+        <LiveStat label="Size" value={formatSize(size)} />
         <div className="col-span-2">
-          <span className="text-muted-foreground">Difficulty:</span>{" "}
-          <span className="font-medium">{difficulty.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+          <LiveStat label="Difficulty" value={difficulty.toLocaleString(undefined, { maximumFractionDigits: 2 })} />
         </div>
       </CardContent>
     </Card>

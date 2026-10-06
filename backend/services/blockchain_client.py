@@ -325,6 +325,13 @@ class LitecoinSpaceClient:
         )
         return DifficultyAdjustment.model_validate(data)
 
+    async def get_spot_prices(self) -> PriceData:
+        """Current multi-currency quote. `/v1/prices` is one small object; the historical series is not."""
+        data = await self._cached_get("prices:spot", "/v1/prices", CACHE_TTL_VOLATILE)
+        if not isinstance(data, dict):
+            return PriceData()
+        return PriceData.model_validate(data)
+
     async def get_price(self) -> PriceData:
         data = await self._cached_get(
             "prices", "/v1/historical-price", CACHE_TTL_VOLATILE

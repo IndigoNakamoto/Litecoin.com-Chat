@@ -91,10 +91,15 @@ class TestBlockchainLookupNode:
 
         with patch(
             "backend.services.blockchain_client.LitecoinSpaceClient"
-        ) as MockClient:
+        ) as MockClient, patch(
+            "backend.services.litview_client.LitviewClient"
+        ) as MockLitview:
             instance = AsyncMock()
-            instance.get_price = AsyncMock(return_value=mock_price)
+            instance.get_spot_prices = AsyncMock(return_value=mock_price)
             MockClient.return_value = instance
+            litview = AsyncMock()
+            litview.get_spot_price = AsyncMock(return_value=None)
+            MockLitview.return_value = litview
 
             state = {
                 "intent": "blockchain_lookup",
@@ -106,7 +111,150 @@ class TestBlockchainLookupNode:
 
         assert result.get("early_answer") is not None
         assert "$72.50" in result["early_answer"]
+        assert "€67.00" in result["early_answer"]
+        assert "A$" not in result["early_answer"]
         assert result.get("blockchain_lookup_type") == "price"
+        assert result["blockchain_data"]["_provenance"]["source"] == "Litecoin Space"
+
+    @pytest.mark.asyncio
+    async def test_price_prefers_litview_usd_and_space_fx(self, mock_pipeline):
+        from backend.rag_graph.nodes.blockchain_lookup import make_blockchain_lookup_node
+        from backend.services.blockchain_client import PriceData
+
+        node = make_blockchain_lookup_node(mock_pipeline)
+        space_price = PriceData(time=1700000000, USD=70.0, EUR=62.0, GBP=53.0, AUD=100.0, JPY=11040.0)
+
+        with patch(
+            "backend.services.blockchain_client.LitecoinSpaceClient"
+        ) as MockClient, patch(
+            "backend.services.litview_client.LitviewClient"
+        ) as MockLitview:
+            instance = AsyncMock()
+            instance.get_spot_prices = AsyncMock(return_value=space_price)
+            MockClient.return_value = instance
+            litview = AsyncMock()
+            litview.get_spot_price = AsyncMock(return_value={"USD": 69.96, "time": 1791302952})
+            MockLitview.return_value = litview
+
+            result = await node({
+                "intent": "blockchain_lookup",
+                "matched_faq": "price",
+                "sanitized_query": "litecoin price",
+                "metadata": {},
+            })
+
+        answer = result["early_answer"]
+        assert "$69.96" in answer
+        assert "$70.00" not in answer
+        assert "€62.00" in answer and "£53.00" in answer
+        card = result["blockchain_data"]
+        assert card["USD"] == 69.96 and card["EUR"] == 62.0
+        assert card["_provenance"]["source"] == "litview.space"
+        assert "litecoinspace.org/api/v1/prices" in card["_provenance"]["endpoint"]
+
+    @pytest.mark.asyncio
+    async def test_price_usd_only_when_space_fx_is_down(self, mock_pipeline):
+        from backend.rag_graph.nodes.blockchain_lookup import make_blockchain_lookup_node
+
+        node = make_blockchain_lookup_node(mock_pipeline)
+        with patch(
+            "backend.services.blockchain_client.LitecoinSpaceClient"
+        ) as MockClient, patch(
+            "backend.services.litview_client.LitviewClient"
+        ) as MockLitview:
+            instance = AsyncMock()
+            instance.get_spot_prices = AsyncMock(side_effect=TimeoutError("slow"))
+            MockClient.return_value = instance
+            litview = AsyncMock()
+            litview.get_spot_price = AsyncMock(return_value={"USD": 69.96, "time": 1791302952})
+            MockLitview.return_value = litview
+            result = await node({
+                "intent": "blockchain_lookup",
+                "matched_faq": "price",
+                "sanitized_query": "price",
+                "metadata": {},
+            })
+
+        assert result["early_cache_type"] == "blockchain_lookup"
+        assert "$69.96" in result["early_answer"]
+        assert "EUR" not in result["early_answer"]
+        assert result["blockchain_data"]["_provenance"]["source"] == "litview.space"
+
+    @pytest.mark.asyncio
+    async def test_hashrate_uses_litview_daily_series(self, mock_pipeline):
+        from backend.rag_graph.nodes.blockchain_lookup import make_blockchain_lookup_node
+        from backend.services.blockchain_client import DifficultyAdjustment
+
+        node = make_blockchain_lookup_node(mock_pipeline)
+        adjustment = DifficultyAdjustment(
+            progressPercent=64.5, difficultyChange=-1.2, remainingBlocks=715,
+            estimatedRetargetDate=0, remainingTime=0, previousRetarget=0, nextRetargetHeight=3191328,
+        )
+
+        async def latest(series, index="day1"):
+            return {"hash_rate": 2.64e15, "difficulty": 97030382.37}[series]
+
+        with patch(
+            "backend.services.blockchain_client.LitecoinSpaceClient"
+        ) as MockClient, patch(
+            "backend.services.litview_client.LitviewClient"
+        ) as MockLitview:
+            instance = AsyncMock()
+            instance.get_difficulty_adjustment = AsyncMock(return_value=adjustment)
+            instance.get_hashrate = AsyncMock()
+            MockClient.return_value = instance
+            litview = AsyncMock()
+            litview.get_latest = AsyncMock(side_effect=latest)
+            MockLitview.return_value = litview
+            result = await node({
+                "intent": "blockchain_lookup",
+                "matched_faq": "hashrate",
+                "sanitized_query": "hashrate",
+                "metadata": {},
+            })
+
+        assert result["early_cache_type"] == "blockchain_lookup"
+        assert "daily estimate" in result["early_answer"]
+        assert "64.5% complete" in result["early_answer"]
+        instance.get_hashrate.assert_not_called()
+        card = result["blockchain_data"]
+        assert card["hashrate"]["basis"] == "daily"
+        assert card["hashrate"]["current_difficulty"] == pytest.approx(97030382.37)
+        assert card["_provenance"]["source"] == "litview.space"
+        assert "difficulty-adjustment" in card["_provenance"]["endpoint"]
+
+    @pytest.mark.asyncio
+    async def test_hashrate_falls_back_when_litview_and_adjustment_fail(self, mock_pipeline):
+        from backend.rag_graph.nodes.blockchain_lookup import make_blockchain_lookup_node
+        from backend.services.blockchain_client import HashrateData
+
+        node = make_blockchain_lookup_node(mock_pipeline)
+        with patch(
+            "backend.services.blockchain_client.LitecoinSpaceClient"
+        ) as MockClient, patch(
+            "backend.services.litview_client.LitviewClient"
+        ) as MockLitview:
+            instance = AsyncMock()
+            instance.get_hashrate = AsyncMock(
+                return_value=HashrateData(current_hashrate=2.69e15, current_difficulty=97030382.0)
+            )
+            instance.get_difficulty_adjustment = AsyncMock(side_effect=TimeoutError("slow"))
+            MockClient.return_value = instance
+            litview = AsyncMock()
+            litview.get_latest = AsyncMock(side_effect=OSError("down"))
+            MockLitview.return_value = litview
+            result = await node({
+                "intent": "blockchain_lookup",
+                "matched_faq": "hashrate",
+                "sanitized_query": "hashrate",
+                "metadata": {},
+            })
+
+        assert result["early_cache_type"] == "blockchain_lookup"
+        assert "3-day estimate" in result["early_answer"]
+        assert "not available from Litecoin Space" in result["early_answer"]
+        assert "difficulty_adjustment" not in result["blockchain_data"]
+        assert result["blockchain_data"]["_provenance"]["source"] == "Litecoin Space"
 
     @pytest.mark.asyncio
     async def test_api_error_sets_error_message(self, mock_pipeline):

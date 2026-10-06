@@ -39,8 +39,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-LITVIEW_API_URL = os.getenv("LITVIEW_API_URL", "https://litview.space").rstrip("/")
-LITVIEW_CHART_URL = os.getenv("LITVIEW_CHART_URL", "https://litview.space").rstrip("/")
+# Public site. Also the fallback when LITVIEW_API_URL points at the co-hosted
+# process (http://host.docker.internal:7070) and that process is down.
+LITVIEW_PUBLIC_URL = "https://litview.space"
+LITVIEW_API_URL = os.getenv("LITVIEW_API_URL", LITVIEW_PUBLIC_URL).rstrip("/")
+LITVIEW_CHART_URL = os.getenv("LITVIEW_CHART_URL", LITVIEW_PUBLIC_URL).rstrip("/")
 LITVIEW_TIMEOUT_SECONDS = float(os.getenv("LITVIEW_TIMEOUT_SECONDS", "10"))
 
 CACHE_KEY_PREFIX = "litview:"
@@ -192,13 +195,33 @@ class LitviewClient:
 
     def __init__(self, redis_client=None, base_url: Optional[str] = None, timeout: Optional[float] = None):
         self.base_url = (base_url or LITVIEW_API_URL).rstrip("/")
-        self._http = httpx.AsyncClient(
-            base_url=self.base_url,
-            timeout=httpx.Timeout(timeout or LITVIEW_TIMEOUT_SECONDS, connect=5.0),
+        self._timeout = timeout or LITVIEW_TIMEOUT_SECONDS
+        self._http = self._open_http(self.base_url)
+        self._redis = redis_client
+        self._fallback_lock = asyncio.Lock()
+
+    def _open_http(self, base_url: str) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=base_url,
+            timeout=httpx.Timeout(self._timeout, connect=3.0),
             follow_redirects=True,
             headers={"Accept": "application/json", "User-Agent": "litecoin-knowledge-hub/1.0"},
         )
-        self._redis = redis_client
+
+    async def _failover_to_public(self) -> bool:
+        """Switch this client to the public site after the local process refuses a connection."""
+        async with self._fallback_lock:
+            if self.base_url == LITVIEW_PUBLIC_URL:
+                return False
+            logger.warning("litview at %s is unreachable; using %s", self.base_url, LITVIEW_PUBLIC_URL)
+            old = self._http
+            self.base_url = LITVIEW_PUBLIC_URL
+            self._http = self._open_http(LITVIEW_PUBLIC_URL)
+            try:
+                await old.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+            return True
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -247,7 +270,15 @@ class LitviewClient:
         from backend.services.circuit_breaker import CircuitOpen, litview_breaker
 
         async def _do() -> httpx.Response:
-            return await self._http.get(path, params=params)
+            try:
+                return await self._http.get(path, params=params)
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                # Same host as this project listens on :7070. A refused local
+                # connection should not take the cards down while the public
+                # site is still up.
+                if await self._failover_to_public():
+                    return await self._http.get(path, params=params)
+                raise
 
         try:
             resp = await litview_breaker.call(_do)
@@ -308,6 +339,31 @@ class LitviewClient:
             f"search:{limit}:{q.lower()}", TTL_META, "/api/series/search", params={"q": q, "limit": limit}
         )
         return [str(s) for s in data] if isinstance(data, list) else []
+
+    async def get_spot_price(self) -> Optional[Dict[str, Any]]:
+        """
+        Current LTC price from `/api/v1/prices`.
+
+        On the co-hosted instance this is USD and a unix timestamp, current to
+        the minute. Other fiat keys are included when the payload has them.
+        Returns None when USD is missing — never a zero.
+        """
+        data = await self._cached_json("spot:v1:prices", TTL_LATEST, "/api/v1/prices")
+        if not isinstance(data, dict):
+            return None
+        usd = _coerce_float(data.get("USD"))
+        if usd is None or usd <= 0:
+            return None
+        out: Dict[str, Any] = {"USD": usd}
+        try:
+            out["time"] = int(data.get("time") or 0)
+        except (TypeError, ValueError):
+            out["time"] = 0
+        for code in ("EUR", "GBP", "AUD", "JPY"):
+            val = _coerce_float(data.get(code))
+            if val is not None and val > 0:
+                out[code] = val
+        return out
 
     async def get_latest(self, series: str, index: str) -> Optional[float]:
         """Most recent value, or None when litview has not computed it."""

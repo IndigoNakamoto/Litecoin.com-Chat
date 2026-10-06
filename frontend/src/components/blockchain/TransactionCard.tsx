@@ -2,8 +2,8 @@
 
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { ExternalLink, Copy, Check } from "lucide-react";
+import { Copy, Check } from "lucide-react";
+import { LiveExternalLink, LiveStat, liveInnerCardClass } from "./LiveCardFrame";
 
 interface TransactionStatus {
   confirmed: boolean;
@@ -66,31 +66,20 @@ export default function TransactionCard({
   };
 
   return (
-    <Card className="my-3 border-blue-200/50 bg-blue-50/30 dark:bg-blue-950/20 dark:border-blue-800/30">
-      <CardHeader className="pb-2">
+    <Card className={liveInnerCardClass}>
+      <CardHeader className="px-4 pt-4 pb-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
             Transaction
-            <Badge
-              variant={status.confirmed ? "default" : "secondary"}
-              className={
-                status.confirmed
-                  ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300"
-                  : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300"
-              }
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                status.confirmed ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"
+              }`}
             >
               {status.confirmed ? "Confirmed" : "Unconfirmed"}
-            </Badge>
+            </span>
           </CardTitle>
-          <a
-            href={deep_link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 flex items-center gap-1"
-          >
-            View on Litecoin Space
-            <ExternalLink className="w-3 h-3" />
-          </a>
+          <LiveExternalLink href={deep_link}>View on Litecoin Space</LiveExternalLink>
         </div>
         <button
           onClick={copyTxid}
@@ -104,40 +93,20 @@ export default function TransactionCard({
           )}
         </button>
       </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-        <div>
-          <span className="text-muted-foreground">Output:</span>{" "}
-          <span className="font-medium">{formatLitoshis(totalOutput)}</span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">Fee:</span>{" "}
-          <span className="font-medium">{formatLitoshis(fee)}</span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">Size:</span>{" "}
-          <span className="font-medium">
-            {size.toLocaleString()} B
-          </span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">I/O:</span>{" "}
-          <span className="font-medium">
-            {vin.length} → {vout.length}
-          </span>
-        </div>
-        {status.confirmed && status.block_height && (
+      <CardContent className="grid grid-cols-2 gap-3 px-4 pb-4">
+        <LiveStat label="Output" value={formatLitoshis(totalOutput)} />
+        <LiveStat label="Fee" value={formatLitoshis(fee)} />
+        <LiveStat label="Size" value={`${size.toLocaleString()} B`} />
+        <LiveStat label="Inputs → outputs" value={`${vin.length} → ${vout.length}`} />
+        {status.confirmed && status.block_height ? (
           <div className="col-span-2">
-            <span className="text-muted-foreground">Block:</span>{" "}
-            <span className="font-medium">
-              {status.block_height.toLocaleString()}
-            </span>
-            {status.block_time && (
-              <span className="text-muted-foreground text-xs ml-2">
-                ({formatTimestamp(status.block_time)})
-              </span>
-            )}
+            <LiveStat
+              label="Block"
+              value={status.block_height.toLocaleString()}
+              hint={status.block_time ? formatTimestamp(status.block_time) : undefined}
+            />
           </div>
-        )}
+        ) : null}
       </CardContent>
     </Card>
   );

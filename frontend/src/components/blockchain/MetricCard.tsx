@@ -1,9 +1,10 @@
 "use client";
 
 import React from "react";
-import { ExternalLink, TrendingDown, TrendingUp, Minus, Clock } from "lucide-react";
+import { TrendingDown, TrendingUp, Minus, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import Sparkline, { type SparkPoint } from "./Sparkline";
+import { LiveExternalLink, liveInnerCardClass } from "./LiveCardFrame";
 
 export type MetricUnit = "usd" | "ltc" | "percent" | "ratio" | "count" | "raw";
 
@@ -94,8 +95,8 @@ export default function MetricCard(props: MetricCardProps) {
   const link = chart_url || "https://litview.space";
 
   return (
-    <Card className="my-3 border-sky-200/60 bg-sky-50/30 dark:bg-sky-950/20 dark:border-sky-800/30" data-testid="metric-card">
-      <CardHeader className="pb-2">
+    <Card className={liveInnerCardClass} data-testid="metric-card">
+      <CardHeader className="px-4 pt-4 pb-2">
         <CardTitle className="text-sm font-medium flex items-center justify-between gap-2">
           <span>{label}</span>
           <span className="text-xs font-normal text-muted-foreground inline-flex items-center gap-1">
@@ -108,11 +109,11 @@ export default function MetricCard(props: MetricCardProps) {
           </span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3 text-sm">
+      <CardContent className="space-y-3 px-4 pb-4 text-sm">
         {status === "ok" && value !== null && value !== undefined ? (
           <div className="flex items-end justify-between gap-4">
             <div>
-              <div className="text-2xl font-semibold tracking-tight" data-testid="metric-value">
+              <div className="font-space-grotesk text-[1.75rem] font-semibold leading-none tracking-tight" data-testid="metric-value">
                 {value_formatted || formatValue(value, unit)}
               </div>
               {Object.keys(changes).length > 0 && (
@@ -126,7 +127,7 @@ export default function MetricCard(props: MetricCardProps) {
               )}
             </div>
             {points.length >= 2 && (
-              <div className="text-sky-600 dark:text-sky-400 shrink-0">
+              <div className="shrink-0 text-[#0066CC]">
                 <Sparkline points={points} width={160} height={44} ariaLabel={`${label} trend`} />
               </div>
             )}
@@ -145,15 +146,7 @@ export default function MetricCard(props: MetricCardProps) {
 
         {description ? <p className="text-xs text-muted-foreground leading-relaxed">{description}</p> : null}
 
-        <a
-          href={link}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-xs font-medium text-sky-700 hover:text-sky-900 underline underline-offset-2"
-        >
-          View on litview.space
-          <ExternalLink className="h-3 w-3" aria-hidden />
-        </a>
+        <LiveExternalLink href={link}>View on litview.space</LiveExternalLink>
       </CardContent>
     </Card>
   );

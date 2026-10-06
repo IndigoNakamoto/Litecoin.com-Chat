@@ -281,7 +281,7 @@ These variables configure the local-first RAG pipeline with cloud spillover. See
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `USE_LITVIEW_METRICS` | `true` | Route live metric questions (MVRV, realized price, supply, ...) to litview via `backend/data/metrics_registry.yaml` |
-| `LITVIEW_API_URL` | `https://litview.space` | Series API base (self-hosted LRK works too) |
+| `LITVIEW_API_URL` | `https://litview.space` (compose: `http://host.docker.internal:7070`) | Series API base. Prod and dev compose point at the co-hosted brk process on port 7070; a refused connection falls back to `https://litview.space`. |
 | `LITVIEW_CHART_URL` | `https://litview.space` | Link target on metric cards when a registry entry has no `chart_url` |
 | `LITVIEW_TIMEOUT_SECONDS` | `10` | HTTP timeout; the `litview` circuit breaker opens after 3 failures |
 | `LITVIEW_CACHE_TTL_LATEST` / `_SYNC` / `_META` | `600` / `300` / `21600` | Redis TTLs (seconds) for latest values, sync status, and series metadata/search |

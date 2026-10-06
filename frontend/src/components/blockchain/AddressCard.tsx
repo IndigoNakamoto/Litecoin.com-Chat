@@ -2,7 +2,8 @@
 
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ExternalLink, Copy, Check } from "lucide-react";
+import { Copy, Check } from "lucide-react";
+import { LiveExternalLink, LiveStat, liveInnerCardClass } from "./LiveCardFrame";
 
 interface AddressStats {
   funded_txo_count: number;
@@ -51,19 +52,11 @@ export default function AddressCard({
   };
 
   return (
-    <Card className="my-3 border-purple-200/50 bg-purple-50/30 dark:bg-purple-950/20 dark:border-purple-800/30">
-      <CardHeader className="pb-2">
+    <Card className={liveInnerCardClass}>
+      <CardHeader className="px-4 pt-4 pb-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <CardTitle className="text-sm font-medium">Address</CardTitle>
-          <a
-            href={deep_link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 flex items-center gap-1"
-          >
-            View on Litecoin Space
-            <ExternalLink className="w-3 h-3" />
-          </a>
+          <LiveExternalLink href={deep_link}>View on Litecoin Space</LiveExternalLink>
         </div>
         <button
           onClick={copyAddress}
@@ -77,31 +70,16 @@ export default function AddressCard({
           )}
         </button>
       </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+      <CardContent className="grid grid-cols-2 gap-3 px-4 pb-4">
         <div className="col-span-2">
-          <span className="text-muted-foreground">Balance:</span>{" "}
-          <span className="font-semibold">{formatLTC(balance)}</span>
+          <LiveStat label="Balance" hero value={formatLTC(balance)} />
         </div>
-        <div>
-          <span className="text-muted-foreground">Received:</span>{" "}
-          <span className="font-medium">{formatLTC(chain_stats.funded_txo_sum)}</span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">Sent:</span>{" "}
-          <span className="font-medium">{formatLTC(chain_stats.spent_txo_sum)}</span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">Transactions:</span>{" "}
-          <span className="font-medium">{totalTx.toLocaleString()}</span>
-        </div>
-        {mempool_stats.tx_count > 0 && (
-          <div>
-            <span className="text-muted-foreground">Pending:</span>{" "}
-            <span className="font-medium text-yellow-600">
-              {mempool_stats.tx_count}
-            </span>
-          </div>
-        )}
+        <LiveStat label="Received" value={formatLTC(chain_stats.funded_txo_sum)} />
+        <LiveStat label="Sent" value={formatLTC(chain_stats.spent_txo_sum)} />
+        <LiveStat label="Transactions" value={totalTx.toLocaleString()} />
+        {mempool_stats.tx_count > 0 ? (
+          <LiveStat label="Pending" value={mempool_stats.tx_count} />
+        ) : null}
       </CardContent>
     </Card>
   );

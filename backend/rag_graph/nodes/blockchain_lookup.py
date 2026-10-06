@@ -10,10 +10,12 @@ both the structured data card and a natural-language narration to the user.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from ..state import RAGState
 
@@ -51,6 +53,38 @@ LITVIEW_UNAVAILABLE_MESSAGE = (
 )
 
 
+# Litecoin Space is still the source for anything that depends on its mempool
+# or its block index. Probed 2026-10-06 against the co-hosted litview process
+# (127.0.0.1:7070, the same brk that serves litview.space):
+#   * fees and mempool are empty — getblocktemplate is called without the
+#     mweb and segwit rules, so the template update fails
+#   * /api/blocks/tip/height stops at 2026-09-12; a recent height 404s
+#   * mining pools and /v1/mining/hashrate describe that same stale index
+#   * /v1/difficulty-adjustment's next retarget height is already in the past
+# Spot USD (/api/v1/prices) and the day1 series hash_rate and difficulty are
+# current, and they answer in a few milliseconds on the local port.
+_HASHRATE_ADJUSTMENT_TIMEOUT_S = float(os.getenv("LITECOIN_SPACE_ADJUSTMENT_TIMEOUT", "4"))
+_SPACE_PRICE_TIMEOUT_S = float(os.getenv("LITECOIN_SPACE_PRICE_TIMEOUT", "4"))
+
+_FIAT_LINES = (
+    ("USD", lambda v: f"${v:,.2f}"),
+    ("EUR", lambda v: f"€{v:,.2f}"),
+    ("GBP", lambda v: f"£{v:,.2f}"),
+    ("AUD", lambda v: f"A${v:,.2f}"),
+    ("JPY", lambda v: f"¥{v:,.0f}"),
+)
+
+
+def _positive(value: Any) -> Optional[float]:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if num <= 0:
+        return None
+    return num
+
+
 def _stamp_provenance(
     data: Any,
     lookup_type: str,
@@ -67,6 +101,52 @@ def _stamp_provenance(
         "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     return stamped
+
+
+async def _litview_spot(redis_client: Any) -> Optional[Dict[str, Any]]:
+    from backend.services.litview_client import LitviewClient
+
+    client = LitviewClient(redis_client=redis_client)
+    try:
+        return await client.get_spot_price()
+    finally:
+        await client.close()
+
+
+async def _litview_hashrate_difficulty(redis_client: Any) -> Tuple[Optional[float], Optional[float]]:
+    from backend.services.litview_client import LitviewClient
+
+    client = LitviewClient(redis_client=redis_client)
+    try:
+        hashrate, difficulty = await asyncio.gather(
+            client.get_latest("hash_rate", "day1"),
+            client.get_latest("difficulty", "day1"),
+        )
+        return hashrate, difficulty
+    finally:
+        await client.close()
+
+
+def _fiat_lines(values: Dict[str, Any]) -> str:
+    lines = []
+    for code, fmt in _FIAT_LINES:
+        num = _positive(values.get(code))
+        if num is not None:
+            lines.append(f"- **{code}:** {fmt(num)}")
+    return "\n".join(lines)
+
+
+def _age_label(unix_time: int) -> str:
+    if unix_time <= 0:
+        return ""
+    age_seconds = int(time.time()) - unix_time
+    if age_seconds < 60:
+        return "just now"
+    if age_seconds < 3600:
+        return f"{age_seconds // 60}m ago"
+    if age_seconds < 86400:
+        return f"{age_seconds // 3600}h ago"
+    return f"{age_seconds // 86400}d ago"
 
 
 def _finish_early(
@@ -263,11 +343,12 @@ async def _metric_lookup(
 def make_blockchain_lookup_node(pipeline: Any):
     async def blockchain_lookup(state: RAGState) -> RAGState:
         from backend.services.blockchain_client import (
-            LitecoinSpaceClient,
-            format_litoshis,
-            format_hashrate,
-            format_share,
             BlockchainLookupType,
+            HashrateData,
+            LitecoinSpaceClient,
+            format_hashrate,
+            format_litoshis,
+            format_share,
         )
 
         entity = state.get("matched_faq") or ""
@@ -384,21 +465,60 @@ def make_blockchain_lookup_node(pipeline: Any):
                 state["blockchain_lookup_type"] = BlockchainLookupType.MEMPOOL.value
 
             elif entity == "hashrate":
-                hr = await client.get_hashrate()
-                diff = await client.get_difficulty_adjustment()
+                # Daily series on litview match today's difficulty and are
+                # local. The Space mining-hashrate route describes litview's
+                # stale block index, so it is only the fallback.
+                basis = "3d"
+                source = "Litecoin Space"
+                endpoint = "/api/v1/mining/hashrate/3d"
+                hr = None
+                try:
+                    series_hr, series_diff = await _litview_hashrate_difficulty(redis_client)
+                    if _positive(series_hr) and _positive(series_diff):
+                        hr = HashrateData(
+                            current_hashrate=float(series_hr),
+                            current_difficulty=float(series_diff),
+                        )
+                        basis = "daily"
+                        source = "litview.space"
+                        endpoint = "/api/series/hash_rate/day1/latest"
+                except Exception as exc:
+                    logger.info("litview hashrate series unavailable: %s", exc)
+                if hr is None:
+                    hr = await client.get_hashrate()
+
+                diff = None
+                try:
+                    diff = await asyncio.wait_for(
+                        client.get_difficulty_adjustment(),
+                        timeout=_HASHRATE_ADJUSTMENT_TIMEOUT_S,
+                    )
+                except Exception as exc:
+                    logger.info("difficulty adjustment unavailable: %s", exc)
+                if diff is not None and source == "litview.space":
+                    endpoint += " · adjustment litecoinspace.org/api/v1/difficulty-adjustment"
+
+                basis_label = "daily estimate" if basis == "daily" else "3-day estimate"
                 answer = (
                     "**Litecoin Network Stats**\n\n"
-                    f"- **Hashrate:** {format_hashrate(hr.current_hashrate)}\n"
+                    f"- **Hashrate:** {format_hashrate(hr.current_hashrate)} ({basis_label})\n"
                     f"- **Difficulty:** {hr.current_difficulty:,.2f}\n"
-                    f"- **Next Adjustment:** {diff.progressPercent:.1f}% complete "
-                    f"({diff.remainingBlocks:,} blocks remaining)\n"
-                    f"- **Estimated Change:** {diff.difficultyChange:+.2f}%\n"
                 )
+                if diff is not None:
+                    answer += (
+                        f"- **Next Adjustment:** {diff.progressPercent:.1f}% complete "
+                        f"({diff.remainingBlocks:,} blocks remaining)\n"
+                        f"- **Estimated Change:** {diff.difficultyChange:+.2f}%\n"
+                    )
+                else:
+                    answer += "- **Next adjustment:** not available from Litecoin Space right now\n"
 
-                state["blockchain_data"] = {
-                    "hashrate": hr.model_dump(),
-                    "difficulty_adjustment": diff.model_dump(),
-                }
+                payload: Dict[str, Any] = {"hashrate": {**hr.model_dump(), "basis": basis}}
+                if diff is not None:
+                    payload["difficulty_adjustment"] = diff.model_dump()
+                state["blockchain_data"] = _stamp_provenance(
+                    payload, "hashrate", source=source, endpoint=endpoint
+                )
                 state["blockchain_lookup_type"] = BlockchainLookupType.HASHRATE.value
 
             elif entity == "mining_pools" or entity.startswith("mining_pools:"):
@@ -504,31 +624,56 @@ def make_blockchain_lookup_node(pipeline: Any):
                 state["blockchain_lookup_type"] = BlockchainLookupType.MINING_POOL.value
 
             elif entity == "price":
-                price = await client.get_price()
-                age_label = ""
-                if price.time > 0:
-                    age_seconds = int(time.time()) - price.time
-                    if age_seconds < 60:
-                        age_label = "just now"
-                    elif age_seconds < 3600:
-                        age_label = f"{age_seconds // 60}m ago"
-                    elif age_seconds < 86400:
-                        age_label = f"{age_seconds // 3600}h ago"
-                    else:
-                        age_label = f"{age_seconds // 86400}d ago"
-                header = "**Current Litecoin Price**"
-                if age_label:
-                    header += f" _(as of {age_label})_"
-                answer = (
-                    f"{header}\n\n"
-                    f"- **USD:** ${price.USD:,.2f}\n"
-                    f"- **EUR:** \u20ac{price.EUR:,.2f}\n"
-                    f"- **GBP:** \u00a3{price.GBP:,.2f}\n"
-                    f"- **AUD:** A${price.AUD:,.2f}\n"
-                    f"- **JPY:** \u00a5{price.JPY:,.0f}\n"
-                )
+                # USD from local litview (fresh, ~1ms). Other currencies stay
+                # on Litecoin Space, which publishes a full fiat basket.
+                # litview's /v1/historical-price is oldest-first, so it is not
+                # a drop-in for get_price().
+                spot: Optional[Dict[str, Any]] = None
+                space_price = None
+                try:
+                    spot = await asyncio.wait_for(_litview_spot(redis_client), timeout=4.0)
+                except Exception as exc:
+                    logger.info("litview spot price unavailable: %s", exc)
+                try:
+                    space_price = await asyncio.wait_for(
+                        client.get_spot_prices(), timeout=_SPACE_PRICE_TIMEOUT_S
+                    )
+                except Exception as exc:
+                    logger.info("Litecoin Space price unavailable: %s", exc)
 
-                state["blockchain_data"] = price.model_dump()
+                values: Dict[str, Any] = {}
+                quote_time = 0
+                source = "Litecoin Space"
+                endpoint = "/api/v1/prices"
+                if spot and _positive(spot.get("USD")):
+                    values["USD"] = float(spot["USD"])
+                    quote_time = int(spot.get("time") or 0)
+                    source = "litview.space"
+                    endpoint = "/api/v1/prices"
+                elif space_price is not None and _positive(space_price.USD):
+                    values["USD"] = float(space_price.USD)
+                    quote_time = int(space_price.time or 0)
+                if space_price is not None:
+                    for code in ("EUR", "GBP", "AUD", "JPY"):
+                        num = _positive(getattr(space_price, code, None))
+                        if num is not None:
+                            values[code] = num
+                    if source == "litview.space" and any(code in values for code in ("EUR", "GBP", "AUD", "JPY")):
+                        endpoint = "/api/v1/prices · FX litecoinspace.org/api/v1/prices"
+                    if quote_time <= 0:
+                        quote_time = int(space_price.time or 0)
+                if not values:
+                    raise TimeoutError("no live price from litview or Litecoin Space")
+
+                header = "**Current Litecoin Price**"
+                age = _age_label(quote_time)
+                if age:
+                    header += f" _(as of {age})_"
+                answer = f"{header}\n\n{_fiat_lines(values)}\n"
+                card = {"time": quote_time, **values}
+                state["blockchain_data"] = _stamp_provenance(
+                    card, "price", source=source, endpoint=endpoint
+                )
                 state["blockchain_lookup_type"] = BlockchainLookupType.PRICE.value
 
             elif entity == "block_tip":
@@ -554,7 +699,9 @@ def make_blockchain_lookup_node(pipeline: Any):
                 return state
 
             lookup_type = state.get("blockchain_lookup_type") or ""
-            state["blockchain_data"] = _stamp_provenance(state.get("blockchain_data"), lookup_type)
+            existing = state.get("blockchain_data")
+            if not (isinstance(existing, dict) and existing.get("_provenance")):
+                state["blockchain_data"] = _stamp_provenance(existing, lookup_type)
 
             state["early_answer"] = answer
             state["early_sources"] = []

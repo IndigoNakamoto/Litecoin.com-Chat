@@ -2,6 +2,7 @@
 
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { liveInnerCardClass } from "./LiveCardFrame";
 
 interface FeeEstimatorProps {
   fastestFee: number;
@@ -12,51 +13,41 @@ interface FeeEstimatorProps {
 }
 
 const tiers = [
-  { key: "fastestFee", label: "Next Block", icon: "⚡", description: "~2.5 min" },
-  { key: "halfHourFee", label: "30 Minutes", icon: "🕐", description: "~12 blocks" },
-  { key: "hourFee", label: "1 Hour", icon: "🕑", description: "~24 blocks" },
-  { key: "economyFee", label: "Economy", icon: "💰", description: "Low priority" },
+  { key: "fastestFee", label: "Next block", hint: "~2.5 min" },
+  { key: "halfHourFee", label: "30 minutes", hint: "~12 blocks" },
+  { key: "hourFee", label: "1 hour", hint: "~24 blocks" },
+  { key: "economyFee", label: "Economy", hint: "Low priority" },
 ] as const;
 
 export default function FeeEstimator(props: FeeEstimatorProps) {
-  const maxFee = Math.max(props.fastestFee, 1);
+  const maxFee = Math.max(props.fastestFee, props.halfHourFee, props.hourFee, props.economyFee, 1);
 
   return (
-    <Card className="my-3 border-amber-200/50 bg-amber-50/30 dark:bg-amber-950/20 dark:border-amber-800/30">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium">
-          Recommended Fees
-        </CardTitle>
+    <Card className={liveInnerCardClass}>
+      <CardHeader className="px-4 pt-4 pb-2">
+        <CardTitle className="text-sm font-medium">Recommended fees</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-2">
+      <CardContent className="space-y-3 px-4 pb-4">
         {tiers.map((tier) => {
           const fee = props[tier.key];
-          const width = Math.max((fee / maxFee) * 100, 8);
+          const width = Math.max((fee / maxFee) * 100, fee > 0 ? 8 : 0);
           return (
-            <div key={tier.key} className="flex items-center gap-3">
-              <span className="text-base w-6 text-center">{tier.icon}</span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between text-sm mb-0.5">
-                  <span className="font-medium">{tier.label}</span>
-                  <span className="font-mono text-muted-foreground">
-                    {fee} lit/vB
-                  </span>
-                </div>
-                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
-                  <div
-                    className="bg-amber-500 dark:bg-amber-400 h-1.5 rounded-full transition-all"
-                    style={{ width: `${width}%` }}
-                  />
-                </div>
-                <span className="text-xs text-muted-foreground">
-                  {tier.description}
+            <div key={tier.key}>
+              <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
+                <span className="font-medium text-[#222222]">{tier.label}</span>
+                <span className="font-space-grotesk text-base font-semibold tabular-nums text-[#222222]">
+                  {fee} <span className="text-xs font-medium text-[#6b7280]">lit/vB</span>
                 </span>
               </div>
+              <div className="h-1.5 w-full rounded-full bg-[#e8eef5]">
+                <div className="h-1.5 rounded-full bg-[#0066CC]" style={{ width: `${width}%` }} />
+              </div>
+              <div className="mt-1 text-[11px] text-[#6b7280]">{tier.hint}</div>
             </div>
           );
         })}
-        <div className="text-xs text-muted-foreground pt-1 border-t border-gray-200 dark:border-gray-700">
-          Minimum relay fee: {props.minimumFee} lit/vB
+        <div className="border-t border-[#eef2f6] pt-2 text-xs text-[#6b7280]">
+          Minimum relay fee <span className="font-semibold tabular-nums text-[#222222]">{props.minimumFee} lit/vB</span>
         </div>
       </CardContent>
     </Card>

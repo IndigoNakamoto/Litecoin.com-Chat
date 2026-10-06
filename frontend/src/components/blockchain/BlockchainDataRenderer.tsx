@@ -10,7 +10,8 @@ import NetworkStats from "./NetworkStats";
 import MiningPoolsCard, { type MiningPoolRow } from "./MiningPoolsCard";
 import MiningPoolCard from "./MiningPoolCard";
 import MetricCard, { type MetricCardProps } from "./MetricCard";
-import ProvenanceFooter, { type LiveDataProvenance } from "./ProvenanceFooter";
+import LiveCardFrame from "./LiveCardFrame";
+import { type LiveDataProvenance } from "./ProvenanceFooter";
 
 interface BlockchainDataRendererProps {
   dataType: string;
@@ -135,9 +136,8 @@ export default function BlockchainDataRenderer({
   if (!card) return null;
   const provenance = data._provenance as LiveDataProvenance | undefined;
   return (
-    <div data-testid={`blockchain-card-${dataType}`}>
+    <LiveCardFrame provenance={provenance} testId={`blockchain-card-${dataType}`}>
       {card}
-      <ProvenanceFooter provenance={provenance} />
-    </div>
+    </LiveCardFrame>
   );
 }

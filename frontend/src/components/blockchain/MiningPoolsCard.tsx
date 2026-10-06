@@ -3,6 +3,7 @@
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ExternalLink } from "lucide-react";
+import { liveInnerCardClass } from "./LiveCardFrame";
 
 export interface MiningPoolRow {
   rank?: number;
@@ -38,8 +39,8 @@ export default function MiningPoolsCard({
   const total = typeof blockCount === "number" && blockCount > 0 ? blockCount : rows.reduce((a, p) => a + (p.blockCount || 0), 0);
 
   return (
-    <Card className="my-3 border-orange-200/50 bg-orange-50/30 dark:bg-orange-950/20 dark:border-orange-800/30">
-      <CardHeader className="pb-2">
+    <Card className={liveInnerCardClass}>
+      <CardHeader className="px-4 pt-4 pb-2">
         <CardTitle className="text-sm font-medium flex items-center justify-between">
           <span>Mining Pools{period ? ` (${period.toUpperCase()})` : ""}</span>
           {typeof lastEstimatedHashrate === "number" ? (
@@ -49,7 +50,7 @@ export default function MiningPoolsCard({
           ) : null}
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-1.5 text-sm">
+      <CardContent className="space-y-2 px-4 pb-4 text-sm">
         {rows.map((p, i) => {
           const blocks = p.blockCount ?? 0;
           const pct = total > 0 ? (blocks / total) * 100 : 0;
@@ -64,7 +65,7 @@ export default function MiningPoolsCard({
                       href={p.link}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="ml-1.5 inline-flex items-center text-blue-600 hover:text-blue-800 dark:text-blue-400"
+                      className="ml-1.5 inline-flex items-center text-[#0066CC] hover:text-[#004f9e]"
                       aria-label={`${p.name || p.slug} website`}
                     >
                       <ExternalLink className="w-3 h-3" />
@@ -75,9 +76,9 @@ export default function MiningPoolsCard({
                   {blocks.toLocaleString()} blocks · {pct.toFixed(1)}%
                 </span>
               </div>
-              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1">
+              <div className="h-1 w-full rounded-full bg-[#e8eef5]">
                 <div
-                  className="bg-orange-500 dark:bg-orange-400 h-1 rounded-full transition-all"
+                  className="h-1 rounded-full bg-[#0066CC] transition-all"
                   style={{ width: `${Math.max(Math.min(pct, 100), 1)}%` }}
                 />
               </div>

@@ -68,6 +68,10 @@ services:
       # - Redis Stack: Docker container (redis_stack:6380)
       - OLLAMA_URL=${OLLAMA_URL:-http://ollama:11434}
       - INFINITY_URL=${INFINITY_URL:-http://host.docker.internal:7997}
+      # litview (brk) listens on the host at :7070. Local calls skip the
+      # Cloudflare hairpin. The client falls back to https://litview.space
+      # if that port is down.
+      - LITVIEW_API_URL=${LITVIEW_API_URL:-http://host.docker.internal:7070}
       - REDIS_STACK_URL=${REDIS_STACK_URL:-redis://redis_stack:6380}
       # Feature flags (set to 'true' to enable local RAG)
       - USE_LOCAL_REWRITER=${USE_LOCAL_REWRITER:-false}

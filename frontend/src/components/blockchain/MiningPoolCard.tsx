@@ -2,7 +2,7 @@
 
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ExternalLink } from "lucide-react";
+import { LiveExternalLink, LiveStat, liveInnerCardClass } from "./LiveCardFrame";
 
 interface PoolInfo {
   name?: string;
@@ -43,44 +43,26 @@ export default function MiningPoolCard({
 }: MiningPoolCardProps) {
   const reported = typeof reportedHashrate === "number" ? formatHashrate(reportedHashrate) : reportedHashrate;
   return (
-    <Card className="my-3 border-orange-200/50 bg-orange-50/30 dark:bg-orange-950/20 dark:border-orange-800/30">
-      <CardHeader className="pb-2">
+    <Card className={liveInnerCardClass}>
+      <CardHeader className="px-4 pt-4 pb-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <CardTitle className="text-sm font-medium">{pool.name || pool.slug || "Mining pool"}</CardTitle>
-          {pool.link ? (
-            <a
-              href={pool.link}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 flex items-center gap-1"
-            >
-              Pool website
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          ) : null}
+          <CardTitle className="font-space-grotesk text-lg font-semibold">{pool.name || pool.slug || "Mining pool"}</CardTitle>
+          {pool.link ? <LiveExternalLink href={pool.link}>Pool website</LiveExternalLink> : null}
         </div>
       </CardHeader>
-      <CardContent className="space-y-2 text-sm">
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+      <CardContent className="space-y-3 px-4 pb-4 text-sm">
+        <div className="grid grid-cols-2 gap-3">
           {typeof estimatedHashrate === "number" ? (
-            <div>
-              <span className="text-muted-foreground">Est. hashrate:</span>{" "}
-              <span className="font-medium">{formatHashrate(estimatedHashrate)}</span>
-            </div>
+            <LiveStat label="Estimated hashrate" value={formatHashrate(estimatedHashrate)} />
           ) : null}
-          {reported ? (
-            <div>
-              <span className="text-muted-foreground">Reported:</span>{" "}
-              <span className="font-medium">{reported}</span>
-            </div>
-          ) : null}
+          {reported ? <LiveStat label="Reported" value={reported} /> : null}
         </div>
-        <div className="grid grid-cols-3 gap-2 text-xs">
+        <div className="grid grid-cols-3 gap-2">
           {WINDOWS.map((w) => (
-            <div key={w} className="rounded-md border border-orange-200/60 dark:border-orange-800/40 p-2">
-              <div className="text-muted-foreground uppercase">{w}</div>
-              <div className="font-semibold">{(blockCount?.[w] ?? 0).toLocaleString()} blocks</div>
-              <div className="text-muted-foreground">{pct(blockShare?.[w])} share</div>
+            <div key={w} className="rounded-lg border border-[#e3e8ef] bg-[#f7f9fb] p-2">
+              <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[#6b7280]">{w}</div>
+              <div className="mt-0.5 text-sm font-semibold tabular-nums">{(blockCount?.[w] ?? 0).toLocaleString()}</div>
+              <div className="text-[11px] text-[#6b7280]">{pct(blockShare?.[w])} share</div>
             </div>
           ))}
         </div>

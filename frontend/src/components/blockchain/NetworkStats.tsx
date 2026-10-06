@@ -2,9 +2,10 @@
 
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { LiveStat, liveInnerCardClass } from "./LiveCardFrame";
 
 interface NetworkStatsProps {
-  hashrate?: { current_hashrate: number; current_difficulty: number };
+  hashrate?: { current_hashrate: number; current_difficulty: number; basis?: string };
   difficulty_adjustment?: {
     progressPercent: number;
     difficultyChange: number;
@@ -12,12 +13,12 @@ interface NetworkStatsProps {
     estimatedRetargetDate: number;
   };
   price?: {
-    USD: number;
-    EUR: number;
-    GBP: number;
-    AUD: number;
-    JPY: number;
-    time: number;
+    USD?: number;
+    EUR?: number;
+    GBP?: number;
+    AUD?: number;
+    JPY?: number;
+    time?: number;
   };
 }
 
@@ -37,92 +38,91 @@ function formatHashrate(hs: number): string {
   return `${hs.toFixed(0)} H/s`;
 }
 
+function money(value: number, digits: number): string {
+  return value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+const OTHER_FIAT = [
+  { code: "EUR", prefix: "€", digits: 2 },
+  { code: "GBP", prefix: "£", digits: 2 },
+  { code: "AUD", prefix: "A$", digits: 2 },
+  { code: "JPY", prefix: "¥", digits: 0 },
+] as const;
+
 export default function NetworkStats({
   hashrate,
   difficulty_adjustment,
   price,
 }: NetworkStatsProps) {
+  const others = price
+    ? OTHER_FIAT.flatMap((row) => {
+        const value = price[row.code];
+        return typeof value === "number" && value > 0 ? [{ ...row, value }] : [];
+      })
+    : [];
+  const hashrateHint = hashrate?.basis === "daily" ? "Daily average" : hashrate?.basis === "3d" ? "3-day estimate" : undefined;
+
   return (
-    <Card className="my-3 border-indigo-200/50 bg-indigo-50/30 dark:bg-indigo-950/20 dark:border-indigo-800/30">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium flex items-center justify-between">
-          <span>{price ? "Litecoin Price" : "Network Stats"}</span>
+    <Card className={liveInnerCardClass}>
+      <CardHeader className="px-4 pt-4 pb-2">
+        <CardTitle className="text-sm font-medium flex items-center justify-between gap-2">
+          <span>{price ? "Litecoin price" : "Network"}</span>
           {price?.time ? (
-            <span className="text-xs font-normal text-muted-foreground">
-              {timeAgo(price.time)}
-            </span>
+            <span className="text-xs font-normal text-[#6b7280]">{timeAgo(price.time)}</span>
           ) : null}
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        {price && (
-          <div className="grid grid-cols-3 gap-x-4 gap-y-1.5">
-            <div>
-              <span className="text-muted-foreground">USD</span>
-              <div className="font-semibold">${price.USD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-            </div>
-            <div>
-              <span className="text-muted-foreground">EUR</span>
-              <div className="font-semibold">€{price.EUR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-            </div>
-            <div>
-              <span className="text-muted-foreground">GBP</span>
-              <div className="font-semibold">£{price.GBP.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-            </div>
-            <div>
-              <span className="text-muted-foreground">AUD</span>
-              <div className="font-medium">A${price.AUD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-            </div>
-            <div>
-              <span className="text-muted-foreground">JPY</span>
-              <div className="font-medium">¥{price.JPY.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
-            </div>
+      <CardContent className="space-y-4 px-4 pb-4 text-sm">
+        {price && typeof price.USD === "number" && price.USD > 0 ? (
+          <div className="space-y-3">
+            <LiveStat label="USD" hero value={`$${money(price.USD, 2)}`} />
+            {others.length > 0 ? (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {others.map((row) => (
+                  <LiveStat
+                    key={row.code}
+                    label={row.code}
+                    value={`${row.prefix}${money(row.value, row.digits)}`}
+                  />
+                ))}
+              </div>
+            ) : null}
           </div>
-        )}
+        ) : null}
 
-        {hashrate && (
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-            <div>
-              <span className="text-muted-foreground">Hashrate:</span>{" "}
-              <span className="font-medium">
-                {formatHashrate(hashrate.current_hashrate)}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Difficulty:</span>{" "}
-              <span className="font-medium">
-                {hashrate.current_difficulty.toLocaleString(undefined, {
-                  maximumFractionDigits: 2,
-                })}
-              </span>
-            </div>
+        {hashrate ? (
+          <div className="grid grid-cols-2 gap-4">
+            <LiveStat label="Hashrate" hero value={formatHashrate(hashrate.current_hashrate)} hint={hashrateHint} />
+            <LiveStat
+              label="Difficulty"
+              hero
+              value={hashrate.current_difficulty.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            />
           </div>
-        )}
+        ) : null}
 
-        {difficulty_adjustment && (
+        {difficulty_adjustment ? (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">
-                Next adjustment ({difficulty_adjustment.remainingBlocks.toLocaleString()} blocks)
+              <span className="text-[#6b7280]">
+                Next adjustment · {difficulty_adjustment.remainingBlocks.toLocaleString()} blocks
               </span>
-              <span className="font-medium">
+              <span className="font-semibold tabular-nums text-[#222222]">
                 {difficulty_adjustment.difficultyChange >= 0 ? "+" : ""}
                 {difficulty_adjustment.difficultyChange.toFixed(2)}%
               </span>
             </div>
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+            <div className="h-1.5 w-full rounded-full bg-[#e8eef5]">
               <div
-                className="bg-indigo-500 dark:bg-indigo-400 h-1.5 rounded-full transition-all"
-                style={{
-                  width: `${Math.min(difficulty_adjustment.progressPercent, 100)}%`,
-                }}
+                className="h-1.5 rounded-full bg-[#0066CC] transition-all"
+                style={{ width: `${Math.min(difficulty_adjustment.progressPercent, 100)}%` }}
               />
             </div>
-            <div className="text-xs text-muted-foreground text-right">
-              {difficulty_adjustment.progressPercent.toFixed(1)}% complete
+            <div className="text-right text-[11px] text-[#6b7280]">
+              {difficulty_adjustment.progressPercent.toFixed(1)}% of this epoch
             </div>
           </div>
-        )}
+        ) : null}
       </CardContent>
     </Card>
   );
