@@ -13,10 +13,16 @@ This milestone focuses on conducting comprehensive testing, refining the user in
 *   Set up basic monitoring and logging for all production services.
 
 ## Status
-Planned
+In Progress
+
+The application is deployed and public at chat.lite.space/chat (Docker Compose stack via `scripts/run-prod.sh -d --force --local-rag`; backend, worker, Payload CMS, both frontends, Redis, Redis Stack, Mongo, Prometheus, Grafana, Alertmanager, Cloudflare tunnels). Production environment variables are configured and all services report healthy. Monitoring, structured logging and Discord alerting are operational. The nightly golden eval (`run_golden_eval`, 75 questions, caches bypassed) is the regression gate; uncached baseline on 2026-10-06 is 62/75.
+
+Remaining before this milestone closes:
+*   Frontend end-to-end tests (Playwright) for the chat stream, source chips, refusals and the composer notice. Both frontends currently only type-check (`tsc --noEmit`).
+*   Close the basic-question retrieval misses recorded in `MISSION_CONTROL.md` (what-is-litecoin, Foundation, LTC vs BTC, confirmations, Lightning) so they answer from the KB rather than the web tier.
 
 ## Dependencies
-*   Planned: Milestone 6 (MVP Content Population & Validation)
+*   In Progress: Milestone 6 (MVP Content Population & Validation)
 
 ## Acceptance Criteria
 *   A final round of end-to-end testing is completed and passed.

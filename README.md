@@ -8,9 +8,11 @@ This project's value is not in competing with general-purpose AI models like Cha
 
 **Target Users/Audience:** Litecoin users (novice and experienced), cryptocurrency enthusiasts, developers building on Litecoin, and potential adopters seeking reliable information.
 
-## **Project Status: ✅ Phase 1 Complete**
+## **Project Status: Live at chat.lite.space/chat (October 2026)**
 
-The project has successfully completed the implementation of the core RAG pipeline and backend services. The system utilizes an **advanced Agentic RAG architecture** featuring canonical intent rewriting, hybrid search (Vector + BM25), and sparse re-ranking. The **Payload CMS integration is fully operational** with complete content lifecycle management (draft → publish → unpublish → delete) and real-time synchronization. **Comprehensive monitoring infrastructure** (Prometheus, Grafana) and **question logging** have been implemented to track system performance and user queries. The system is production-ready with robust abuse prevention, cost controls, and security hardening. The Litecoin Foundation announced the project on November 7, 2025, and crowdfunding is underway for final UI polish and integration into litecoin.com.
+The hub is public at [chat.lite.space/chat](https://chat.lite.space/chat), served through the litecoin.com chat tunnel. The knowledge base holds **75 published articles (2,071 chunks)** across nine landing topics (Basics, Privacy & MWEB, Fees & Everyday Use, Mining, Live Network Data, Ecosystem & Foundation, LitVM, Build on Litecoin, Ordinals), with 81 screened suggested questions. Every answer follows a fixed source order — curated KB → live Litecoin Space / litview.space data → flagged web search → abstain — and shows structured source chips the model never writes. A regex safety router refuses buy/sell/price, seed-phrase, legal/tax, impersonation and harm requests and hands scam, bug, press and partnership questions to the Foundation's channels. A standing notice under the composer states that answers are generated from published sources and are not statements of the Litecoin Foundation.
+
+A 75-question golden set runs nightly through the real pipeline with every cache bypassed and scores behavior, citation and chip relevance; the current uncached baseline is **62/75 (82.7%)**, with the misses tracked in `MISSION_CONTROL.md`. Remaining work is editorial coverage of the basics the retriever still answers from the web, frontend end-to-end tests, and the rest of the developer-documentation source registry. The Litecoin Foundation announced the project on November 7, 2025.
 
 ## **Key Features & User Stories**
 
@@ -35,7 +37,9 @@ The project has successfully completed the implementation of the core RAG pipeli
 | **Follow-Up Questions** | ✅ **IMPLEMENTED** - AI-generated contextual follow-up questions appear after each response, enabling guided exploration of Litecoin topics. |
 | **Transaction & Block Explorer** | ✅ **IMPLEMENTED** - Live lookups for Litecoin transactions, addresses, blocks, fees, mempool status, and network stats via the Litecoin Space API. Includes dedicated frontend data cards and graceful error handling for invalid lookups. |
 | **Market Data & Insights** | ✅ **IMPLEMENTED** - Real-time Litecoin price (USD, EUR, GBP, AUD, JPY) and network statistics (hashrate, difficulty, difficulty adjustment progress) from the Litecoin Space API with freshness timestamps. |
-| **Developer Documentation** | 📝 **PLANNED** - Provides quick access to snippets from Litecoin developer documentation and technical resources. |
+| **Developer Documentation** | 🚧 **IN PROGRESS** - Weekly source registry (`backend/data_ingestion/doc_sources.yaml`) imports Litecoin Core docs and release notes, MWEB LIPs, the litecoin.com Learning Center and `/projects` pages, the Litecoin Dev Kit repos, Ordinals Lite and Litecoin Space READMEs and the LitVM blog as CMS drafts; editors publish. "Build on Litecoin" and "Ordinals & Digital Artifacts" landing topics are live. Remaining: the rest of the registry and code-snippet retrieval tuning. |
+| **Answer Safety & Voice** | ✅ **IMPLEMENTED** - Regex safety router (`backend/services/safety_router.py`) refuses financial advice (including paraphrases such as "good investment", "worth buying", "will it go up"), seed-phrase handling, legal/tax conclusions, impersonation of Charlie Lee or the Foundation, prompt injection and harm; escalates scam, bug, press and partnership requests to env-configurable links; an operator incident pin can override every answer. Standing not-the-Foundation notice under the composer. |
+| **Golden Evaluation** | ✅ **IMPLEMENTED** - 75-question golden set (`backend/tests/eval/golden_questions.yaml`) runs nightly with every cache bypassed; scores expected behavior (answer / lookup / refuse / escalate / abstain), citation inside the visible chips, and chip relevance (top chip cross-encoder score ≥ `GOLDEN_CHIP_CE_FLOOR`); diffs against the previous run and alerts to Discord. |
 | **Curated Knowledge Base** | ✅ **IMPLEMENTED** - A continuously updated library of well-researched articles and data serving as the primary source for the chatbot's answers. Managed through Payload CMS. |
 
 ## **Project Roadmap**
@@ -68,13 +72,13 @@ The project has successfully completed the implementation of the core RAG pipeli
 
     * **Sparse Re-ranking:** Uses BGE-M3/Infinity to re-rank documents for maximum relevance.
 
-* **Trust & Transparency (Source Citations):** Implement in-line citations in AI responses, linking directly to source documents.
+* **Trust & Transparency (Source Citations):** ✅ **COMPLETED** - Structured source chips (title, link, CMS updated date, stale flag, tier) built from retrieval metadata and sent alongside the answer; web-search results are shown as a separate, explicitly unverified group; abstentions are labelled. The model never writes citations.
 
 * **Contextual Discovery (AI-Generated Follow-up Questions):** ✅ **COMPLETED** - Generate relevant, clickable follow-up questions after each response.
 
 * **Search Grounding (Knowledge Gap Filling):** ✅ **COMPLETED** - Automatic web search supplementation when the curated knowledge base lacks coverage, with a flywheel that surfaces gaps for editorial review.
 
-* **User Feedback Loop:** Introduce a mechanism for users to provide direct feedback on AI answer quality.
+* **User Feedback Loop:** ✅ **COMPLETED** - Thumbs up/down with reason chips on every answer, recorded against the cited source articles and reviewed in the admin dashboard's `/feedback` by-source view.
 
 ### **Phase 3: Live Data & Developer Integrations (Post-MVP)**
 
@@ -82,7 +86,7 @@ The project has successfully completed the implementation of the core RAG pipeli
 
 * **Transaction & Block Explorer:** ✅ **COMPLETED** - Live lookups for transactions, addresses, blocks, fees, mempool, and network stats via the Litecoin Space API with dedicated frontend data cards.
 * **Market Data & Insights:** ✅ **COMPLETED** - Real-time price data (USD, EUR, GBP, AUD, JPY) and network statistics (hashrate, difficulty) from the Litecoin Space API.
-* **Developer Documentation & Resources:** Ingest and provide quick access to Litecoin developer documentation.
+* **Developer Documentation & Resources:** 🚧 **IN PROGRESS** - Core docs, MWEB LIPs, Litecoin Dev Kit, Ordinals Lite and Litecoin Space references are imported weekly as drafts and published by editors; "Build on Litecoin" is a landing topic.
 
 ## **Architectural Overview**
 
@@ -108,7 +112,7 @@ The architecture is a production-grade platform organized around three primary w
 
 Redis serves as the central nervous system, acting not just as a cache, but as the authoritative state store for dynamic settings and rate limit counters.
 
-The project consists of 9 services: mongodb, backend, payload_cms, frontend, prometheus, grafana, admin_frontend, cloudflared, and redis. All configured with health checks, restart policies, and dependencies.
+The production stack runs 13 services: mongodb, backend, worker (ARQ background jobs and nightly maintenance cron), payload_cms, frontend, admin_frontend, redis, redis_stack (semantic answer cache), prometheus, grafana, alertmanager (Discord alerts), cloudflared (main tunnel) and chat_tunnel (litecoin.com chat guest tunnel). Local RAG services (Infinity embeddings, Ollama rewriter) run natively or via `--local-rag`. All configured with health checks, restart policies, and dependencies.
 
 ```mermaid
 flowchart TD
@@ -209,13 +213,13 @@ flowchart TD
 | ✅ | **[M4: Litecoin Basics & FAQ](./docs/milestones/milestone_4_litecoin_basics_faq.md)** | CRUD API for data sources and full ingestion of initial FAQ knowledge base. |
 | ✅ | **[M5: Payload CMS Setup & Integration](./docs/milestones/milestone_5_payload_cms_setup_integration.md)** | Configure self-hosted Payload CMS and integrate its API and webhooks with the backend. |
 | ✅ | **[M6: MVP Content Population](./docs/milestones/milestone_6_mvp_content_population_validation.md)** | Populate Payload with the complete "Litecoin Basics & FAQ" knowledge base. |
-| ✅ | **[M7: MVP Testing & Deployment](./docs/milestones/milestone_7_mvp_testing_refinement_deployment.md)** | Conduct comprehensive testing, refine UI, and execute initial production deployment. |
-| 📝 | **[M8: Implement Trust & Feedback Features](./docs/milestones/milestone_8_implement_trust_feedback_features.md)** | Implement features from Phase 2 (UX/Accuracy). |
+| 🚧 | **[M7: MVP Testing & Deployment](./docs/milestones/milestone_7_mvp_testing_refinement_deployment.md)** | **IN PROGRESS** - Deployed and public; nightly golden eval is the regression gate. Remaining: frontend end-to-end tests. |
+| ✅ | **[M8: Implement Trust & Feedback Features](./docs/milestones/milestone_8_implement_trust_feedback_features.md)** | **COMPLETED** - Structured source chips, unverified web chips, abstention, thumbs feedback by source, safety router, incident pin. |
 | ✅ | **[M9: Implement Contextual Discovery](./docs/milestones/milestone_9_implement_contextual_discovery.md)** | **COMPLETED** - Follow-up questions and search grounding implemented. |
 | ✅ | **[M10: Upgrade Retrieval Engine](./docs/milestones/milestone_10_upgrade_retrieval_engine.md)** | **COMPLETED** - Hybrid search and re-ranking deployed. |
 | ✅ | **[M11: Transaction & Block Explorer](./docs/milestones/milestone_11_transaction_block_explorer.md)** | **COMPLETED** - Litecoin Space API integration with live data cards. |
 | ✅ | **[M12: Market Data & Insights](./docs/milestones/milestone_12_market_data_insights.md)** | **COMPLETED** - Price and network stats from Litecoin Space API. |
-| 📝 | **[M13: Developer Documentation](./docs/milestones/milestone_13_developer_documentation.md)** | Implement features from Phase 3 (Live Data). |
+| 🚧 | **[M13: Developer Documentation](./docs/milestones/milestone_13_developer_documentation.md)** | **IN PROGRESS** - Weekly source registry → CMS drafts; 75 articles live incl. Core docs, Dev Kit, Ordinals Lite, Litecoin Space, LitVM. |
 
 ## **Technology Stack**
 
