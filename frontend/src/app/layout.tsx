@@ -6,7 +6,16 @@ import { Geist, Geist_Mono, Space_Grotesk, Inter } from 'next/font/google';
 import type { ReactNode } from 'react';
 import './globals.css';
 
-const metadataBase = new URL('https://chat.lite.space');
+const metadataBase = new URL('https://litecoin.com');
+const chatUrl = 'https://litecoin.com/chat';
+const description =
+  'Ask anything about Litecoin and get sourced answers on how it works, wallets, payments, and the network.';
+const ogImage = {
+  url: 'https://litecoin.com/assets/wf-proxy/cdn.prod.website-files.com/621ec1b30feeb6cd8bb9ec25/6760be5bfc596116ef714f74_LTC-site-new2.jpg',
+  width: 1200,
+  height: 628,
+  alt: 'Litecoin',
+};
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -35,33 +44,26 @@ const inter = Inter({
 export const metadata: Metadata = {
   metadataBase,
   title: 'Litecoin - Chat',
-  description: 'Chat with the Litecoin Knowledge Hub—ask questions and get sourced answers about Litecoin.',
+  description,
   icons: {
     icon: '/favicon.png',
   },
   alternates: {
-    canonical: '/',
+    canonical: chatUrl,
   },
   openGraph: {
     title: 'Litecoin - Chat',
-    description: 'Chat with the Litecoin Knowledge Hub—ask questions and get sourced answers about Litecoin.',
-    url: '/',
+    description,
+    url: chatUrl,
     siteName: 'Litecoin Chat',
     type: 'website',
-    images: [
-      {
-        url: '/static/og_image.png',
-        width: 1200,
-        height: 628,
-        alt: 'Litecoin Chat',
-      },
-    ],
+    images: [ogImage],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Litecoin - Chat',
-    description: 'Chat with the Litecoin Knowledge Hub—ask questions and get sourced answers about Litecoin.',
-    images: ['/static/og_image.png'],
+    description,
+    images: [ogImage.url],
   },
 };
 
