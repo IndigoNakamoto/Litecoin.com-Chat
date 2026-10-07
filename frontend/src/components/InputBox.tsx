@@ -121,7 +121,7 @@ const InputBox: React.FC<InputBoxProps> = ({
         )}
         <div 
           ref={containerRef}
-          className={`relative flex items-end gap-3 bg-white/85 rounded-2xl border text-foreground shadow-lg shadow-black/20 transition-all ${
+          className={`relative flex items-end gap-3 bg-card rounded-2xl border text-foreground shadow-lg shadow-black/40 transition-all ${
             showWarning || isOverLimit
               ? 'border-red-500 focus-within:border-red-500 focus-within:shadow-red-500/20'
               : 'border-border focus-within:border-primary/60 focus-within:shadow-xl focus-within:shadow-primary/10'
@@ -160,7 +160,7 @@ const InputBox: React.FC<InputBoxProps> = ({
               <button
                 type="button"
                 onClick={onStopGeneration}
-                className="h-10 w-10 rounded-xl bg-[#222222] border border-black/20 text-white shadow-lg hover:bg-black transition-all duration-300 shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 flex items-center justify-center"
+                className="h-10 w-10 rounded-xl bg-white/10 border border-white/20 text-foreground shadow-lg hover:bg-white/20 transition-all duration-300 shrink-0 hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 flex items-center justify-center"
                 aria-label="Stop generating"
                 data-testid="stop-generation"
               >
@@ -179,13 +179,13 @@ const InputBox: React.FC<InputBoxProps> = ({
           </div>
         </div>
         {showWarning && (
-          <div className="mt-2 mx-4 px-3 py-2 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg flex items-start gap-2 animate-fade-in">
-            <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+          <div className="mt-2 mx-4 px-3 py-2 bg-red-400/10 border border-red-400/40 rounded-lg flex items-start gap-2 animate-fade-in">
+            <AlertCircle className="h-4 w-4 text-red-300 mt-0.5 shrink-0" />
             <div className="flex-1">
-              <p className="text-sm font-medium text-red-700 dark:text-red-400">
+              <p className="text-sm font-medium text-red-200">
                 Message is too long
               </p>
-              <p className="text-xs text-red-600 dark:text-red-500 mt-0.5">
+              <p className="text-xs text-red-300 mt-0.5">
                 Maximum length is {MAX_QUERY_LENGTH} characters. Your message is {input.length} characters.
               </p>
             </div>

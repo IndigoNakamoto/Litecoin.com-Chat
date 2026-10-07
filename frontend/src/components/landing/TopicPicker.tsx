@@ -22,9 +22,9 @@ const AUDIENCE_LABEL: Record<string, string> = {
 };
 
 const AUDIENCE_CLASS: Record<string, string> = {
-  beginner: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  intermediate: "bg-sky-50 text-sky-700 border-sky-200",
-  advanced: "bg-violet-50 text-violet-700 border-violet-200",
+  beginner: "bg-emerald-400/10 text-emerald-200 border-emerald-400/40",
+  intermediate: "bg-sky-400/10 text-sky-200 border-sky-400/40",
+  advanced: "bg-violet-400/10 text-violet-200 border-violet-400/40",
 };
 
 const containerVariants = {

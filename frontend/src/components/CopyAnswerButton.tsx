@@ -50,8 +50,8 @@ export default function CopyAnswerButton({ text }: CopyAnswerButtonProps) {
       aria-label={copied ? "Copied" : "Copy answer"}
       className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs transition-colors ${
         copied
-          ? "border-green-400 text-green-700"
-          : "border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+          ? "border-green-400 text-green-300"
+          : "border-white/20 text-muted-foreground hover:bg-white/10 hover:text-foreground"
       }`}
       data-testid="copy-answer"
     >

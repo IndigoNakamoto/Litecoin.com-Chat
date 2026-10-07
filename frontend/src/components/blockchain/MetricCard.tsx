@@ -65,12 +65,12 @@ function ChangeChip({ window, pct, indexWord }: { window: string; pct: number | 
   const Icon = pct === null ? Minus : pct > 0 ? TrendingUp : pct < 0 ? TrendingDown : Minus;
   const tone =
     pct === null
-      ? "border-gray-200 text-gray-500 bg-gray-50"
+      ? "border-white/20 text-muted-foreground bg-white/5"
       : pct > 0
-      ? "border-emerald-200 text-emerald-700 bg-emerald-50"
+      ? "border-emerald-400/40 text-emerald-200 bg-emerald-400/10"
       : pct < 0
-      ? "border-red-200 text-red-700 bg-red-50"
-      : "border-gray-200 text-gray-600 bg-gray-50";
+      ? "border-red-400/40 text-red-200 bg-red-400/10"
+      : "border-white/20 text-foreground/80 bg-white/5";
   return (
     <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${tone}`} data-testid={`metric-change-${window}`}>
       <Icon className="h-3 w-3" aria-hidden />
@@ -133,7 +133,7 @@ export default function MetricCard(props: MetricCardProps) {
             )}
           </div>
         ) : (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" data-testid="metric-not-computed">
+          <div className="rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs text-amber-200" data-testid="metric-not-computed">
             <div className="font-medium">Not computed yet on litview.space</div>
             <div className="mt-1">
               {tip_height ? <>Chain indexed to block {tip_height.toLocaleString()}; </> : null}

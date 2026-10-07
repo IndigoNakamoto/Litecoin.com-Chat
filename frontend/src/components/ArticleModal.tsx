@@ -83,12 +83,12 @@ export default function ArticleModal({ articleId, title, onClose }: ArticleModal
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const prevOverflowY = document.body.style.overflowY;
+    document.body.style.overflowY = "hidden";
     panelRef.current?.focus();
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
+      document.body.style.overflowY = prevOverflowY;
     };
   }, [articleId, onClose]);
 
@@ -119,17 +119,17 @@ export default function ArticleModal({ articleId, title, onClose }: ArticleModal
         role="dialog"
         aria-modal="true"
         aria-labelledby="article-modal-title"
-        className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl outline-none sm:rounded-2xl"
+        className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl bg-popover text-popover-foreground shadow-2xl outline-none sm:rounded-2xl"
       >
-        <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+        <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
           <div className="min-w-0">
-            <div className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {article?.source_tier === "pinned" ? "Reference document" : "Litecoin Knowledge Hub"}
             </div>
-            <h2 id="article-modal-title" className="font-space-grotesk mt-0.5 text-xl font-semibold leading-tight text-[#222222]">
+            <h2 id="article-modal-title" className="font-space-grotesk mt-0.5 text-xl font-semibold leading-tight text-foreground">
               {article?.title || title || "Article"}
             </h2>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
               {updated ? (
                 <span className="inline-flex items-center gap-1">
                   <Clock className="h-3.5 w-3.5" aria-hidden />
@@ -142,7 +142,7 @@ export default function ArticleModal({ articleId, title, onClose }: ArticleModal
                   href={article.source_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800"
+                  className="inline-flex items-center gap-1 text-primary hover:text-primary/80"
                 >
                   Original source{sourceHost ? ` (${sourceHost})` : ""}
                   <ExternalLink className="h-3 w-3" aria-hidden />
@@ -154,16 +154,16 @@ export default function ArticleModal({ articleId, title, onClose }: ArticleModal
             type="button"
             onClick={onClose}
             aria-label="Close article"
-            className="rounded-full p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+            className="rounded-full p-1.5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
           >
             <X className="h-5 w-5" aria-hidden />
           </button>
         </div>
 
         <div className="overflow-y-auto px-5 py-4 sm:px-7">
-          {loading && <div className="py-10 text-center text-sm text-gray-500">Loading article…</div>}
+          {loading && <div className="py-10 text-center text-sm text-muted-foreground">Loading article…</div>}
           {error && (
-            <div className="my-6 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <div className="my-6 flex items-start gap-2 rounded-md border border-amber-400/40 bg-amber-400/10 p-4 text-sm text-amber-200">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
               <div>
                 <div className="font-medium">Article not available</div>
@@ -174,7 +174,7 @@ export default function ArticleModal({ articleId, title, onClose }: ArticleModal
           {article && <ArticleMarkdown markdown={stripLeadingTitle(article.markdown, article.title)} />}
         </div>
 
-        <div className="border-t border-gray-200 px-5 py-3 text-xs text-gray-500">
+        <div className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
           From the sourced knowledge base behind Litecoin Chat. Spotted something out of date? Use the thumbs-down on the answer that cited it.
         </div>
       </div>

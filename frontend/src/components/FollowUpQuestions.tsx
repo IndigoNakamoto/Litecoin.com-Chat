@@ -17,16 +17,16 @@ const FollowUpQuestions: React.FC<FollowUpQuestionsProps> = ({
   }
 
   return (
-    <div className="mt-6 mb-2">
-      <p className="text-sm font-medium text-gray-700 mb-3">Ask next</p>
-      <div className="flex flex-wrap gap-2">
+    <div className="mt-6 mb-2 min-w-0">
+      <p className="text-sm font-medium text-foreground mb-3">Ask next</p>
+      <div className="flex min-w-0 flex-wrap gap-2">
         {questions.map((question) => (
           <Button
             key={question}
             type="button"
             variant="outline"
             size="sm"
-            className="rounded-full text-left h-auto whitespace-normal py-2"
+            className="h-auto max-w-full min-w-0 shrink justify-start whitespace-normal break-words rounded-full py-2 text-left leading-snug"
             onClick={() => onQuestionClick(question)}
           >
             {question}

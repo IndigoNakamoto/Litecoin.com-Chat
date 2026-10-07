@@ -59,10 +59,10 @@ export default function MiningPoolCard({
         </div>
         <div className="grid grid-cols-3 gap-2">
           {WINDOWS.map((w) => (
-            <div key={w} className="rounded-lg border border-[#e3e8ef] bg-[#f7f9fb] p-2">
-              <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[#6b7280]">{w}</div>
+            <div key={w} className="rounded-lg border border-border bg-white/5 p-2">
+              <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">{w}</div>
               <div className="mt-0.5 text-sm font-semibold tabular-nums">{(blockCount?.[w] ?? 0).toLocaleString()}</div>
-              <div className="text-[11px] text-[#6b7280]">{pct(blockShare?.[w])} share</div>
+              <div className="text-[11px] text-muted-foreground">{pct(blockShare?.[w])} share</div>
             </div>
           ))}
         </div>

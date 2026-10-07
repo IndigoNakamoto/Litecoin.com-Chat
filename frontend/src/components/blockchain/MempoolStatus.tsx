@@ -11,9 +11,9 @@ interface MempoolStatusProps {
 }
 
 function congestion(vsizeMB: number): { label: string; className: string } {
-  if (vsizeMB < 1) return { label: "Low", className: "bg-emerald-50 text-emerald-800" };
-  if (vsizeMB < 5) return { label: "Moderate", className: "bg-amber-50 text-amber-800" };
-  return { label: "High", className: "bg-red-50 text-red-800" };
+  if (vsizeMB < 1) return { label: "Low", className: "bg-emerald-400/10 text-emerald-200 border border-emerald-400/40" };
+  if (vsizeMB < 5) return { label: "Moderate", className: "bg-amber-400/10 text-amber-200 border border-amber-400/40" };
+  return { label: "High", className: "bg-red-400/10 text-red-200 border border-red-400/40" };
 }
 
 export default function MempoolStatus({ count, vsize, total_fee }: MempoolStatusProps) {

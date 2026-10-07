@@ -35,7 +35,7 @@ export default function ProvenanceFooter({ provenance }: { provenance?: LiveData
   const source = provenance.source || "Litecoin Space";
   return (
     <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[#eef2f6] bg-[#f7f9fb] px-4 py-2 text-[11px] text-[#6b7280]"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border bg-white/5 px-4 py-2 text-[11px] text-muted-foreground"
       data-testid="live-data-provenance"
     >
       {fetched ? (

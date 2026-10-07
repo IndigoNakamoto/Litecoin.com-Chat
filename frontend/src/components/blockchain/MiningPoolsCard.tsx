@@ -76,7 +76,7 @@ export default function MiningPoolsCard({
                   {blocks.toLocaleString()} blocks · {pct.toFixed(1)}%
                 </span>
               </div>
-              <div className="h-1 w-full rounded-full bg-[#e8eef5]">
+              <div className="h-1 w-full rounded-full bg-white/10">
                 <div
                   className="h-1 rounded-full bg-[#0066CC] transition-all"
                   style={{ width: `${Math.max(Math.min(pct, 100), 1)}%` }}

@@ -96,10 +96,10 @@ export default function AnswerFeedback({ requestId, sourcePayloadIds }: AnswerFe
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500" data-testid="answer-feedback">
+    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="answer-feedback">
       {recorded ? (
         <span className="inline-flex items-center gap-1.5" data-testid="feedback-thanks">
-          <Check className="h-3.5 w-3.5 text-green-600" aria-hidden />
+          <Check className="h-3.5 w-3.5 text-green-300" aria-hidden />
           {verdict === "up" ? "Thanks — glad it helped." : "Thanks — your feedback was recorded."}
         </span>
       ) : (
@@ -111,8 +111,8 @@ export default function AnswerFeedback({ requestId, sourcePayloadIds }: AnswerFe
             aria-pressed={verdict === "up"}
             onClick={() => void onThumb("up")}
             disabled={busy}
-            className={`rounded-full border p-1.5 transition-colors hover:bg-green-50 disabled:opacity-60 ${
-              verdict === "up" ? "border-green-400 text-green-700" : "border-gray-200 text-gray-500"
+            className={`rounded-full border p-1.5 transition-colors hover:bg-green-400/10 disabled:opacity-60 ${
+              verdict === "up" ? "border-green-400 text-green-300" : "border-white/20 text-muted-foreground"
             }`}
           >
             <ThumbsUp className="h-3.5 w-3.5" aria-hidden />
@@ -123,8 +123,8 @@ export default function AnswerFeedback({ requestId, sourcePayloadIds }: AnswerFe
             aria-pressed={verdict === "down"}
             onClick={() => void onThumb("down")}
             disabled={busy}
-            className={`rounded-full border p-1.5 transition-colors hover:bg-red-50 disabled:opacity-60 ${
-              verdict === "down" ? "border-red-400 text-red-700" : "border-gray-200 text-gray-500"
+            className={`rounded-full border p-1.5 transition-colors hover:bg-red-400/10 disabled:opacity-60 ${
+              verdict === "down" ? "border-red-400 text-red-300" : "border-white/20 text-muted-foreground"
             }`}
           >
             <ThumbsDown className="h-3.5 w-3.5" aria-hidden />
@@ -134,7 +134,7 @@ export default function AnswerFeedback({ requestId, sourcePayloadIds }: AnswerFe
 
       {recorded && verdict === "down" && !reasonRecorded && (
         <div className="flex flex-wrap items-center gap-1.5" data-testid="feedback-reasons">
-          <span className="text-gray-400">What went wrong?</span>
+          <span className="text-muted-foreground">What went wrong?</span>
           {REASONS.map((r) => (
             <button
               key={r.id}
@@ -142,7 +142,7 @@ export default function AnswerFeedback({ requestId, sourcePayloadIds }: AnswerFe
               onClick={() => void onReason(r.id)}
               disabled={busy}
               className={`rounded-full border px-2 py-0.5 transition-colors disabled:opacity-60 ${
-                reason === r.id ? "border-gray-700 bg-gray-800 text-white" : "border-gray-300 hover:bg-gray-100"
+                reason === r.id ? "border-white/40 bg-white/15 text-foreground" : "border-white/20 text-foreground hover:bg-white/10"
               }`}
             >
               {r.label}
@@ -151,16 +151,16 @@ export default function AnswerFeedback({ requestId, sourcePayloadIds }: AnswerFe
         </div>
       )}
       {recorded && verdict === "down" && reasonRecorded && (
-        <span className="text-gray-400" data-testid="feedback-reason-thanks">
+        <span className="text-muted-foreground" data-testid="feedback-reason-thanks">
           Noted: {REASONS.find((r) => r.id === reason)?.label ?? reason}.
         </span>
       )}
 
       {error && (
-        <span className="inline-flex items-center gap-1 text-red-600" role="alert" data-testid="feedback-error">
+        <span className="inline-flex items-center gap-1 text-red-300" role="alert" data-testid="feedback-error">
           <AlertCircle className="h-3.5 w-3.5" aria-hidden />
           {error}
-          <button type="button" onClick={retry} disabled={busy} className="underline underline-offset-2 hover:text-red-800 disabled:opacity-60">
+          <button type="button" onClick={retry} disabled={busy} className="underline underline-offset-2 hover:text-red-200 disabled:opacity-60">
             Retry
           </button>
         </span>

@@ -43,86 +43,65 @@
 
 :root {
   --radius: 0.625rem;
-  --background: #f2f2f2;
-  --foreground: #222222;
-  --card: #ffffff;
-  --card-foreground: #222222;
-  --popover: #ffffff;
-  --popover-foreground: #222222;
+  --background: transparent;
+  --foreground: #C7D7DB;
+  --card: rgba(18, 20, 22, 0.85);
+  --card-foreground: #C7D7DB;
+  --popover: #16181a;
+  --popover-foreground: #C7D7DB;
   --primary: #0066CC;
   --primary-foreground: #ffffff;
-  --secondary: #f0f0f0;
-  --secondary-foreground: #222222;
-  --muted: #f0f0f0;
-  --muted-foreground: #6b7280;
-  --accent: #A6B0C3;
-  --accent-foreground: #222222;
+  --secondary: rgba(255, 255, 255, 0.06);
+  --secondary-foreground: #C7D7DB;
+  --muted: rgba(255, 255, 255, 0.06);
+  --muted-foreground: #8fa0a6;
+  --accent: rgba(198, 211, 214, 0.12);
+  --accent-foreground: #C7D7DB;
   --destructive: oklch(0.577 0.245 27.325);
-  --border: #e5e7eb;
-  --input: #e5e7eb;
+  --border: rgba(198, 211, 214, 0.2);
+  --input: rgba(198, 211, 214, 0.2);
   --ring: #0066CC;
   --litecoin-blue: #0066CC;
-  --litecoin-silver: #A6B0C3;
+  --litecoin-silver: #C6D3D6;
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: #ffffff;
-  --sidebar-foreground: #222222;
-  --sidebar-primary: #345D9D;
+  --sidebar: #16181a;
+  --sidebar-foreground: #C7D7DB;
+  --sidebar-primary: #0066CC;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #f0f0f0;
-  --sidebar-accent-foreground: #222222;
-  --sidebar-border: #e5e7eb;
-  --sidebar-ring: #345D9D;
+  --sidebar-accent: rgba(255, 255, 255, 0.06);
+  --sidebar-accent-foreground: #C7D7DB;
+  --sidebar-border: rgba(198, 211, 214, 0.2);
+  --sidebar-ring: #0066CC;
 }
 
 
 @layer base {
+  html {
+    color-scheme: dark;
+    background-color: #000;
+    overflow-x: clip;
+  }
   * {
     @apply border-border outline-ring/50;
+    --tw-ring-offset-color: #000;
   }
   body {
-    @apply bg-background text-foreground text-[16px];
+    @apply text-foreground text-[16px];
     font-feature-settings: "rlig" 1, "calt" 1;
     font-family: var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
-    position: relative;
+    background-color: transparent;
+    overflow-x: clip;
   }
-  
-  /* Subtle Litecoin background pattern */
-  body::before {
-    content: '';
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-image: 
-      repeating-linear-gradient(
-        45deg,
-        transparent,
-        transparent 2px,
-        rgba(166, 176, 195, 0.03) 2px,
-        rgba(166, 176, 195, 0.03) 4px
-      ),
-      repeating-linear-gradient(
-        -45deg,
-        transparent,
-        transparent 2px,
-        rgba(0, 102, 204, 0.02) 2px,
-        rgba(0, 102, 204, 0.02) 4px
-      );
-    pointer-events: none;
-    z-index: 0;
-  }
-  
 }
 
 /* Enhanced prose and markdown styling */
 @layer components {
   .prose {
-    @apply text-gray-800;
+    @apply text-foreground;
   }
   
   .prose code {
@@ -137,16 +116,16 @@
   }
   
   .prose pre code {
-    @apply bg-transparent p-0 text-gray-800;
+    @apply bg-transparent p-0 text-foreground;
     font-size: inherit;
   }
   
   .prose a {
-    @apply text-blue-500 hover:text-blue-600 underline underline-offset-2 transition-colors;
+    @apply text-primary hover:text-primary/80 underline underline-offset-2 transition-colors;
   }
   
   .prose strong {
-    @apply font-semibold text-gray-800;
+    @apply font-semibold text-foreground;
   }
   
   .prose em {
@@ -154,7 +133,7 @@
   }
   
   .prose blockquote {
-    @apply border-l-4 border-blue-500/30 pl-4 italic my-4 text-gray-600;
+    @apply border-l-4 border-blue-500/30 pl-4 italic my-4 text-muted-foreground;
   }
   
   .prose ul, .prose ol {
@@ -208,6 +187,24 @@
   .prose p {
     @apply leading-relaxed text-[16px];
   }
+}
+
+/* Keep the conversation scrollbar off the rounded corners of its frame. */
+.conversation-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(198, 211, 214, 0.45) transparent;
+}
+.conversation-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.conversation-scroll::-webkit-scrollbar-track {
+  margin-top: 12px;
+  margin-bottom: 12px;
+  background: transparent;
+}
+.conversation-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(198, 211, 214, 0.45);
+  border-radius: 999px;
 }
 
 /* Custom scrollbar for textarea */

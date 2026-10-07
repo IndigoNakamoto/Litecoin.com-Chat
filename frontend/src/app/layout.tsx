@@ -77,12 +77,19 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${spaceGrotesk.variable} ${inter.variable} antialiased font-sans`}
       >
-        <AuthProvider>
-          <ScrollProvider>
-            <Navigation />
-            <div className="">{children}</div>
-          </ScrollProvider>
-        </AuthProvider>
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-0 bg-cover bg-center bg-no-repeat"
+          style={{ backgroundColor: '#000', backgroundImage: "url('/chat/bgblack.jpg')" }}
+        />
+        <div className="relative z-10">
+          <AuthProvider>
+            <ScrollProvider>
+              <Navigation />
+              <div className="">{children}</div>
+            </ScrollProvider>
+          </AuthProvider>
+        </div>
       </body>
     </html>
   );

@@ -48,29 +48,29 @@ export default function FeeEstimator(props: FeeEstimatorProps) {
           return (
             <div key={tier.key}>
               <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
-                <span className="font-medium text-[#222222]">{tier.label}</span>
-                <span className="font-space-grotesk text-base font-semibold tabular-nums text-[#222222]">
-                  {fee} <span className="text-xs font-medium text-[#6b7280]">lit/vB</span>
-                  {cost ? <span className="ml-1.5 text-xs font-medium text-[#6b7280]">{cost}</span> : null}
+                <span className="font-medium text-foreground">{tier.label}</span>
+                <span className="font-space-grotesk text-base font-semibold tabular-nums text-foreground">
+                  {fee} <span className="text-xs font-medium text-muted-foreground">lit/vB</span>
+                  {cost ? <span className="ml-1.5 text-xs font-medium text-muted-foreground">{cost}</span> : null}
                 </span>
               </div>
-              <div className="h-1.5 w-full rounded-full bg-[#e8eef5]">
+              <div className="h-1.5 w-full rounded-full bg-white/10">
                 <div className="h-1.5 rounded-full bg-[#0066CC]" style={{ width: `${width}%` }} />
               </div>
-              <div className="mt-1 text-[11px] text-[#6b7280]">{tier.hint}</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">{tier.hint}</div>
             </div>
           );
         })}
-        <div className="border-t border-[#eef2f6] pt-2 text-xs text-[#6b7280]">
+        <div className="border-t border-border pt-2 text-xs text-muted-foreground">
           Minimum relay fee{" "}
-          <span className="font-semibold tabular-nums text-[#222222]">
+          <span className="font-semibold tabular-nums text-foreground">
             {props.minimumFee} lit/vB
             {context?.costs?.minimumFee ? ` · ${context.costs.minimumFee}` : ""}
           </span>
         </div>
         {context ? (
-          <p className="text-xs leading-relaxed text-[#6b7280]">
-            About <span className="font-semibold text-[#222222]">{context.hourCostLabel}</span> per
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            About <span className="font-semibold text-foreground">{context.hourCostLabel}</span> per
             transaction at the 1-hour rate
             <span className="mx-1">·</span>
             {context.usdLabel}/LTC

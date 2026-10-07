@@ -56,16 +56,16 @@ export default async function ArticlePage({ params }: { params: Promise<Params> 
   })();
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6">
-      <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800">
+    <main className="mx-auto my-24 w-full max-w-3xl rounded-2xl border border-border bg-card px-4 py-8 sm:px-6">
+      <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="h-4 w-4" aria-hidden />
         Back to chat
       </Link>
 
       <header className="mt-6 border-b border-border pb-4">
-        <h1 className="font-space-grotesk text-[34px] font-semibold leading-tight text-[#222222]">{article.title}</h1>
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
-          <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-blue-900">
+        <h1 className="font-space-grotesk text-[34px] font-semibold leading-tight text-foreground">{article.title}</h1>
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span className="rounded-full border border-blue-400/40 bg-blue-400/10 px-2 py-0.5 text-blue-100">
             {article.sourceTier === "pinned" ? "Reference document" : "Litecoin Knowledge Hub"}
           </span>
           {updated ? (
@@ -80,7 +80,7 @@ export default async function ArticlePage({ params }: { params: Promise<Params> 
               href={article.sourceUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800"
+              className="inline-flex items-center gap-1 text-primary hover:text-primary/80"
             >
               Original source{sourceHost ? ` (${sourceHost})` : ""}
               <ExternalLink className="h-3 w-3" aria-hidden />
@@ -93,9 +93,9 @@ export default async function ArticlePage({ params }: { params: Promise<Params> 
         <ArticleMarkdown markdown={stripLeadingTitle(article.markdown, article.title)} />
       </article>
 
-      <footer className="mt-10 border-t border-border pt-4 text-xs text-gray-500">
+      <footer className="mt-10 border-t border-border pt-4 text-xs text-muted-foreground">
         This article is part of the Litecoin Knowledge Hub, the sourced knowledge base behind{" "}
-        <Link href="/" className="text-blue-600 hover:text-blue-800">
+        <Link href="/" className="text-primary hover:text-primary/80">
           Litecoin Chat
         </Link>
         . Found something out of date? Use the thumbs-down on any answer that cites it.

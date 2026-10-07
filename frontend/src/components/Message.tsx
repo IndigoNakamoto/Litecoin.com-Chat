@@ -171,20 +171,20 @@ const Message: React.FC<MessageProps> = ({
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
-              h1: ({ children }) => <h1 className="font-space-grotesk text-[39px] font-semibold mt-6 mb-4 text-[#222222] border-b border-border pb-2 leading-tight">{children}</h1>,
-              h2: ({ children }) => <h2 className="font-space-grotesk text-[30px] font-semibold mt-5 mb-3 text-[#222222] leading-tight">{children}</h2>,
-              h3: ({ children }) => <h3 className="font-space-grotesk text-[20px] font-semibold mt-4 mb-2 text-[#222222] leading-tight">{children}</h3>,
-              h4: ({ children }) => <h4 className="font-space-grotesk text-lg font-semibold mt-3 mb-2 text-[#222222]">{children}</h4>,
-              h5: ({ children }) => <h5 className="font-space-grotesk text-base font-semibold mt-2 mb-1 text-[#222222]">{children}</h5>,
-              h6: ({ children }) => <h6 className="font-space-grotesk text-base font-medium mt-2 mb-1 text-gray-600">{children}</h6>,
-              p: ({ children }) => <p className="my-4 leading-relaxed text-[16px] text-gray-800">{children}</p>,
+              h1: ({ children }) => <h1 className="font-space-grotesk text-[39px] font-semibold mt-6 mb-4 text-foreground border-b border-border pb-2 leading-tight">{children}</h1>,
+              h2: ({ children }) => <h2 className="font-space-grotesk text-[30px] font-semibold mt-5 mb-3 text-foreground leading-tight">{children}</h2>,
+              h3: ({ children }) => <h3 className="font-space-grotesk text-[20px] font-semibold mt-4 mb-2 text-foreground leading-tight">{children}</h3>,
+              h4: ({ children }) => <h4 className="font-space-grotesk text-lg font-semibold mt-3 mb-2 text-foreground">{children}</h4>,
+              h5: ({ children }) => <h5 className="font-space-grotesk text-base font-semibold mt-2 mb-1 text-foreground">{children}</h5>,
+              h6: ({ children }) => <h6 className="font-space-grotesk text-base font-medium mt-2 mb-1 text-muted-foreground">{children}</h6>,
+              p: ({ children }) => <p className="my-4 leading-relaxed text-[16px] text-foreground">{children}</p>,
               ul: ({ children }) => <ul className="my-4 ml-6 list-disc space-y-2">{children}</ul>,
               ol: ({ children }) => <ol className="my-4 ml-6 list-decimal space-y-2">{children}</ol>,
-              li: ({ children }) => <li className="leading-relaxed text-gray-800">{children}</li>,
+              li: ({ children }) => <li className="leading-relaxed text-foreground">{children}</li>,
               code: ({ className, children, ...props }) => {
                 const isInline = !className;
                 return isInline ? (
-                  <code className="bg-muted px-1.5 py-0.5 rounded text-base font-mono text-gray-800" {...props}>
+                  <code className="bg-muted px-1.5 py-0.5 rounded text-base font-mono text-foreground" {...props}>
                     {children}
                   </code>
                 ) : (
@@ -199,16 +199,16 @@ const Message: React.FC<MessageProps> = ({
                 </pre>
               ),
               a: ({ href, children }) => (
-                <a href={href} className="text-blue-500 hover:text-blue-600 underline underline-offset-2 transition-colors" target="_blank" rel="noopener noreferrer">
+                <a href={href} className="text-primary hover:text-primary/80 underline underline-offset-2 transition-colors" target="_blank" rel="noopener noreferrer">
                   {children}
                 </a>
               ),
               blockquote: ({ children }) => (
-                <blockquote className="border-l-4 border-blue-500/30 pl-4 italic my-4 text-gray-600">
+                <blockquote className="border-l-4 border-blue-500/30 pl-4 italic my-4 text-muted-foreground">
                   {children}
                 </blockquote>
               ),
-              strong: ({ children }) => <strong className="font-semibold text-gray-800">{children}</strong>,
+              strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
               em: ({ children }) => <em className="italic">{children}</em>,
               hr: () => <hr className="border-border my-6" />,
               table: ({ children }) => (
@@ -219,8 +219,8 @@ const Message: React.FC<MessageProps> = ({
                 </div>
               ),
               thead: ({ children }) => <thead className="bg-muted">{children}</thead>,
-              th: ({ children }) => <th className="border border-border px-4 py-2 text-left font-semibold text-gray-800">{children}</th>,
-              td: ({ children }) => <td className="border border-border px-4 py-2 text-gray-800">{children}</td>,
+              th: ({ children }) => <th className="border border-border px-4 py-2 text-left font-semibold text-foreground">{children}</th>,
+              td: ({ children }) => <td className="border border-border px-4 py-2 text-foreground">{children}</td>,
               tr: ({ children, ...props }) => <tr className="even:bg-muted/50" {...props}>{children}</tr>,
               img: ({ src, alt }) => <img src={src} alt={alt} className="rounded-lg my-4 max-w-full" />,
             }}
@@ -230,7 +230,7 @@ const Message: React.FC<MessageProps> = ({
         </div>
         {abstained && (
           <div
-            className="mt-4 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+            className="mt-4 flex items-start gap-2 rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs text-amber-200"
             data-testid="abstain-notice"
           >
             <span className="font-medium shrink-0">Not covered yet.</span>
@@ -238,13 +238,13 @@ const Message: React.FC<MessageProps> = ({
           </div>
         )}
         {stopped && (
-          <div className="mt-3 text-xs text-gray-500" data-testid="stopped-notice">
+          <div className="mt-3 text-xs text-muted-foreground" data-testid="stopped-notice">
             Generation stopped.
           </div>
         )}
         <SourceChips sources={sources} webSources={webSources} />
         {isGrounded && (
-          <div className="flex items-center gap-1.5 mt-3 text-xs text-gray-500" data-testid="grounded-badge">
+          <div className="flex items-center gap-1.5 mt-3 text-xs text-muted-foreground" data-testid="grounded-badge">
             <svg className="w-3.5 h-3.5 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
             </svg>
@@ -277,25 +277,25 @@ const Message: React.FC<MessageProps> = ({
   // User messages remain in chat bubble format
   return (
     <div ref={messageRef} id={messageId} className="flex items-start gap-4 justify-end">
-      <div className="flex flex-col gap-2 p-5 my-8 rounded-tl-3xl rounded-br-3xl rounded-tr-none rounded-bl-none max-w-[70%] bg-[#222222] text-white">
+      <div className="flex flex-col gap-2 p-5 my-8 rounded-tl-3xl rounded-br-3xl rounded-tr-none rounded-bl-none max-w-[70%] border border-white/20 bg-white/10 text-foreground">
         <div className="prose prose-lg max-w-none prose-p:my-6 prose-headings:my-4 leading-relaxed">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
-              h1: ({ children }) => <h1 className="font-space-grotesk text-[39px] font-semibold mt-6 mb-4 text-white border-b border-white/20 pb-2 leading-tight">{children}</h1>,
-              h2: ({ children }) => <h2 className="font-space-grotesk text-[30px] font-semibold mt-5 mb-3 text-white leading-tight">{children}</h2>,
-              h3: ({ children }) => <h3 className="font-space-grotesk text-[20px] font-semibold mt-4 mb-2 text-white leading-tight">{children}</h3>,
-              h4: ({ children }) => <h4 className="font-space-grotesk text-lg font-semibold mt-3 mb-2 text-white">{children}</h4>,
-              h5: ({ children }) => <h5 className="font-space-grotesk text-base font-semibold mt-2 mb-1 text-white">{children}</h5>,
-              h6: ({ children }) => <h6 className="font-space-grotesk text-base font-medium mt-2 mb-1 text-white/80">{children}</h6>,
-              p: ({ children }) => <p className="my-4 leading-relaxed text-[16px] text-white">{children}</p>,
+              h1: ({ children }) => <h1 className="font-space-grotesk text-[39px] font-semibold mt-6 mb-4 text-foreground border-b border-white/20 pb-2 leading-tight">{children}</h1>,
+              h2: ({ children }) => <h2 className="font-space-grotesk text-[30px] font-semibold mt-5 mb-3 text-foreground leading-tight">{children}</h2>,
+              h3: ({ children }) => <h3 className="font-space-grotesk text-[20px] font-semibold mt-4 mb-2 text-foreground leading-tight">{children}</h3>,
+              h4: ({ children }) => <h4 className="font-space-grotesk text-lg font-semibold mt-3 mb-2 text-foreground">{children}</h4>,
+              h5: ({ children }) => <h5 className="font-space-grotesk text-base font-semibold mt-2 mb-1 text-foreground">{children}</h5>,
+              h6: ({ children }) => <h6 className="font-space-grotesk text-base font-medium mt-2 mb-1 text-foreground/80">{children}</h6>,
+              p: ({ children }) => <p className="my-4 leading-relaxed text-[16px] text-foreground">{children}</p>,
               ul: ({ children }) => <ul className="my-4 ml-6 list-disc space-y-2">{children}</ul>,
               ol: ({ children }) => <ol className="my-4 ml-6 list-decimal space-y-2">{children}</ol>,
-              li: ({ children }) => <li className="leading-relaxed text-white">{children}</li>,
+              li: ({ children }) => <li className="leading-relaxed text-foreground">{children}</li>,
               code: ({ className, children, ...props }) => {
                 const isInline = !className;
                 return isInline ? (
-                  <code className="bg-white/20 px-1.5 py-0.5 rounded text-base font-mono text-white" {...props}>
+                  <code className="bg-white/20 px-1.5 py-0.5 rounded text-base font-mono text-foreground" {...props}>
                     {children}
                   </code>
                 ) : (
@@ -310,16 +310,16 @@ const Message: React.FC<MessageProps> = ({
                 </pre>
               ),
               a: ({ href, children }) => (
-                <a href={href} className="text-white/90 hover:text-white underline underline-offset-2 transition-colors" target="_blank" rel="noopener noreferrer">
+                <a href={href} className="text-foreground/90 hover:text-foreground underline underline-offset-2 transition-colors" target="_blank" rel="noopener noreferrer">
                   {children}
                 </a>
               ),
               blockquote: ({ children }) => (
-                <blockquote className="border-l-4 border-white/30 pl-4 italic my-4 text-white/80">
+                <blockquote className="border-l-4 border-white/30 pl-4 italic my-4 text-foreground/80">
                   {children}
                 </blockquote>
               ),
-              strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+              strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
               em: ({ children }) => <em className="italic">{children}</em>,
               hr: () => <hr className="border-white/20 my-6" />,
               table: ({ children }) => (
@@ -330,8 +330,8 @@ const Message: React.FC<MessageProps> = ({
                 </div>
               ),
               thead: ({ children }) => <thead className="bg-white/10">{children}</thead>,
-              th: ({ children }) => <th className="border border-white/20 px-4 py-2 text-left font-semibold text-white">{children}</th>,
-              td: ({ children }) => <td className="border border-white/20 px-4 py-2 text-white">{children}</td>,
+              th: ({ children }) => <th className="border border-white/20 px-4 py-2 text-left font-semibold text-foreground">{children}</th>,
+              td: ({ children }) => <td className="border border-white/20 px-4 py-2 text-foreground">{children}</td>,
               tr: ({ children, ...props }) => <tr className="even:bg-white/5" {...props}>{children}</tr>,
               img: ({ src, alt }) => <img src={src} alt={alt} className="rounded-lg my-4 max-w-full" />,
             }}
@@ -342,7 +342,7 @@ const Message: React.FC<MessageProps> = ({
         {retryInfo && onRetry && (
           <div className="mt-3 pt-3 border-t border-white/20">
             <div className="flex flex-col gap-2">
-              <p className="text-sm text-white/80">
+              <p className="text-sm text-foreground/80">
                 {retryInfo.errorType === "too_many_challenges" && (
                   <>
                     Too many requests. Please wait before trying again.
@@ -355,14 +355,14 @@ const Message: React.FC<MessageProps> = ({
                 )}
               </p>
               {remainingSeconds !== null && remainingSeconds > 0 && (
-                <p className="text-xs text-white/60">
+                <p className="text-xs text-foreground/60">
                   Please wait {formatTime(remainingSeconds)} before retrying.
                 </p>
               )}
               <Button
                 onClick={onRetry}
                 disabled={!canRetry}
-                className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full bg-white/10 hover:bg-white/20 text-foreground border border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 size="sm"
               >
                 {canRetry ? (

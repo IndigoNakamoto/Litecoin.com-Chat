@@ -73,7 +73,7 @@ export default function TransactionCard({
             Transaction
             <span
               className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                status.confirmed ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"
+                status.confirmed ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/10 text-amber-200"
               }`}
             >
               {status.confirmed ? "Confirmed" : "Unconfirmed"}

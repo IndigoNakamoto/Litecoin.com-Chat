@@ -273,11 +273,9 @@ const Navigation = () => {
 
   const onToggleNav = () => {
     setNavShow((status) => {
-      if (status) {
-        document.body.style.overflow = 'auto';
-      } else {
-        document.body.style.overflow = 'hidden';
-      }
+      // Lock vertical scroll only. The overflow shorthand would clear overflow-x: clip
+      // and let the closed drawer widen the page on mobile Safari.
+      document.body.style.overflowY = status ? '' : 'hidden';
       return !status;
     });
   };
@@ -311,27 +309,13 @@ const Navigation = () => {
     12,
   );
 
-  const interpolateColor = (startColor: string, endColor: string, factor: number) => {
-    const startComponents = startColor.slice(1).match(/.{2}/g) ?? [];
-    const endComponents = endColor.slice(1).match(/.{2}/g) ?? [];
-
-    const result = startComponents.map((hex, index) => {
-      const startValue = parseInt(hex, 16);
-      const endValue = parseInt(endComponents[index] ?? hex, 16);
-      const interpolated = Math.round(startValue * (1 - factor) + endValue * factor);
-      return interpolated.toString(16).padStart(2, '0');
-    });
-
-    return `#${result.join('')}`;
-  };
-
-  const fontColor = interpolateColor('#222222', '#C6D3D6', bgOpacity);
-  const dropdownBgColor = interpolateColor('#c6d3d6', '#222222', bgOpacity);
-  const dropdownTextColor = interpolateColor('#222222', '#C6D3D6', bgOpacity);
-  const hamburgerColor = interpolateColor('#222222', '#ffffff', bgOpacity);
-  const mobileMenuTextColor = interpolateColor('#222222', '#C5D3D6', bgOpacity);
-  const socialIconTextColor = interpolateColor('#222222', '#ffffff', bgOpacity);
-  const logoColor = bgOpacity < 0.5 ? '#000000' : '#ffffff';
+  const fontColor = '#C6D3D6';
+  const dropdownBgColor = '#222222';
+  const dropdownTextColor = '#C6D3D6';
+  const hamburgerColor = '#ffffff';
+  const mobileMenuTextColor = '#C6D3D6';
+  const socialIconTextColor = '#ffffff';
+  const logoColor = '#ffffff';
 
   const dropdownRefs: Record<DropdownKey, RefObject<HTMLLIElement | null>> = {
     useLitecoin: useLitecoinRef,
@@ -491,7 +475,7 @@ const Navigation = () => {
     <>
       <header
         style={{
-          backgroundColor: `rgba(34, 34, 34, ${bgOpacity})`,
+          backgroundColor: `rgba(0, 0, 0, ${bgOpacity * 0.85})`,
           height: `${headerHeight}px`,
           fontFamily:
             'system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif',
@@ -569,11 +553,11 @@ const Navigation = () => {
       </header>
 
       <div
-        className={`fixed bottom-0 left-0 right-0 top-0 z-50 min-w-full transform overflow-y-auto pt-20 duration-300 ease-in md:clear-left ${
-          navShow ? 'translate-x-0' : 'translate-x-[105%]'
+        className={`fixed inset-0 z-50 w-full overflow-y-auto pt-20 duration-300 ease-in md:clear-left ${
+          navShow ? 'visible translate-x-0' : 'invisible pointer-events-none'
         }`}
         style={{
-          backgroundColor: interpolateColor('#C5D3D6', '#222222', bgOpacity),
+          backgroundColor: '#16181a',
         }}
       >
         <div className="flex flex-col gap-x-6">

@@ -1315,17 +1315,17 @@ export default function Home() {
   }, [streamingMessage]);
 
   return (
-    <div className="flex flex-col h-screen max-h-screen relative z-10">
+    <div className="relative z-10 flex h-screen max-h-screen min-w-0 flex-col overflow-x-clip">
       
       {/* Usage Warning Banner */}
       {usageWarning && usageWarning.warning_level && (
         <div
           className={`px-4 py-2 text-sm text-center ${
             usageWarning.warning_level === "error"
-              ? "bg-red-100 text-red-800 border-b border-red-200"
+              ? "bg-red-400/15 text-red-200 border-b border-red-400/40"
               : usageWarning.warning_level === "warning"
-              ? "bg-yellow-100 text-yellow-800 border-b border-yellow-200"
-              : "bg-blue-100 text-blue-800 border-b border-blue-200"
+              ? "bg-yellow-400/15 text-yellow-200 border-b border-yellow-400/40"
+              : "bg-blue-400/15 text-blue-200 border-b border-blue-400/40"
           }`}
         >
           {usageWarning.warning_level === "error" ? (
@@ -1343,7 +1343,7 @@ export default function Home() {
           )}
         </div>
       )}
-      <div className="flex-1 min-h-0 overflow-hidden relative z-10 flex flex-col">
+      <div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {!hydrated ? (
           // One tick while the tab's conversation is restored; avoids flashing the landing page.
           <div className="flex-1 min-h-0" aria-hidden />

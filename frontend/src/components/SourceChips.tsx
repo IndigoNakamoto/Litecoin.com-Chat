@@ -45,10 +45,10 @@ function hostLabel(url?: string | null): string | null {
 }
 
 const TONES = {
-  kb: "border-blue-200 bg-blue-50 text-blue-900 hover:bg-blue-100",
-  stale: "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100",
-  web: "border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100 border-dashed",
-  youtube: "border-red-200 bg-red-50 text-red-900 hover:bg-red-100",
+  kb: "border-blue-400/40 bg-blue-400/10 text-blue-100 hover:bg-blue-400/20",
+  stale: "border-amber-400/40 bg-amber-400/10 text-amber-100 hover:bg-amber-400/20",
+  web: "border-white/25 bg-white/5 text-foreground/80 hover:bg-white/10 border-dashed",
+  youtube: "border-red-400/40 bg-red-400/10 text-red-100 hover:bg-red-400/20",
 } as const;
 
 const BASE =
@@ -114,10 +114,10 @@ export default function SourceChips({
   if (kb.length === 0 && web.length === 0) return null;
 
   return (
-    <div className="mt-4 space-y-2 border-t border-gray-200 pt-3" data-testid="source-chips">
+    <div className="mt-4 space-y-2 border-t border-border pt-3" data-testid="source-chips">
       {kb.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-gray-500">
+          <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
             <BookOpen className="h-3.5 w-3.5" aria-hidden />
             Sources
           </span>
@@ -163,7 +163,7 @@ export default function SourceChips({
       )}
 
       {openVideo?.video_id && (
-        <div className="relative mt-2 overflow-hidden rounded-lg border border-gray-200 bg-black" data-testid="youtube-embed">
+        <div className="relative mt-2 overflow-hidden rounded-lg border border-border bg-black" data-testid="youtube-embed">
           <div className="flex items-center justify-between bg-gray-900 px-3 py-1.5 text-xs text-gray-200">
             <span className="truncate">{openVideo.title}</span>
             <div className="flex items-center gap-3">
@@ -201,7 +201,7 @@ export default function SourceChips({
 
       {web.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-gray-500">
+          <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
             <Globe className="h-3.5 w-3.5" aria-hidden />
             From the web · unverified
           </span>

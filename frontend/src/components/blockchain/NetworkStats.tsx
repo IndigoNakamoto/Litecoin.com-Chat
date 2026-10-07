@@ -68,7 +68,7 @@ export default function NetworkStats({
         <CardTitle className="text-sm font-medium flex items-center justify-between gap-2">
           <span>{price ? "Litecoin price" : "Network"}</span>
           {price?.time ? (
-            <span className="text-xs font-normal text-[#6b7280]">{timeAgo(price.time)}</span>
+            <span className="text-xs font-normal text-muted-foreground">{timeAgo(price.time)}</span>
           ) : null}
         </CardTitle>
       </CardHeader>
@@ -104,21 +104,21 @@ export default function NetworkStats({
         {difficulty_adjustment ? (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-[#6b7280]">
+              <span className="text-muted-foreground">
                 Next adjustment · {difficulty_adjustment.remainingBlocks.toLocaleString()} blocks
               </span>
-              <span className="font-semibold tabular-nums text-[#222222]">
+              <span className="font-semibold tabular-nums text-foreground">
                 {difficulty_adjustment.difficultyChange >= 0 ? "+" : ""}
                 {difficulty_adjustment.difficultyChange.toFixed(2)}%
               </span>
             </div>
-            <div className="h-1.5 w-full rounded-full bg-[#e8eef5]">
+            <div className="h-1.5 w-full rounded-full bg-white/10">
               <div
                 className="h-1.5 rounded-full bg-[#0066CC] transition-all"
                 style={{ width: `${Math.min(difficulty_adjustment.progressPercent, 100)}%` }}
               />
             </div>
-            <div className="text-right text-[11px] text-[#6b7280]">
+            <div className="text-right text-[11px] text-muted-foreground">
               {difficulty_adjustment.progressPercent.toFixed(1)}% of this epoch
             </div>
           </div>

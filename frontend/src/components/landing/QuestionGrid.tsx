@@ -138,7 +138,7 @@ export default function QuestionGrid({
                 <button
                   type="button"
                   onClick={() => setCurrentPage((p) => p + 1)}
-                  className="p-5 text-center bg-card/50 border border-border/50 rounded-xl hover:bg-accent/30 hover:border-primary/30 transition-all duration-300 group w-full h-full flex items-center justify-center gap-2 shadow-sm hover:shadow-xl hover:shadow-primary/10 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2"
+                  className="p-5 text-center bg-card border border-border rounded-xl hover:bg-accent/30 hover:border-primary/30 transition-all duration-300 group w-full h-full flex items-center justify-center gap-2 shadow-sm hover:shadow-xl hover:shadow-primary/10 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2"
                   aria-label="Show more questions"
                 >
                   <span className="text-base font-medium text-muted-foreground group-hover:text-primary leading-relaxed">
