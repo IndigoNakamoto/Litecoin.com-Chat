@@ -47,7 +47,7 @@ Four points can short-circuit to END: after `safety_gate` (pin / refuse / escala
 
 ### Source hierarchy and abstention
 
-`retrieve` sets `low_similarity` when the cross-encoder's top `rerank_score` is below `RAG_ABSTAIN_CE_SCORE` (-3.0; FAISS L2 is not a usable signal on this corpus). `astream_query` / `aquery` then follow KB -> live data -> flagged web search (if `USE_SEARCH_GROUNDING` and not `RAG_ABSTAIN_BEFORE_SEARCH`) -> abstain with `KB_ABSTAIN_RESPONSE`. Abstentions set `metadata.abstained`, increment `rag_abstain_total`, are never cached, and are queued as knowledge candidates. Gemini calls go through `services/llm_resilience.py` (breaker + bounded retry); on `LLMUnavailable` the bot says the tool is down instead of guessing.
+`retrieve` sets `low_similarity` when the cross-encoder's top `rerank_score` is below `RAG_ABSTAIN_CE_SCORE` (-1.4; FAISS L2 is not a usable signal on this corpus). `astream_query` / `aquery` then follow KB -> live data -> flagged web search (if `USE_SEARCH_GROUNDING` and not `RAG_ABSTAIN_BEFORE_SEARCH`) -> abstain with `KB_ABSTAIN_RESPONSE`. Abstentions set `metadata.abstained`, increment `rag_abstain_total`, are never cached, and are queued as knowledge candidates. Gemini calls go through `services/llm_resilience.py` (breaker + bounded retry); on `LLMUnavailable` the bot says the tool is down instead of guessing.
 
 ### Adding a New Node
 

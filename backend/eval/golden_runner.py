@@ -14,7 +14,7 @@ the real pipeline (`RAGPipeline.aquery`), and scores:
 - chip       : the top chip's cross-encoder `rerank_score` is at or above
                GOLDEN_CHIP_CE_FLOOR (default -1.4, the measured on-topic value on
                prod). Catches the "thin KB, unrelated chips attached" failure the
-               abstain floor (-3.0) lets through.
+               abstain floor (-1.4) lets through.
 - regression : per-question pass/fail diffed against the previous stored run
 
 Every question runs with `skip_cache=True` so the number measures retrieval and

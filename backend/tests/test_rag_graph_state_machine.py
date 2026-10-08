@@ -150,6 +150,60 @@ class _ScoringRetriever:
         ]
 
 
+def test_clear_rerank_scores_drops_a_previous_query_score():
+    from backend.rag_graph.nodes.retrieve import _clear_rerank_scores
+
+    doc = Document(page_content="pinned", metadata={"status": "published", "rerank_score": -3.85})
+    _clear_rerank_scores([doc])
+    assert "rerank_score" not in doc.metadata
+
+
+@pytest.mark.asyncio
+async def test_exact_match_skip_ignores_a_stale_rerank_score(monkeypatch):
+    """A previous query's score must not withhold chips when this query skips the encoder."""
+    monkeypatch.delenv("RAG_ABSTAIN_CE_SCORE", raising=False)
+    monkeypatch.setenv("RAG_ABSTAIN_L2_DISTANCE", "0")
+    monkeypatch.setattr("backend.rag_graph.nodes.retrieve.USE_CROSS_ENCODER_RERANK", True)
+    stale = Document(
+        page_content="How does Litecoin differ from Bitcoin?",
+        metadata={"status": "published", "rerank_score": -3.85},
+    )
+
+    class _SameDocRetriever:
+        async def ainvoke(self, query: str):
+            return [stale]
+
+    pipeline = _FakePipeline()
+    pipeline.faiss_top_distance_override = 0.0
+    pipeline.hybrid_retriever = _SameDocRetriever()
+    graph = build_rag_graph(build_nodes(pipeline))
+    state = await graph.ainvoke({"raw_query": "How does Litecoin differ from Bitcoin?", "chat_history_pairs": [], "metadata": {}})
+    assert state["metadata"].get("cross_encoder_skipped") is True
+    assert state["low_similarity"] is False
+    assert "ce_top_score" not in state["metadata"]
+    assert "rerank_score" not in stale.metadata
+
+
+@pytest.mark.asyncio
+async def test_retrieve_default_floor_withholds_the_weak_chip_band(monkeypatch):
+    """Unset env uses -1.4: a chip at -2.07 is withheld; a chip at the floor is kept."""
+    monkeypatch.delenv("RAG_ABSTAIN_CE_SCORE", raising=False)
+    monkeypatch.setenv("RAG_ABSTAIN_L2_DISTANCE", "0")
+    monkeypatch.setattr("backend.rag_graph.nodes.retrieve.USE_CROSS_ENCODER_RERANK", False)
+
+    pipeline = _FakePipeline()
+    pipeline.hybrid_retriever = _ScoringRetriever([-2.07])
+    graph = build_rag_graph(build_nodes(pipeline))
+    state = await graph.ainvoke({"raw_query": "board meeting last Tuesday", "chat_history_pairs": [], "metadata": {}})
+    assert state["low_similarity"] is True
+    assert state["metadata"]["ce_top_score"] == pytest.approx(-2.07)
+
+    pipeline.hybrid_retriever = _ScoringRetriever([-1.4])
+    graph = build_rag_graph(build_nodes(pipeline))
+    state = await graph.ainvoke({"raw_query": "what is mweb", "chat_history_pairs": [], "metadata": {}})
+    assert state["low_similarity"] is False
+
+
 @pytest.mark.asyncio
 async def test_retrieve_flags_low_similarity_from_cross_encoder_score(monkeypatch):
     monkeypatch.setenv("RAG_ABSTAIN_CE_SCORE", "-3.0")

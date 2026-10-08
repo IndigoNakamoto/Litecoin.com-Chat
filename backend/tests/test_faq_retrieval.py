@@ -18,6 +18,7 @@ from langchain_core.documents import Document
 # Import the modules under test
 from backend.services.faq_generator import (
     FAQGenerator,
+    extract_retrieval_questions,
     resolve_parents,
     resolve_parents_from_tuples,
     USE_FAQ_INDEXING,
@@ -139,6 +140,52 @@ class TestFAQGenerator:
             if not doc.metadata.get("is_synthetic"):
                 assert "chunk_id" in doc.metadata
                 assert doc.metadata["is_synthetic"] == False
+
+    def test_extract_retrieval_questions_strips_the_comment(self):
+        body, questions = extract_retrieval_questions(
+            "Nexus, Cake, and Electrum hold Litecoin.\n\n"
+            "<!-- retrieval-questions\n"
+            "How do I open a wallet?\n"
+            "Which Litecoin wallet should I use?\n"
+            "-->\n"
+        )
+        assert questions == [
+            "How do I open a wallet?",
+            "Which Litecoin wallet should I use?",
+        ]
+        assert "retrieval-questions" not in body
+        assert "Nexus, Cake, and Electrum" in body
+
+    @pytest.mark.asyncio
+    async def test_pinned_question_is_synthetic_and_absent_from_parent(self, mock_llm):
+        """An HTML comment is indexed as a question; the chip text stays the article."""
+        generator = FAQGenerator(llm=mock_llm, num_questions=3)
+        chunk = Document(
+            page_content=(
+                "Nexus Wallet, Cake Wallet, and Electrum-LTC store Litecoin.\n\n"
+                "<!-- retrieval-questions\n"
+                "How do I open a wallet?\n"
+                "What is the maximum supply of Litecoin?\n"
+                "-->"
+            ),
+            metadata={"payload_id": "wallet", "status": "published", "source": "payload"},
+        )
+
+        all_docs, parent_map = await generator.process_chunks_with_questions([chunk])
+
+        parents = [d for d in all_docs if not d.metadata.get("is_synthetic")]
+        synthetic = [d for d in all_docs if d.metadata.get("is_synthetic")]
+        assert len(parents) == 1
+        assert "retrieval-questions" not in parents[0].page_content
+        assert "<!--" not in parents[0].page_content
+        assert "Nexus Wallet" in parents[0].page_content
+        pinned = next(d for d in synthetic if d.page_content == "How do I open a wallet?")
+        assert pinned.metadata["parent_chunk_id"] == parents[0].metadata["chunk_id"]
+        assert pinned.metadata["payload_id"] == "wallet"
+        # The pinned line that duplicates the LLM question is indexed once.
+        assert sum(d.page_content == "What is the maximum supply of Litecoin?" for d in synthetic) == 1
+        assert parents[0].metadata["chunk_id"] in parent_map
+        assert "retrieval-questions" not in parent_map[parents[0].metadata["chunk_id"]].page_content
     
     @pytest.mark.asyncio
     async def test_synthetic_questions_inherit_payload_id(self, sample_chunks, mock_llm):

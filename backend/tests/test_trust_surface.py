@@ -662,6 +662,17 @@ def test_destination_url_exception_is_in_both_prompts():
         assert "include that URL once, copied exactly, as plain text" in prompt
 
 
+def test_wallet_recommendation_policy_is_in_both_prompts():
+    """Software-wallet recommendations name the store-page trio and never the retired pair."""
+    from backend.rag_pipeline import SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION_GROUNDED
+
+    for prompt in (SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION_GROUNDED):
+        assert "Nexus Wallet" in prompt
+        assert "Cake Wallet" in prompt
+        assert "Electrum-LTC" in prompt
+        assert "Do not recommend Litewallet or Trust Wallet" in prompt
+
+
 def test_audience_note_profiles():
     from backend.rag_pipeline import AUDIENCE_PROFILES, audience_note
 

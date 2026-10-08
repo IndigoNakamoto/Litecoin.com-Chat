@@ -14,6 +14,14 @@ from ..state import RAGState
 USE_CROSS_ENCODER_RERANK = os.getenv("USE_CROSS_ENCODER_RERANK", "true").lower() == "true"
 
 
+def _clear_rerank_scores(docs: List[Document]) -> None:
+    """Drop scores a previous query wrote onto shared FAISS documents."""
+    for doc in docs:
+        metadata = getattr(doc, "metadata", None)
+        if isinstance(metadata, dict):
+            metadata.pop("rerank_score", None)
+
+
 def _observe_stage(stage: str, seconds: float, timings: Optional[Dict[str, float]] = None) -> None:
     """Record a per-stage latency to the Prometheus histogram and the request's timing dict."""
     if timings is not None:
@@ -203,6 +211,11 @@ def make_retrieve_node(pipeline: Any):
                 context_docs = []
             _observe_stage("vector_bm25", time.perf_counter() - _t_h0, timings)
 
+        # Tests set this so an exact-match skip can be exercised without Infinity.
+        override = getattr(pipeline, "faiss_top_distance_override", None)
+        if override is not None:
+            top_vector_distance = float(override)
+
         return context_docs, retrieval_failed, top_vector_distance
 
     async def retrieve(state: RAGState) -> RAGState:
@@ -340,7 +353,16 @@ def make_retrieve_node(pipeline: Any):
                 ce_skip_distance,
             )
 
-        if USE_CROSS_ENCODER_RERANK and context_docs and primary_query and not skip_ce:
+        # Exact-match FAQ hits skip the encoder. The retrieved objects are the
+        # FAISS store's own documents, so a score written for an earlier query
+        # is still on them. A skipped encoder must mean "no score", and a run
+        # encoder must mean "this query's score", or the abstain floor treats
+        # the leftover as this question.
+        will_rerank = bool(USE_CROSS_ENCODER_RERANK and context_docs and primary_query and not skip_ce)
+        if skip_ce or will_rerank:
+            _clear_rerank_scores(context_docs)
+
+        if will_rerank:
             _t_ce0 = time.perf_counter()
             try:
                 from backend.services.cross_encoder_reranker import CrossEncoderReranker
@@ -400,7 +422,8 @@ def make_retrieve_node(pipeline: Any):
         #
         # Primary signal is the cross-encoder's top relevance score (ms-marco logits).
         # Measured on the production index: on-topic questions score >= -1.4, clearly
-        # off-topic ones <= -4.5, so RAG_ABSTAIN_CE_SCORE defaults to -3.0. Dense FAISS
+        # off-topic ones <= -4.5. RAG_ABSTAIN_CE_SCORE defaults to that on-topic floor
+        # so a chip the golden eval would reject is withheld. Dense FAISS
         # L2 does NOT separate on/off-topic on this corpus (off-topic queries often sit
         # closer than "What is MWEB?"), so the L2 floor is off unless explicitly set.
         # We do not drop the docs (callers may still run a flagged web search); we flag
@@ -414,7 +437,7 @@ def make_retrieve_node(pipeline: Any):
         ce_top = max(ce_scores) if ce_scores else None
         if ce_top is not None:
             metadata["ce_top_score"] = float(ce_top)
-        ce_floor_raw = os.getenv("RAG_ABSTAIN_CE_SCORE", "-3.0").strip()
+        ce_floor_raw = os.getenv("RAG_ABSTAIN_CE_SCORE", "-1.4").strip()
         ce_floor = float(ce_floor_raw) if ce_floor_raw and ce_floor_raw.lower() != "off" else None
         if ce_floor is not None and ce_top is not None and ce_top < ce_floor:
             low_similarity = True

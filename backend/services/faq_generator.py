@@ -30,6 +30,7 @@ Usage:
 """
 
 import os
+import re
 import logging
 import hashlib
 import asyncio
@@ -50,6 +51,37 @@ FAQ_LLM_BACKEND = os.getenv("FAQ_LLM_BACKEND", "gemini").lower()
 # Local LLM settings (Ollama)
 FAQ_OLLAMA_URL = os.getenv("FAQ_OLLAMA_URL", os.getenv("OLLAMA_URL", "http://host.docker.internal:11434"))
 FAQ_OLLAMA_MODEL = os.getenv("FAQ_OLLAMA_MODEL", os.getenv("LOCAL_REWRITER_MODEL", "llama3.2:3b"))
+
+# Author-pinned questions. React Markdown does not render the comment, and the
+# parent chunk stored for chips has the comment removed.
+_RETRIEVAL_QUESTIONS_RE = re.compile(
+    r"<!--\s*retrieval-questions\s*(.*?)-->",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def extract_retrieval_questions(text: str) -> Tuple[str, List[str]]:
+    """Return (body without the comment, pinned questions in order)."""
+    questions: List[str] = []
+
+    def _take(match: re.Match) -> str:
+        for line in match.group(1).splitlines():
+            q = " ".join(line.strip().split())
+            if q:
+                questions.append(q)
+        return ""
+
+    stripped = _RETRIEVAL_QUESTIONS_RE.sub(_take, text or "")
+    stripped = re.sub(r"\n{3,}", "\n\n", stripped).strip()
+    seen: Set[str] = set()
+    unique: List[str] = []
+    for q in questions:
+        key = q.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(q)
+    return stripped, unique
 
 
 class FAQGenerator:
@@ -341,7 +373,11 @@ Questions:"""
         """
         if not USE_FAQ_INDEXING:
             logger.info("FAQ indexing disabled, returning original chunks")
-            return chunks, {}
+            cleaned = []
+            for chunk in chunks:
+                body, _pinned = extract_retrieval_questions(chunk.page_content)
+                cleaned.append(Document(page_content=body, metadata=dict(chunk.metadata)))
+            return cleaned, {}
         
         all_docs: List[Document] = []
         parent_chunks_map: Dict[str, Document] = {}
@@ -349,25 +385,34 @@ Questions:"""
         total_questions = 0
         
         for i, chunk in enumerate(chunks):
-            # Generate stable ID for this chunk
-            chunk_id = self._generate_chunk_id(chunk)
+            body, pinned = extract_retrieval_questions(chunk.page_content)
+            clean = Document(page_content=body, metadata=dict(chunk.metadata))
+            # Generate stable ID for this chunk from the body the chip will show.
+            chunk_id = self._generate_chunk_id(clean)
             
             # Store in parent map (for retrieval swap)
-            parent_chunks_map[chunk_id] = chunk
+            parent_chunks_map[chunk_id] = clean
             
             # Add original chunk with chunk_id and is_synthetic=False
             chunk_with_id = Document(
-                page_content=chunk.page_content,
+                page_content=clean.page_content,
                 metadata={
-                    **chunk.metadata,
+                    **clean.metadata,
                     "chunk_id": chunk_id,
                     "is_synthetic": False,
                 }
             )
             all_docs.append(chunk_with_id)
             
-            # Generate synthetic questions
-            questions = await self.generate_questions(chunk)
+            # Pinned questions first, then LLM questions that are not duplicates.
+            generated = await self.generate_questions(clean)
+            seen = {q.casefold() for q in pinned}
+            questions = list(pinned)
+            for q in generated:
+                if q.casefold() in seen:
+                    continue
+                seen.add(q.casefold())
+                questions.append(q)
             
             for q_idx, question in enumerate(questions):
                 # CRITICAL: Synthetic questions MUST inherit key metadata

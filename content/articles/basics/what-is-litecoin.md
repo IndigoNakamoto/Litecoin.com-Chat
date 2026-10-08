@@ -13,7 +13,11 @@ Litecoin's chain is secured by proof of work. Miners run the Scrypt hashing algo
 
 ## How Litecoin differs from Bitcoin
 
-Litecoin and Bitcoin are both public proof-of-work chains with a capped supply and no central issuer. They differ in the parameters a user actually feels. Litecoin targets a new block every 2.5 minutes; Bitcoin targets one every 10 minutes. Litecoin's maximum supply is 84 million LTC; Bitcoin's is 21 million BTC. Litecoin mining uses Scrypt; Bitcoin mining uses SHA-256, so the hardware pools are not the same. Litecoin also added MimbleWimble extension blocks (MWEB) as an opt-in way to send confidential amounts, which Bitcoin's base layer does not have. Neither chain lets a sender, an exchange, or the Litecoin Foundation cancel a payment once it is in a block.
+Litecoin and Bitcoin are both public proof-of-work chains with a capped supply and no central issuer. They differ in the parameters a user actually feels. Litecoin targets a new block every 2.5 minutes; Bitcoin targets one every 10 minutes. Litecoin's maximum supply is 84 million LTC; Bitcoin's is 21 million BTC. Litecoin mining uses Scrypt; Bitcoin mining uses SHA-256, so the hardware pools are not the same. Litecoin also added MimbleWimble extension blocks (MWEB) as an opt-in way to hide confidential amounts and the link between the sender and the receiver, which Bitcoin's base layer does not have. Neither chain lets a sender, an exchange, or the Litecoin Foundation cancel a payment once it is in a block.
+
+<!-- retrieval-questions
+How does Litecoin differ from Bitcoin?
+-->
 
 ## What Litecoin is not
 

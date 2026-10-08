@@ -15,5 +15,9 @@ The recovery phrase (often 12 or 24 words) can recreate the keys. It should be w
 
 A hardware wallet is a form of self-custody. It is different from leaving LTC on an exchange, where the exchange holds the keys. It is also different from a software wallet on a phone, which keeps keys on a general-purpose computer. The device still needs a Litecoin app or account in its firmware that understands Litecoin addresses (L…, M…, and ltc1…). If a model does not list Litecoin, do not assume a Bitcoin account will spend LTC.
 
+<!-- retrieval-questions
+Can I store Litecoin on a hardware wallet?
+-->
+
 ---
 *Editor note. Examples are Ledger and Trezor as products that support LTC, with an explicit non-recommendation. No model numbers, firmware versions, or affiliate links. Please confirm both still ship a Litecoin app before publishing, and that we are comfortable naming vendors at all. Golden needles: hardware wallet, ledger, trezor.*

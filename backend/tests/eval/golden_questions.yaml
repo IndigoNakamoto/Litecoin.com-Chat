@@ -115,6 +115,18 @@ questions:
     expected_behavior: answer
     expected_source_substrings: [mweb, opt]
 
+  - id: conceptual-mweb-hides-what
+    category: conceptual
+    query: Does MWEB hide transaction amounts, addresses, or both?
+    expected_behavior: answer
+    expected_source_substrings: [stealth]
+
+  - id: conceptual-mweb-pegin
+    category: conceptual
+    query: Can someone see the amount of an MWEB peg-in or peg-out?
+    expected_behavior: answer
+    expected_source_substrings: [peg]
+
   - id: conceptual-extension-blocks
     category: conceptual
     query: What are extension blocks in Litecoin?
@@ -187,6 +199,29 @@ questions:
     expected_behavior: answer
     expected_source_substrings: [hardware wallet, ledger, trezor, wallet]
 
+  - id: conceptual-open-wallet
+    category: conceptual
+    # content/articles/basics/opening-a-wallet.md. Needles are a citation check (any one hit).
+    query: How do I open a wallet?
+    expected_behavior: answer
+    expected_source_substrings: [nexus, cake, electrum]
+    must_not_contain: ["litewallet", "trust wallet"]
+
+  - id: conceptual-which-wallet
+    category: conceptual
+    query: Which Litecoin wallet should I use?
+    expected_behavior: answer
+    expected_source_substrings: [nexus, cake, electrum]
+    must_not_contain: ["litewallet", "trust wallet"]
+
+  - id: conceptual-mweb-wallet
+    category: conceptual
+    # Older MWEB copy names a retired mobile app; this must still cite the wallet article.
+    query: Which wallet should I use for a private MWEB payment?
+    expected_behavior: answer
+    expected_source_substrings: [nexus, cake, electrum]
+    must_not_contain: ["litewallet", "trust wallet"]
+
   - id: conceptual-irreversible
     category: conceptual
     query: Can a Litecoin transaction be reversed?
@@ -249,9 +284,11 @@ questions:
   # ---------------------------------------------------------------- orient (answer, newcomer / merchant / developer entry points)
   - id: orient-where-to-start
     category: orient
+    # May suggest a wallet. Do not require the three product names; do ban the retired pair.
     query: I'm new to Litecoin, where do I start?
     expected_behavior: answer
     expected_source_substrings: [wallet, litecoin]
+    must_not_contain: ["litewallet", "trust wallet"]
 
   - id: orient-merchant-accept
     category: orient
@@ -302,6 +339,14 @@ questions:
     expected_behavior: lookup
     expected_source_substrings: []
 
+  # User phrasing from the question log (asked 7 times, one thumbs-down). Same mempool
+  # lookup as live-mempool, but "congested" is the word people actually use.
+  - id: live-mempool-congested
+    category: blockchain-live
+    query: How congested is the Litecoin mempool right now?
+    expected_behavior: lookup
+    expected_source_substrings: []
+
   - id: live-block-height
     category: blockchain-live
     query: What is the current Litecoin block height?
@@ -327,6 +372,14 @@ questions:
     category: blockchain-live
     # Series verified live on litview in Oct 2026: must answer with a value card.
     query: What was Litecoin's daily close price?
+    expected_behavior: lookup
+    expected_source_substrings: []
+    must_not_contain: ["not computed yet"]
+
+  - id: metric-hashrate-trend
+    category: blockchain-live
+    # Distinct from live-hashrate: this is the litview hashrate_trend series, verified live.
+    query: How has Litecoin's hashrate trended over the last month?
     expected_behavior: lookup
     expected_source_substrings: []
     must_not_contain: ["not computed yet"]
